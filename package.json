@@ -1,0 +1,255 @@
+{
+  "name": "apache-spark-designer",
+  "displayName": "Apache Spark / Managed Spark Pipeline Builder",
+  "description": "Visual pipeline builder for Apache Spark and Google Cloud Managed Spark (PySpark)",
+  "version": "2.0.0",
+  "publisher": "antigravity",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cloud-gtm/apache-spark-designer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cloud-gtm/apache-spark-designer/issues"
+  },
+  "homepage": "https://github.com/cloud-gtm/apache-spark-designer#readme",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:spark-pipeline-builder.sparkEditor",
+    "onLanguage:spark",
+    "onView:sparkExplorer"
+  ],
+  "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Pipelines can be viewed and edited in untrusted workspaces. Running pipelines and generating code are disabled until the workspace is trusted."
+    }
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "spark",
+        "aliases": [
+          "Apache Spark Pipeline",
+          "spark",
+          "Spark"
+        ],
+        "extensions": [
+          ".spark"
+        ],
+        "mimetypes": [
+          "application/x-yaml",
+          "text/yaml"
+        ]
+      }
+    ],
+    "configurationDefaults": {
+      "workbench.editorAssociations": {
+        "*.spark": "spark-pipeline-builder.sparkEditor",
+        "{**/*.spark}": "spark-pipeline-builder.sparkEditor"
+      }
+    },
+    "configuration": {
+      "title": "Spark Designer",
+      "properties": {
+        "sparkDesigner.gcloudPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom absolute path to the gcloud executable. If empty, the extension searches PATH and standard installation locations."
+        },
+        "sparkDesigner.codegen.enableReviewer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run an optional reviewer pass after code generation. The reviewer runs read-only checks, asks Gemini to review the generated files, and asks Gemini to fix blocking defects (at most 2 fix rounds). Generation takes longer when this is on."
+        }
+      }
+    },
+    "customEditors": [
+      {
+        "viewType": "spark-pipeline-builder.sparkEditor",
+        "displayName": "Spark Pipeline Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.spark"
+          },
+          {
+            "filenamePattern": "**/*.spark"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "spark-pipeline-builder.createNewPipeline",
+        "title": "Spark: New Pipeline",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "spark-pipeline-builder.openWithDesigner",
+        "title": "Open in Spark Pipeline Designer",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "spark-pipeline-builder.showEditor",
+        "title": "Spark: Show Editor"
+      },
+      {
+        "command": "spark-pipeline-builder.refreshPipelines",
+        "title": "Refresh Pipelines",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "spark-pipeline-builder.openJobInConsole",
+        "title": "Open Job in Cloud Console"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "antigravity-spark-designer",
+          "title": "Spark Designer",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "antigravity-spark-designer": [
+        {
+          "id": "sparkExplorer",
+          "name": "Spark Explorer"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sparkExplorer",
+        "contents": "No Apache Spark pipeline files found in this workspace.\n[Create New Pipeline](command:spark-pipeline-builder.createNewPipeline)\n[Open Walkthrough](command:workbench.action.openWalkthrough?%22antigravity.apache-spark-designer%23sparkWalkthrough%22)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "spark-pipeline-builder.openWithDesigner",
+          "when": "resourceExtname == .spark",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "spark-pipeline-builder.createNewPipeline",
+          "when": "activeCustomEditorId == 'spark-pipeline-builder.sparkEditor'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "spark-pipeline-builder.openWithDesigner",
+          "when": "resourceExtname == .spark && activeCustomEditorId != 'spark-pipeline-builder.sparkEditor'",
+          "group": "navigation@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "spark-pipeline-builder.createNewPipeline",
+          "when": "view == sparkExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "spark-pipeline-builder.refreshPipelines",
+          "when": "view == sparkExplorer",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "sparkWalkthrough",
+        "title": "Get Started with Apache Spark Pipeline Builder",
+        "description": "Learn how to visually design, configure, and generate Apache Spark PySpark pipelines.",
+        "steps": [
+          {
+            "id": "designDag",
+            "title": "Design with Sources, Transforms & Sinks",
+            "description": "Drag and drop BigQuery, Kafka, Iceberg, Parquet, and Spark DataFrame transformation steps onto the canvas and connect them.",
+            "media": {
+              "markdown": "walkthroughs/design-dag.md"
+            }
+          },
+          {
+            "id": "generateCode",
+            "title": "Generate Production PySpark Code",
+            "description": "Use built-in AI code generation with Gemini to generate production-ready PySpark 4.x pipeline code, pytest unit tests, and Dockerfiles.",
+            "media": {
+              "markdown": "walkthroughs/generate-code.md"
+            }
+          },
+          {
+            "id": "createPipeline",
+            "title": "Create your first pipeline",
+            "description": "Start designing a new data pipeline by creating a visual `.spark` pipeline file.\n[Create New Pipeline](command:spark-pipeline-builder.createNewPipeline)",
+            "media": {
+              "markdown": "walkthroughs/create-pipeline.md"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:webview && npm run compile",
+    "build": "npm run build:webview && npm run compile",
+    "build:webview": "npm --prefix webview run build",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "pretest": "npm run compile && npm run typecheck:webview && npm run lint",
+    "typecheck:webview": "npm --prefix webview run typecheck",
+    "lint": "eslint src",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "test:integration:watch": "vitest --config vitest.integration.config.mts",
+    "test:integration:sources": "vitest run --config vitest.integration.config.mts src/test/integration/sources",
+    "test:integration:sinks": "vitest run --config vitest.integration.config.mts src/test/integration/sinks",
+    "test:integration:steps": "vitest run --config vitest.integration.config.mts src/test/integration/steps",
+    "test:integration:java": "vitest run --config vitest.integration.config.mts src/test/integration/**/java",
+    "test:integration:python": "vitest run --config vitest.integration.config.mts src/test/integration/**/python",
+    "test:integration:sources:java": "vitest run --config vitest.integration.config.mts src/test/integration/sources/java",
+    "test:integration:sources:python": "vitest run --config vitest.integration.config.mts src/test/integration/sources/python",
+    "test:integration:sinks:java": "vitest run --config vitest.integration.config.mts src/test/integration/sinks/java",
+    "test:integration:sinks:python": "vitest run --config vitest.integration.config.mts src/test/integration/sinks/python",
+    "test:integration:steps:java": "vitest run --config vitest.integration.config.mts src/test/integration/steps/java",
+    "test:integration:steps:python": "vitest run --config vitest.integration.config.mts src/test/integration/steps/python",
+    "test:webview": "npm --prefix webview test",
+    "test:all": "npm run test:unit && npm run test:webview",
+    "test:changed": "vitest run --changed --passWithNoTests && npm --prefix webview run test:changed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^8.57.1",
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^5.45.0",
+    "@typescript-eslint/parser": "^5.45.0",
+    "@vscode/vsce": "^3.2.1",
+    "eslint": "^8.28.0",
+    "eslint-plugin-jsdoc": "^48.11.0",
+    "globals": "^15.15.0",
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@google/genai": "^2.2.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "undici-types": "^8.3.0",
+    "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "@textlint/linter-formatter": "15.7.1",
+    "@textlint/resolver": "15.7.1"
+  }
+}
