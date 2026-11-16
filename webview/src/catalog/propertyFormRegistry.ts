@@ -93,6 +93,8 @@ const PubSubSinkProperties = lazyForm(() => import('../properties/sink/PubSubIO'
 const ParseMessageProperties = lazyForm(() => import('../properties/step/ParseMessage').then((m) => m.ParseMessageProperties));
 const FilterProperties = lazyForm(() => import('../properties/step/Filter').then((m) => m.FilterProperties));
 const AggregationProperties = lazyForm(() => import('../properties/step/Aggregations').then((m) => m.AggregationProperties));
+const WatermarkProperties = lazyForm(() => import('../properties/step/Watermark').then((m) => m.WatermarkProperties));
+const GroupByAggProperties = lazyForm(() => import('../properties/step/GroupByAgg').then((m) => m.GroupByAggProperties));
 const TextIOSourceProperties = lazyForm(() => import('../properties/source/TextIO').then((m) => m.TextIOSourceProperties));
 const TextIOSinkProperties = lazyForm(() => import('../properties/sink/TextIO').then((m) => m.TextIOSinkProperties));
 const JdbcIOSourceProperties = lazyForm(() => import('../properties/source/JdbcIO').then((m) => m.JdbcIOSourceProperties));
@@ -254,10 +256,17 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'WriteToMqtt': MqttIOSinkProperties,
 
   // Steps & Core Transforms (with and without STEP: prefix)
+  'STEP:ParDo': AggregationProperties,
+  'ParDo': AggregationProperties,
   'STEP:ParseMessage': ParseMessageProperties,
   'ParseMessage': ParseMessageProperties,
   'STEP:Filter': FilterProperties,
   'Filter': FilterProperties,
+  'STEP:Watermark': WatermarkProperties,
+  'Watermark': WatermarkProperties,
+  'STEP:GroupByAgg': GroupByAggProperties,
+  'GroupByAgg': GroupByAggProperties,
+  'GroupBy & Aggregate': GroupByAggProperties,
 
   // Aggregation transforms
   'STEP:ApproximateQuantiles': AggregationProperties,

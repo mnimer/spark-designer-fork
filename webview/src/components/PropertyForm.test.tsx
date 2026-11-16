@@ -44,6 +44,8 @@ import { PulsarIOSinkProperties } from '../properties/sink/PulsarIO';
 import { ParseMessageProperties } from '../properties/step/ParseMessage';
 import { FilterProperties } from '../properties/step/Filter';
 import { AggregationProperties } from '../properties/step/Aggregations';
+import { WatermarkProperties } from '../properties/step/Watermark';
+import { GroupByAggProperties } from '../properties/step/GroupByAgg';
 
 /**
  * Resolves the concrete (eagerly imported) panel component a node dispatches to.
@@ -204,7 +206,7 @@ describe('PropertyForm', () => {
 
     const mockOnChange = vi.fn();
     render(<PropertyForm node={mockNode} onChange={mockOnChange} />);
-    expect(await screen.findByText('Code Generation Prompt')).toBeInTheDocument();
+    expect(await screen.findByText('Code Generation Instructions')).toBeInTheDocument();
   });
 
   describe('getPropertyFormComponent resolution branches', () => {
@@ -214,8 +216,10 @@ describe('PropertyForm', () => {
     });
 
     it('branch 2: prevents cross-direction fallback when opposite type is registered', () => {
-      const node = { data: { type: 'SINK', spark_transform: 'FlinkStreamingImpulseSource', properties: {} } };
-      expect(getPropertyFormComponent(node)).toBeUndefined();
+      const cosmosSinkNode = { data: { type: 'SINK', spark_transform: 'CosmosIO', properties: {} } };
+      expect(getPropertyFormComponent(cosmosSinkNode)).toBeUndefined();
+      const impulseSinkNode = { data: { type: 'SINK', spark_transform: 'FlinkStreamingImpulseSource', properties: {} } };
+      expect(getPropertyFormComponent(impulseSinkNode)).toBeUndefined();
     });
   });
 
@@ -253,6 +257,8 @@ describe('PropertyForm', () => {
     { type: 'STEP', spark_transform: 'ParseMessage', ExpectedComponent: ParseMessageProperties, name: 'ParseMessageProperties' },
     { type: 'STEP', spark_transform: 'Filter', ExpectedComponent: FilterProperties, name: 'FilterProperties' },
     { type: 'STEP', spark_transform: 'Combine', ExpectedComponent: AggregationProperties, name: 'AggregationProperties' },
+    { type: 'STEP', spark_transform: 'Watermark', ExpectedComponent: WatermarkProperties, name: 'WatermarkProperties' },
+    { type: 'STEP', spark_transform: 'GroupByAgg', ExpectedComponent: GroupByAggProperties, name: 'GroupByAggProperties' },
   ];
 
   it.each(ROUTING_CASES)(
@@ -288,50 +294,89 @@ describe('PropertyForm', () => {
   });
 });
 
-describe('Real Sample Pipelines Acceptance Tests', () => {
-  it('loads real resources/samples/pubsub-to-bigquery.beam and asserts every node resolves to a real property form without unregistered warnings', async () => {
-    const filePath = path.resolve(__dirname, '../../../resources/samples/pubsub-to-bigquery.beam');
-    expect(fs.existsSync(filePath)).toBe(true);
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    const parsed = YAML.parse(content);
+describe('Pipeline YAML Acceptance Tests', () => {
+  it('parses a streaming Kafka -> ParseMessage -> Watermark -> GroupByAgg -> Iceberg pipeline and resolves every node without unregistered warnings', async () => {
+    const sparkStreamingYaml = `
+nodes:
+  - id: src-1
+    data:
+      label: Kafka Stream
+      type: SOURCE
+      spark_transform: KafkaIO
+      properties:
+        bootstrapServers: localhost:9092
+        topics: events
+  - id: step-1
+    data:
+      label: Parse JSON
+      type: STEP
+      spark_transform: ParseMessage
+      properties:
+        messageType: JSON
+  - id: step-2
+    data:
+      label: Event Watermark
+      type: STEP
+      spark_transform: Watermark
+      properties:
+        eventTimeColumn: event_timestamp
+        delayThreshold: 10 minutes
+  - id: step-3
+    data:
+      label: Windowed Metrics
+      type: STEP
+      spark_transform: GroupByAgg
+      properties:
+        groupByColumns:
+          - region
+        windowType: Tumbling
+        timeColumn: event_timestamp
+        windowDuration: 5 minutes
+        aggregations:
+          - column: amount
+            fn: sum
+            alias: total_amount
+  - id: sink-1
+    data:
+      label: Iceberg Table
+      type: SINK
+      spark_transform: IcebergIO
+      properties: {}
+`;
+    const parsed = YAML.parse(sparkStreamingYaml);
     expect(Array.isArray(parsed.nodes)).toBe(true);
 
     const migratedNodes = migrateLegacyNodes(parsed.nodes);
-    expect(migratedNodes.length).toBe(4);
+    expect(migratedNodes.length).toBe(5);
 
     for (const node of migratedNodes) {
       const mockOnChange = vi.fn();
-      const { container } = render(<PropertyForm node={node} onChange={mockOnChange} />);
+      const { container, unmount } = render(<PropertyForm node={node} onChange={mockOnChange} />);
+      await waitForPanelToLoad();
 
-      // Must NOT render the unregistered fallback
       expect(screen.queryByText(/No property form registered for type/i)).not.toBeInTheDocument();
-
-      // Must render form inputs/controls (real property form) once its chunk has loaded
       await waitFor(() => expect(container.querySelectorAll('input, select, textarea').length).toBeGreaterThan(0));
+      unmount();
     }
   });
 
-  it('loads real resources/samples/generate-mock-data.beam and asserts every node resolves to a real property form without unregistered warnings', async () => {
-    const filePath = path.resolve(__dirname, '../../../resources/samples/generate-mock-data.beam');
-    expect(fs.existsSync(filePath)).toBe(true);
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    const parsed = YAML.parse(content);
-    expect(Array.isArray(parsed.nodes)).toBe(true);
-
-    const migratedNodes = migrateLegacyNodes(parsed.nodes);
-    expect(migratedNodes.length).toBe(3);
-
-    for (const node of migratedNodes) {
-      const mockOnChange = vi.fn();
-      const { container } = render(<PropertyForm node={node} onChange={mockOnChange} />);
-
-      // Must NOT render the unregistered fallback
-      expect(screen.queryByText(/No property form registered for type/i)).not.toBeInTheDocument();
-
-      // Must render form inputs/controls (real property form) once its chunk has loaded
-      await waitFor(() => expect(container.querySelectorAll('input, select, textarea').length).toBeGreaterThan(0));
+  it('loads any bundled .spark sample files when present and resolves every node without unregistered warnings', async () => {
+    const samplesDir = path.resolve(__dirname, '../../../resources/samples');
+    if (!fs.existsSync(samplesDir)) {
+      return;
+    }
+    const sampleFiles = fs.readdirSync(samplesDir).filter((f) => f.endsWith('.spark'));
+    for (const sampleFile of sampleFiles) {
+      const content = fs.readFileSync(path.join(samplesDir, sampleFile), 'utf8');
+      const parsed = YAML.parse(content);
+      const migratedNodes = migrateLegacyNodes(parsed.nodes || []);
+      for (const node of migratedNodes) {
+        const { container, unmount } = render(<PropertyForm node={node} onChange={vi.fn()} />);
+        await waitForPanelToLoad();
+        expect(screen.queryByText(/No property form registered for type/i)).not.toBeInTheDocument();
+        await waitFor(() => expect(container.querySelectorAll('input, select, textarea').length).toBeGreaterThan(0));
+        unmount();
+      }
     }
   });
 });
@@ -368,11 +413,12 @@ describe('Node Documentation & Docs Link Across Property Panels', () => {
     try {
       const sampleNodes = [
         { data: { label: 'PubSub Source', type: 'SOURCE', spark_transform: 'PubSubIO', properties: {} } },
-        { data: { label: 'ParDo Step', type: 'STEP', spark_transform: 'ParDo', properties: {} } },
+        { data: { label: 'Watermark Step', type: 'STEP', spark_transform: 'Watermark', properties: {} } },
+        { data: { label: 'GroupBy & Aggregate Step', type: 'STEP', spark_transform: 'GroupByAgg', properties: {} } },
         { data: { label: 'Combine Step', type: 'STEP', spark_transform: 'Combine', properties: {} } },
-        { data: { label: 'Flatten Step', type: 'STEP', spark_transform: 'Flatten', properties: {} } },
+        { data: { label: 'Filter Step', type: 'STEP', spark_transform: 'Filter', properties: {} } },
         { data: { label: 'BigQuery Sink', type: 'SINK', spark_transform: 'BigQueryIO', properties: {} } },
-        { data: { label: 'Cloud Bigtable Sink', type: 'SINK', spark_transform: 'CloudBigtable', properties: {} } },
+        { data: { label: 'Iceberg Sink', type: 'SINK', spark_transform: 'IcebergIO', properties: {} } },
       ];
 
       for (const { data } of sampleNodes) {
@@ -398,6 +444,141 @@ describe('Node Documentation & Docs Link Across Property Panels', () => {
     } finally {
       delete (window as unknown as { vscode?: unknown }).vscode;
     }
+  });
+});
+
+// =========================================================================
+// Shared Streaming Sink Overrides, Step Cache Output, and Source Read Mode (A9 / A11)
+// =========================================================================
+
+describe('PropertyForm shared execution & streaming controls (A9 / A11)', () => {
+  it('renders StreamingSinkSettingsField automatically for streaming SINK nodes and omits it for batch SINK nodes', async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PropertyForm
+        node={{
+          id: 'bq-sink-1',
+          data: {
+            label: 'BigQuery Sink',
+            type: 'SINK',
+            spark_transform: 'BigQueryIO',
+            executionMode: 'batch',
+            properties: {},
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+
+    rerender(
+      <PropertyForm
+        node={{
+          id: 'bq-sink-1',
+          data: {
+            label: 'BigQuery Sink',
+            type: 'SINK',
+            spark_transform: 'BigQueryIO',
+            executionMode: 'streaming',
+            properties: {},
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+
+    expect(screen.getByText('Streaming Sink Settings')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Output Mode/i), { target: { value: 'complete' } });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ outputMode: 'complete' }));
+  });
+
+  it('renders manual Cache Output override on batch STEP nodes and hides it on streaming STEP nodes', async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PropertyForm
+        node={{
+          id: 'filter-1',
+          data: {
+            label: 'Filter',
+            type: 'STEP',
+            spark_transform: 'Filter',
+            executionMode: 'batch',
+            properties: {},
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+
+    const cacheSelect = screen.getByLabelText(/Cache Output/i);
+    expect(cacheSelect).toHaveValue('auto');
+    fireEvent.change(cacheSelect, { target: { value: 'true' } });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cacheOutput: true }));
+
+    rerender(
+      <PropertyForm
+        node={{
+          id: 'filter-1',
+          data: {
+            label: 'Filter',
+            type: 'STEP',
+            spark_transform: 'Filter',
+            executionMode: 'streaming',
+            properties: {},
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+    expect(screen.queryByLabelText(/Cache Output/i)).not.toBeInTheDocument();
+  });
+
+  it('renders Read Mode selector on dual-mode SOURCE nodes and hides it on batch-only SOURCE nodes', async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PropertyForm
+        node={{
+          id: 'src-bq',
+          data: {
+            label: 'BigQuery Source',
+            type: 'SOURCE',
+            spark_transform: 'BigQueryIO',
+            supportedReadModes: ['batch'],
+            properties: {},
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+    expect(screen.queryByLabelText(/Read Mode/i)).not.toBeInTheDocument();
+
+    rerender(
+      <PropertyForm
+        node={{
+          id: 'src-kafka',
+          data: {
+            label: 'Kafka Source',
+            type: 'SOURCE',
+            spark_transform: 'KafkaIO',
+            supportedReadModes: ['batch', 'streaming'],
+            defaultReadMode: 'streaming',
+            properties: {},
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+
+    const readModeSelect = screen.getByLabelText(/Read Mode/i);
+    expect(readModeSelect).toHaveValue('streaming');
+    fireEvent.change(readModeSelect, { target: { value: 'batch' } });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ readMode: 'batch' }));
   });
 });
 

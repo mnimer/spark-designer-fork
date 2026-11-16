@@ -1,4 +1,10 @@
+/**
+ * Unit tests for PipelineNode component.
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
 
+import type React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -6,8 +12,20 @@ import { PipelineNode } from './PipelineNode';
 
 // Mock React Flow handles
 vi.mock('reactflow', () => ({
-  Handle: ({ type, position, id, title }: any) => (
-    <div data-testid={`handle-${type}-${position}${id ? `-${id}` : ''}`} title={title} />
+  Handle: ({
+    type,
+    position,
+    id,
+    title,
+    style,
+  }: {
+    type: string;
+    position: string;
+    id?: string;
+    title?: string;
+    style?: React.CSSProperties;
+  }) => (
+    <div data-testid={`handle-${type}-${position}${id ? `-${id}` : ''}`} title={title} style={style} />
   ),
   Position: {
     Left: 'left',
@@ -81,34 +99,99 @@ describe('PipelineNode', () => {
     expect(screen.queryByTestId('handle-target-left')).not.toBeInTheDocument();
   });
 
-  it('renders target handle for FhirIO source in readResources mode so upstream PubSubIO can connect', () => {
-    render(
-      <PipelineNode
-        id="fhir-1"
-        data={{
-          ...mockData,
-          label: 'FhirIO',
-          spark_transform: 'FhirIO',
-          properties: { readMode: 'readResources' }
-        }}
-      />
-    );
-
-    expect(screen.getByTestId('handle-target-left')).toBeInTheDocument();
-    expect(screen.getByTestId('handle-source-right')).toBeInTheDocument();
-  });
-
   it('renders source handle for source node', () => {
     render(<PipelineNode id="node-1" data={mockData} />); // mockData is SOURCE
 
     expect(screen.getByTestId('handle-source-right')).toBeInTheDocument();
   });
 
-  it('renders two source handles for regular step node', () => {
-    const stepData = { ...mockData, type: 'STEP', label: 'Regular Step' };
-    render(<PipelineNode id="node-1" data={stepData} />);
+  it('renders single centered valid output handle without error handle on structural steps (A5)', () => {
+    const structuralTransforms = [
+      undefined,
+      'Select',
+      'WithColumns',
+      'RenameDropColumns',
+      'Explode',
+      'HandleNulls',
+      'OrderBy',
+      'LimitSample',
+      'GroupByAgg',
+      'Watermark',
+      'RepartitionCoalesce',
+      'CachePersist',
+      'FeaturePrep',
+    ];
 
-    expect(screen.getByTestId('handle-source-right-valid')).toBeInTheDocument();
+    for (const transform of structuralTransforms) {
+      const { unmount } = render(
+        <PipelineNode
+          id="node-struct"
+          data={{
+            ...mockData,
+            type: 'STEP',
+            label: transform || 'Structural Step',
+            ...(transform ? { spark_transform: transform } : {}),
+          }}
+        />
+      );
+
+      const validHandle = screen.getByTestId('handle-source-right-valid');
+      expect(validHandle).toBeInTheDocument();
+      expect(validHandle).toHaveStyle({ top: '50%' });
+      expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it('renders both valid (30%) and error DLQ (70%) handles ONLY on error-capable steps (A5)', () => {
+    const errorCapableTransforms = [
+      'ParsePayload',
+      'Filter',
+      'DataQualityAssert',
+      'PandasUdfTransform',
+      'CustomTransform',
+      'SparkSqlQuery',
+      'SparkMlInference',
+      'VertexAiInference',
+      'SparkMlAndVertexAi',
+      'StatefulTransform',
+    ];
+
+    for (const transform of errorCapableTransforms) {
+      const { unmount } = render(
+        <PipelineNode
+          id={`node-${transform}`}
+          data={{
+            ...mockData,
+            type: 'STEP',
+            label: transform,
+            spark_transform: transform,
+          }}
+        />
+      );
+
+      const validHandle = screen.getByTestId('handle-source-right-valid');
+      const errorHandle = screen.getByTestId('handle-source-right-error');
+      expect(validHandle).toBeInTheDocument();
+      expect(validHandle).toHaveStyle({ top: '30%' });
+      expect(errorHandle).toBeInTheDocument();
+      expect(errorHandle).toHaveStyle({ top: '70%' });
+      unmount();
+    }
+
+    // Explicit data.errorOutput === true override also exposes DLQ handle
+    render(
+      <PipelineNode
+        id="node-explicit-err"
+        data={{
+          ...mockData,
+          type: 'STEP',
+          label: 'Custom Override',
+          spark_transform: 'Select',
+          errorOutput: true,
+        }}
+      />
+    );
     expect(screen.getByTestId('handle-source-right-error')).toBeInTheDocument();
   });
 
@@ -131,40 +214,22 @@ describe('PipelineNode', () => {
     expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
   });
 
-  it('renders a top side_input target handle (with tooltip and Side Input label) for ParDo steps while keeping the id-less main handle', () => {
-    const parDoData = { ...mockData, type: 'STEP', label: 'Enrich', spark_transform: 'ParDo' };
-    render(<PipelineNode id="node-1" data={parDoData} />);
-
-    // Main (primary) input handle keeps no id for backwards compatibility with saved edges
-    expect(screen.getByTestId('handle-target-left')).toBeInTheDocument();
-    // Auxiliary side input handle on top + visible label badge
-    const sideHandle = screen.getByTestId('handle-target-top-side_input');
-    expect(sideHandle).toBeInTheDocument();
-    expect(sideHandle).toHaveAttribute('title', 'Side Input (PCollectionView)');
-    const sideLabel = screen.getByTestId('side-input-handle-label');
-    expect(sideLabel).toBeInTheDocument();
-    expect(sideLabel).toHaveTextContent('Side Input');
-    // Output handles unchanged
-    expect(screen.getByTestId('handle-source-right-valid')).toBeInTheDocument();
-    expect(screen.getByTestId('handle-source-right-error')).toBeInTheDocument();
-  });
-
-  it('does not render a side_input handle or label for non-ParDo steps, sources, or sinks', () => {
+  it('does not render a side_input handle or label for steps, sources, or sinks', () => {
     const { unmount: unmountStep } = render(
-      <PipelineNode id="node-1" data={{ ...mockData, type: 'STEP', spark_transform: 'Map' }} />
+      <PipelineNode id="node-1" data={{ ...mockData, type: 'STEP', spark_transform: 'Select' }} />
     );
     expect(screen.queryByTestId('handle-target-top-side_input')).not.toBeInTheDocument();
     expect(screen.queryByTestId('side-input-handle-label')).not.toBeInTheDocument();
     unmountStep();
 
     const { unmount: unmountSource } = render(
-      <PipelineNode id="node-2" data={{ ...mockData, type: 'SOURCE', spark_transform: 'ParDo' }} />
+      <PipelineNode id="node-2" data={{ ...mockData, type: 'SOURCE', spark_transform: 'CsvSource' }} />
     );
     expect(screen.queryByTestId('handle-target-top-side_input')).not.toBeInTheDocument();
     expect(screen.queryByTestId('side-input-handle-label')).not.toBeInTheDocument();
     unmountSource();
 
-    render(<PipelineNode id="node-3" data={{ ...mockData, type: 'SINK', spark_transform: 'LogMessage' }} />);
+    render(<PipelineNode id="node-3" data={{ ...mockData, type: 'SINK', spark_transform: 'ParquetSink' }} />);
     expect(screen.queryByTestId('handle-target-top-side_input')).not.toBeInTheDocument();
     expect(screen.queryByTestId('side-input-handle-label')).not.toBeInTheDocument();
   });
@@ -282,61 +347,205 @@ describe('PipelineNode', () => {
     expect(badge).toHaveAttribute('title', 'Orphan step: node is not connected to the pipeline');
   });
 
-  it('renders red dashed outline and retains target handle when FhirIO hasValidationError in searchResources mode', () => {
+  it('renders red dashed outline and error badge when hasValidationError is true on a Spark node', () => {
     const errorData = {
       ...mockData,
-      label: 'FhirIO',
-      type: 'SOURCE',
-      spark_transform: 'FhirIO',
-      properties: { readMode: 'searchResources' },
+      label: 'Join Step',
+      type: 'STEP',
+      spark_transform: 'Join',
       hasValidationError: true,
-      validationError: 'FhirIO.searchResources() does not accept an upstream connection.',
+      validationError: 'Join requires both left and right upstream inputs.',
     };
-    render(<PipelineNode id="node-fhir-err" data={errorData} selected={true} />);
-    const node = screen.getByTestId('pipeline-node-node-fhir-err');
+    render(<PipelineNode id="node-join-err" data={errorData} selected={true} />);
+    const node = screen.getByTestId('pipeline-node-node-join-err');
     expect(node).toHaveClass('border-red-500');
     expect(node).toHaveClass('border-dashed');
-    expect(screen.getByTestId('handle-target-left')).toBeInTheDocument();
     expect(screen.getByTestId('cycle-error-badge')).toHaveAttribute(
       'title',
-      'FhirIO.searchResources() does not accept an upstream connection.'
+      'Join requires both left and right upstream inputs.'
     );
   });
 
-  it('renders target handle for DicomIO in readStudyMetadata mode and red dashed outline when hasValidationError in dicomSearch mode', () => {
+  it('renders BATCH and STREAM mode badges on SOURCE and SINK nodes, plus CACHE and foreachBatch badges (A4)', () => {
     const { rerender } = render(
       <PipelineNode
-        id="node-dicom"
+        id="src-batch"
         data={{
-          ...mockData,
-          label: 'DicomIO',
+          label: 'CSV Source',
           type: 'SOURCE',
-          spark_transform: 'DicomIO',
-          properties: { readMode: 'readStudyMetadata' },
+          iconName: 'FileText',
+          spark_transform: 'CsvSource',
+          executionMode: 'batch',
         }}
       />
     );
-    expect(screen.getByTestId('handle-target-left')).toBeInTheDocument();
+    expect(screen.getByTestId('node-mode-badge')).toHaveTextContent('BATCH');
+    expect(screen.queryByTestId('node-cache-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('node-foreachbatch-badge')).not.toBeInTheDocument();
 
     rerender(
       <PipelineNode
-        id="node-dicom"
+        id="src-stream"
         data={{
-          ...mockData,
-          label: 'DicomIO',
+          label: 'Kafka Source',
           type: 'SOURCE',
-          spark_transform: 'DicomIO',
-          properties: { readMode: 'dicomSearch' },
-          hasValidationError: true,
-          validationError: 'DicomIO.dicomSearch() does not accept an upstream connection.',
+          iconName: 'Radio',
+          spark_transform: 'KafkaSource',
         }}
-        selected={true}
       />
     );
-    const node = screen.getByTestId('pipeline-node-node-dicom');
-    expect(node).toHaveClass('border-red-500');
-    expect(node).toHaveClass('border-dashed');
-    expect(screen.getByTestId('handle-target-left')).toBeInTheDocument();
+    expect(screen.getByTestId('node-mode-badge')).toHaveTextContent('STREAM');
+
+    rerender(
+      <PipelineNode
+        id="step-cached"
+        data={{
+          label: 'WithColumns',
+          type: 'STEP',
+          iconName: 'Code',
+          spark_transform: 'WithColumns',
+          isCached: true,
+        }}
+      />
+    );
+    expect(screen.queryByTestId('node-mode-badge')).not.toBeInTheDocument();
+    expect(screen.getByTestId('node-cache-badge')).toHaveTextContent('CACHE');
+
+    rerender(
+      <PipelineNode
+        id="snk-foreach"
+        data={{
+          label: 'Spanner Sink',
+          type: 'SINK',
+          iconName: 'Database',
+          spark_transform: 'SpannerSink',
+          executionMode: 'streaming',
+          isForeachBatchSink: true,
+        }}
+      />
+    );
+    expect(screen.getByTestId('node-mode-badge')).toHaveTextContent('STREAM');
+    expect(screen.getByTestId('node-foreachbatch-badge')).toHaveTextContent('foreachBatch');
+  });
+
+  it('renders labeled left and right target handles and BROADCAST badge on Join nodes (A6)', () => {
+    const { rerender } = render(
+      <PipelineNode
+        id="join-1"
+        data={{
+          label: 'Join',
+          type: 'STEP',
+          iconName: 'GitMerge',
+          spark_transform: 'Join',
+          properties: { joinType: 'inner', broadcastRight: false },
+        }}
+      />
+    );
+
+    const leftHandle = screen.getByTestId('handle-target-left-left');
+    const rightHandle = screen.getByTestId('handle-target-left-right');
+    expect(leftHandle).toBeInTheDocument();
+    expect(leftHandle).toHaveStyle({ top: '32%' });
+    expect(rightHandle).toBeInTheDocument();
+    expect(rightHandle).toHaveStyle({ top: '68%' });
+    expect(screen.getByTestId('join-left-handle-label')).toHaveTextContent('L');
+    expect(screen.getByTestId('join-right-handle-label')).toHaveTextContent('R');
+    expect(screen.queryByTestId('handle-target-left')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('node-broadcast-badge')).not.toBeInTheDocument();
+
+    rerender(
+      <PipelineNode
+        id="join-1"
+        data={{
+          label: 'Join',
+          type: 'STEP',
+          iconName: 'GitMerge',
+          spark_transform: 'Join',
+          properties: { joinType: 'left_outer', broadcastRight: true },
+        }}
+      />
+    );
+    expect(screen.getByTestId('node-broadcast-badge')).toHaveTextContent('BROADCAST');
+  });
+
+  it('renders multi-input target handle and N-IN badge on UnionByName, SetOperation, and SparkSqlQuery (A6)', () => {
+    for (const transform of ['UnionByName', 'SetOperation', 'SparkSqlQuery']) {
+      const { unmount } = render(
+        <PipelineNode
+          id={`multi-${transform}`}
+          data={{
+            label: transform,
+            type: 'STEP',
+            iconName: 'Layers',
+            spark_transform: transform,
+          }}
+        />
+      );
+
+      expect(screen.getByTestId('handle-target-left')).toBeInTheDocument();
+      expect(screen.getByTestId('node-multi-input-badge')).toHaveTextContent('N-IN');
+      unmount();
+    }
+  });
+
+  it('renders dynamic named rule handles plus else handle with 8pt-grid minHeight scaling on ConditionalSplit (A7)', () => {
+    // 1. Default rules (missing properties.rules -> rule_1 + else, minHeight = 64px)
+    const { rerender } = render(
+      <PipelineNode
+        id="split-1"
+        data={{
+          label: 'Conditional Split',
+          type: 'STEP',
+          iconName: 'GitBranch',
+          spark_transform: 'ConditionalSplit',
+        }}
+      />
+    );
+
+    const card = screen.getByTestId('pipeline-node-split-1');
+    expect(card).toHaveStyle({ minHeight: '64px' });
+    expect(screen.getByTestId('handle-source-right-rule_1')).toHaveAttribute('title', 'rule_1');
+    expect(screen.getByTestId('handle-source-right-else')).toHaveAttribute('title', 'else');
+    expect(screen.queryByTestId('handle-source-right-valid')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
+
+    // 2. Three custom rules + else (4 handles total -> 20%, 40%, 60%, 80%, minHeight = 112px = 14 * 8px)
+    rerender(
+      <PipelineNode
+        id="split-1"
+        data={{
+          label: 'Conditional Split',
+          type: 'STEP',
+          iconName: 'GitBranch',
+          spark_transform: 'ConditionalSplit',
+          properties: {
+            rules: [
+              { name: 'vip', condition: 'amount >= 1000' },
+              { name: 'standard', condition: 'amount >= 100' },
+              { name: 'micro', condition: 'amount > 0' },
+            ],
+          },
+        }}
+      />
+    );
+
+    expect(card).toHaveStyle({ minHeight: '112px' });
+    const vipHandle = screen.getByTestId('handle-source-right-vip');
+    const stdHandle = screen.getByTestId('handle-source-right-standard');
+    const microHandle = screen.getByTestId('handle-source-right-micro');
+    const elseHandle = screen.getByTestId('handle-source-right-else');
+
+    expect(vipHandle).toHaveAttribute('title', 'vip');
+    expect(vipHandle).toHaveStyle({ top: '20%' });
+    expect(stdHandle).toHaveAttribute('title', 'standard');
+    expect(stdHandle).toHaveStyle({ top: '40%' });
+    expect(microHandle).toHaveAttribute('title', 'micro');
+    expect(microHandle).toHaveStyle({ top: '60%' });
+    expect(elseHandle).toHaveAttribute('title', 'else');
+    expect(elseHandle).toHaveStyle({ top: '80%' });
+
+    expect(screen.getByTestId('split-handle-label-vip')).toHaveTextContent('vip');
+    expect(screen.getByTestId('split-handle-label-else')).toHaveTextContent('else');
   });
 });
 

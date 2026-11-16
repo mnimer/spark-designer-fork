@@ -22,6 +22,7 @@ export const defaultGroupOpenState: Record<string, boolean> = {
   steps_message_parsers: false,
   steps_element_transforms: false,
   steps_aggregations: false,
+  steps_streaming: false,
   steps_windows: false,
   steps_other_transforms: false,
   sinks_streaming_sinks: true,

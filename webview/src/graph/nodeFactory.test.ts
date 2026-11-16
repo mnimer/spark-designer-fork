@@ -21,17 +21,12 @@ describe('nodeFactory', () => {
     });
 
     it('preserves prefix correctly', () => {
-      const kvId = createNodeId('kv_mapper_');
-      expect(kvId.startsWith('kv_mapper_')).toBe(true);
-      expect(kvId.length).toBeGreaterThan('kv_mapper_'.length);
-
-      const pubSubId = createNodeId('pubsub_');
-      expect(pubSubId.startsWith('pubsub_')).toBe(true);
-      expect(pubSubId.length).toBeGreaterThan('pubsub_'.length);
+      const srcId = createNodeId('source_');
+      expect(srcId.startsWith('source_')).toBe(true);
+      expect(srcId.length).toBeGreaterThan('source_'.length);
 
       const plainId = createNodeId();
-      expect(plainId).not.toContain('kv_mapper_');
-      expect(plainId).not.toContain('pubsub_');
+      expect(plainId).not.toContain('source_');
     });
 
     describe('fallback when crypto.randomUUID is not available', () => {
@@ -46,7 +41,6 @@ describe('nodeFactory', () => {
       });
 
       it('falls back to counter + Math.random when crypto.randomUUID is absent', () => {
-        // Temporarily remove randomUUID
         Object.defineProperty(globalThis, 'crypto', {
           value: {},
           configurable: true,
@@ -64,91 +58,41 @@ describe('nodeFactory', () => {
   });
 
   describe('createNodesForPaletteItem', () => {
-    it('yields the two-node pair + edge with the same structure as before for FileIO item', () => {
+    it('creates a single Spark format source node without legacy multi-node expansion', () => {
       const item: PaletteItem = {
-        label: 'FileIO',
+        label: 'CSV Source',
         type: 'SOURCE',
-        iconName: 'Folder',
-        sparkTransform: 'FileIO',
+        iconName: 'FileText',
+        sparkTransform: 'CsvSource',
       };
       const pos = { x: 100, y: 150 };
 
       const result = createNodesForPaletteItem(item, pos);
 
-      expect(result.nodes).toHaveLength(2);
-      expect(result.edges).toHaveLength(1);
-
-      const [matchNode, readMatchesNode] = result.nodes;
-
-      // Match node assertions
-      expect(matchNode.id).toBeDefined();
-      expect(matchNode.type).toBe('pipeline');
-      expect(matchNode.position).toEqual({ x: 100, y: 150 });
-      expect(matchNode.data).toEqual({
-        label: 'FileIO Match',
+      expect(result.nodes).toHaveLength(1);
+      expect(result.edges).toHaveLength(0);
+      expect(result.nodes[0].type).toBe('pipeline');
+      expect(result.nodes[0].position).toEqual(pos);
+      expect(result.nodes[0].data).toEqual({
+        label: 'CSV Source',
         type: 'SOURCE',
-        iconName: 'Folder',
-        spark_transform: 'FileIO.match',
+        iconName: 'FileText',
+        spark_transform: 'CsvSource',
       });
-
-      // Read matches node assertions
-      expect(readMatchesNode.id).toBeDefined();
-      expect(readMatchesNode.type).toBe('pipeline');
-      expect(readMatchesNode.position).toEqual({ x: 340, y: 150 }); // x + 240, y
-      expect(readMatchesNode.data).toEqual({
-        label: 'FileIO Read Matches',
-        type: 'STEP',
-        iconName: 'FileCode',
-        spark_transform: 'FileIO.readMatches',
-      });
-
-      // IDs must be unique
-      expect(matchNode.id).not.toBe(readMatchesNode.id);
-
-      // Edge assertions
-      const edge = result.edges[0];
-      expect(edge.id).toBe(`e-${matchNode.id}-${readMatchesNode.id}`);
-      expect(edge.source).toBe(matchNode.id);
-      expect(edge.target).toBe(readMatchesNode.id);
     });
 
-    it('preserves custom nodeType when passed for FileIO', () => {
+    it('preserves custom nodeType when passed', () => {
       const item: PaletteItem = {
-        label: 'FileIO',
-        type: 'SOURCE',
-        iconName: 'Folder',
+        label: 'Parquet Sink',
+        type: 'SINK',
+        iconName: 'Database',
+        sparkTransform: 'ParquetSink',
         nodeType: 'customPipelineType',
       };
       const result = createNodesForPaletteItem(item, { x: 50, y: 50 });
 
-      expect(result.nodes[0].type).toBe('customPipelineType');
-      expect(result.nodes[1].type).toBe('customPipelineType');
-    });
-
-    it('yields one node for a regular item', () => {
-      const item: PaletteItem = {
-        label: 'BigQuery',
-        type: 'SINK',
-        iconName: 'Database',
-        sparkTransform: 'BigQueryIO.write',
-      };
-      const pos = { x: 200, y: 300 };
-
-      const result = createNodesForPaletteItem(item, pos);
-
       expect(result.nodes).toHaveLength(1);
-      expect(result.edges).toHaveLength(0);
-
-      const node = result.nodes[0];
-      expect(node.id).toBeDefined();
-      expect(node.type).toBe('pipeline');
-      expect(node.position).toEqual(pos);
-      expect(node.data).toEqual({
-        label: 'BigQuery',
-        type: 'SINK',
-        iconName: 'Database',
-        spark_transform: 'BigQueryIO.write',
-      });
+      expect(result.nodes[0].type).toBe('customPipelineType');
     });
 
     it('omits spark_transform when item does not provide sparkTransform', () => {
@@ -164,23 +108,24 @@ describe('nodeFactory', () => {
     });
 
     describe('auto-edge wiring for STEP items', () => {
-      it('auto-connects Parse Message step to an existing PubSub source', () => {
+      it('auto-connects ParsePayload step to an existing PubSubSource node', () => {
         const pubsubNode: PipelineNode = {
           id: 'pubsub-123',
           type: 'pipeline',
           position: { x: 0, y: 0 },
           data: {
-            label: 'PubSub Source',
+            label: 'Telemetry Stream',
             type: 'SOURCE',
             iconName: 'Radio',
-            spark_transform: 'PubSubIO',
+            spark_transform: 'PubSubSource',
           },
         };
 
         const item: PaletteItem = {
-          label: 'Parse Message',
+          label: 'Parse Payload',
           type: 'STEP',
-          iconName: 'Code',
+          iconName: 'FileCode',
+          sparkTransform: 'ParsePayload',
         };
 
         const result = createNodesForPaletteItem(item, { x: 200, y: 0 }, [pubsubNode]);
@@ -190,36 +135,6 @@ describe('nodeFactory', () => {
         expect(result.edges[0]).toEqual({
           id: `e-pubsub-123-${result.nodes[0].id}`,
           source: 'pubsub-123',
-          target: result.nodes[0].id,
-        });
-      });
-
-      it('auto-connects Parse Message step to an existing PubSub source whose label was renamed', () => {
-        const pubsubNode: PipelineNode = {
-          id: 'pubsub-renamed-456',
-          type: 'pipeline',
-          position: { x: 0, y: 0 },
-          data: {
-            label: 'My stream',
-            type: 'SOURCE',
-            iconName: 'Radio',
-            spark_transform: 'PubSubIO',
-          },
-        };
-
-        const item: PaletteItem = {
-          label: 'Parse Message',
-          type: 'STEP',
-          iconName: 'Code',
-        };
-
-        const result = createNodesForPaletteItem(item, { x: 200, y: 0 }, [pubsubNode]);
-
-        expect(result.nodes).toHaveLength(1);
-        expect(result.edges).toHaveLength(1);
-        expect(result.edges[0]).toEqual({
-          id: `e-pubsub-renamed-456-${result.nodes[0].id}`,
-          source: 'pubsub-renamed-456',
           target: result.nodes[0].id,
         });
       });
@@ -240,6 +155,7 @@ describe('nodeFactory', () => {
           label: 'Filter',
           type: 'STEP',
           iconName: 'Filter',
+          sparkTransform: 'Filter',
         };
 
         const result = createNodesForPaletteItem(item, { x: 200, y: 0 }, [sourceNode]);
@@ -250,6 +166,37 @@ describe('nodeFactory', () => {
           id: `e-src-1-${result.nodes[0].id}`,
           source: 'src-1',
           target: result.nodes[0].id,
+        });
+      });
+
+      it('auto-connects Join step to existing SOURCE on the left targetHandle (A6)', () => {
+        const sourceNode: PipelineNode = {
+          id: 'src-orders',
+          type: 'pipeline',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'Orders',
+            type: 'SOURCE',
+            iconName: 'Database',
+            spark_transform: 'BigQuerySource',
+          },
+        };
+
+        const item: PaletteItem = {
+          label: 'Join',
+          type: 'STEP',
+          iconName: 'GitMerge',
+          sparkTransform: 'Join',
+        };
+
+        const result = createNodesForPaletteItem(item, { x: 240, y: 0 }, [sourceNode]);
+
+        expect(result.edges).toHaveLength(1);
+        expect(result.edges[0]).toEqual({
+          id: `e-src-orders-${result.nodes[0].id}`,
+          source: 'src-orders',
+          target: result.nodes[0].id,
+          targetHandle: 'left',
         });
       });
 
@@ -281,7 +228,11 @@ describe('nodeFactory', () => {
           iconName: 'Code',
         };
 
-        const result = createNodesForPaletteItem(item, { x: 400, y: 0 }, [sourceNode, existingStepNode]);
+        const result = createNodesForPaletteItem(
+          item,
+          { x: 400, y: 0 },
+          [sourceNode, existingStepNode]
+        );
 
         expect(result.nodes).toHaveLength(1);
         expect(result.edges).toHaveLength(0);

@@ -26,6 +26,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { Suspense } from 'react';
 import { NodeDocsCard } from './common/NodeDocsCard';
+import { StepExecutionSettingsField } from './common/StepExecutionSettingsField';
+import { StreamingSinkSettingsField } from './common/StreamingSinkSettingsField';
 import { hasInlineNodeDocsCard } from '../utils/nodeDocumentation';
 import {
   PROPERTY_FORM_REGISTRY,
@@ -122,6 +124,8 @@ export const PropertyForm: React.FC<PropertyFormProps> = ({
   return (
     <div className="flex-1 flex flex-col gap-4">
       {!hasInlineNodeDocsCard(node) && <NodeDocsCard node={node} />}
+      <StepExecutionSettingsField node={node} onChange={onChange} />
+      <StreamingSinkSettingsField node={node} onChange={onChange} />
       <Suspense fallback={<PropertyFormLoading />}>
         {/* eslint-disable-next-line react-hooks/static-components */}
         <Component

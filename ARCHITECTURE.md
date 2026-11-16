@@ -114,26 +114,33 @@ App.tsx (Root State Coordinator & Drag Context)
  │    ├── PropertyPane (Right Slide-out Inspector)
  │    │    ├── NodeHeader (Editable label, ID, category tag)
  │    │    ├── PropertyForm (Dynamic transform property sheet dispatcher)
- │    │    │    ├── properties/source/*, properties/sink/* (Per-connector panels, keyed `SOURCE:<Transform>` / `SINK:<Transform>`)
- │    │    │    └── components/common/* (Shared panel primitives reused across connectors:
- │    │    │         PropertyField, SecretManagerAuthFields, ExpansionServiceFields)
+ │    │    │    ├── properties/source/*, properties/sink/*, properties/step/* (Per-transform panels)
+ │    │    │    └── components/common/* (PropertyField, SecretManagerAuthFields,
+ │    │    │         StepExecutionSettingsField, StreamingSinkSettingsField)
  │    │    ├── InfoTooltip (Portal-based documentation popup)
  │    │    └── RuntimeVariables (Copyable dynamic variable drawer)
+ │    ├── CanvasToolbar (Undo, Redo, Auto-layout, and Pipeline Mode BATCH/STREAMING pill)
  │    └── BottomPanel (Resizable Drawer Container)
  │         ├── SourceCodeTab (Language picker, Output folder, Code preview)
- │         └── DeploymentTab (Runner config, Instance bounds, RUN NOW)
+ │         └── DeploymentTab (Runner config, Streaming defaults, Instance bounds, RUN NOW)
 ```
 
-### DAG Validation & Topological Rules
-- **Rule 1: No Direct Source-to-Sink**: The canvas validates DAG connections; a direct edge from a Source to a Sink without an intermediate transform step is disallowed.
-- **Rule 2: Acyclic Graph Enforcement**: Connection cycles are rejected during edge creation.
-- **Rule 3: Dead Letter Queue (DLQ) Routing**: Transform steps expose dual right output handles (`valid` in green and `error` in red) to support dedicated DLQ error branches.
+### Phase 1 Spark DAG Semantics, Validation & Deterministic Execution Planner
+
+The extension host and React webview share a pure TypeScript graph engine under `src/shared/` and `src/spark/`:
+
+- **Node Capability Registry (`src/shared/sparkNodeCapabilities.ts`)**: Declares read modes, streaming sink modes, DLQ capability, and input arity across all Spark transforms.
+- **Direct Source-to-Sink Edges (`usePipelineGraph.ts`, `dagValidator.ts`)**: Allows direct `SOURCE -> SINK` edges for zero-transform replication jobs while rejecting self-loops and invalid directions.
+- **Streaming Propagation (`src/shared/sparkDagRules.ts`)**: `computeStreamingNodeSet` marks downstream nodes as streaming while keeping static batch lookup branches for **Stream–Static Joins**.
+- **Spark Topology Validation (`src/shared/dagValidator.ts`)**: Enforces acyclic graphs, `Join` handle occupancy, stream–static join rules, stream–stream outer join watermarks, arity, and checkpoint validation.
+- **Deterministic Execution Planner (`src/shared/executionPlanner.ts`)**: `buildExecutionPlan` computes topological order, batch fan-out `.cache()` and `.unpersist()` points, DLQ splits, and `foreachBatch` sink groups.
+- **Spark 4.x Runtime Matrix (`src/spark/versionMatrix.ts`)**: Maps Serverless 4.0, Serverless 3.0, Cluster 3.0, and Local runtimes (`standard` tier default) to JARs, Maven coordinates, and Python `DataSource` fallbacks.
 
 ---
 
 ## 3. State Synchronization & Code Generation
 
-Pipeline configurations are persisted as human-readable YAML inside `*.beam` files.
+Pipeline configurations are persisted as human-readable YAML inside `*.spark` files.
 
 ```mermaid
 sequenceDiagram
@@ -204,4 +211,4 @@ To validate that LLM-generated Apache Beam repositories comply with Beam DAG sem
 
 ## 5. UI/UX Design System Cross-Reference
 
-For UI design tokens, 8pt spacing grid specifications, typography hierarchies, category color codes, and component styling rules, refer directly to [DESIGN.md](file:///Users/mikenimer/Development/projects/apache-beam-designer/DESIGN.md).
+For UI design tokens, 8pt spacing grid specifications, typography hierarchies, category color codes, and component styling rules, see `DESIGN.md`.

@@ -206,6 +206,7 @@ function App() {
     displayNodes,
     displayEdges,
     dagValidation,
+    pipelineMode,
     selectedNodeId,
     setSelectedNodeId,
     selectedEdgeId,
@@ -217,8 +218,6 @@ function App() {
     onConnect,
     handleApplyProperties,
     handleNodeLabelChange,
-    handleAddKVMapper,
-    handleAddPubSubSource,
     onLayout,
     onDrop,
     handleAddNode,
@@ -230,6 +229,7 @@ function App() {
     setPipelineConfig,
     project,
     fitView,
+    jobConfig,
   });
 
   // Keep snapshotRef and restoreRef synchronised with latest graph and config state
@@ -700,6 +700,7 @@ function App() {
                   onUndo={undo}
                   onRedo={redo}
                   onAutoLayout={onLayout}
+                  pipelineMode={pipelineMode}
                 />
                 <Background gap={12} size={1} />
               </ReactFlow>
@@ -746,8 +747,6 @@ function App() {
                 onChange={(props) => handleApplyProperties(selectedNodeId, props)}
                 onLabelChange={(newLabel) => handleNodeLabelChange(selectedNodeId, newLabel)}
                 runtimeVariables={runtimeVariables}
-                onAddKVMapper={handleAddKVMapper}
-                onAddPubSubSource={handleAddPubSubSource}
                 width={propertyPanelWidth}
                 onResizeStart={handlePropertyPanelResizeStart}
                 onClose={() => setSelectedNodeId(null)}

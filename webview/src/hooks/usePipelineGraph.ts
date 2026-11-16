@@ -1,17 +1,14 @@
 /**
- * Hook for Apache Beam pipeline graph state and mutation helpers
- * 
- * Author: Mike Nimer <mikenimer@google.com>
- * 
- * Handles React Flow node and edge state management, drag-and-drop ingestion,
- * connection validation, topological auto-layout, edge redirection (M16),
- * property application, and node deletion.
+ * Hook for Apache Spark pipeline graph state and mutation helpers.
  *
- * Side inputs (F1): edges targeting the `side_input` handle on ParDo nodes are rendered with a
- * dashed violet stroke and a "side" label, and `properties.sideInputs` on every ParDo node is
- * auto-synchronised with those edges so the property panel and canvas never drift apart.
+ * Author: Mike Nimer <mikenimer@google.com>
+ *
+ * Manages React Flow node and edge state, drag-and-drop ingestion,
+ * connection validation, streaming mode and execution plan decoration,
+ * topological auto-layout, property application, and node or edge deletion.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useMemo, useState } from 'react';
 import {
   useNodesState,
@@ -22,13 +19,25 @@ import {
   type Connection,
 } from 'reactflow';
 import { validateDagTopology, type DagValidationResult } from '../utils/dagValidator';
+import {
+  computeStreamingNodeSet,
+  getConditionalSplitHandles,
+  getNodeCapabilities,
+  getNodeInputArity,
+  getNodeSparkTransform,
+  isConditionalSplitNode,
+  isErrorCapableStep,
+  isJoinNode,
+  type ReadMode,
+} from '../utils/sparkDagRules';
+import { buildExecutionPlan, type ExecutionPlan } from '../utils/executionPlanner';
 import { computeLayoutedNodes } from '../graph/layout';
-import { createNodeId, createNodesForPaletteItem } from '../graph/nodeFactory';
-import { isPubSubSourceNode, isPubSubNode, isDicomIoNode } from '../graph/nodeKinds';
+import { createNodesForPaletteItem } from '../graph/nodeFactory';
+import { isPubSubSourceNode } from '../graph/nodeKinds';
 import { pipelineConfigReducer } from '../state/pipelineConfigReducer';
 
 /**
- * Data payload stored within React Flow nodes for Apache Beam transforms.
+ * Data payload stored within React Flow nodes for Apache Spark transforms.
  */
 export interface PipelineNodeData {
   label: string;
@@ -42,12 +51,18 @@ export interface PipelineNodeData {
   isOrphan?: boolean;
   validationError?: string;
   validationWarning?: string;
+  executionMode?: ReadMode;
+  isCached?: boolean;
+  isForeachBatchSink?: boolean;
+  supportedReadModes?: ReadMode[];
+  defaultReadMode?: ReadMode;
+  errorOutput?: boolean;
+  inputArity?: 1 | 2 | 'n';
 }
 
 export type PipelineNode = Node<PipelineNodeData>;
 
-// NOTE: Initial nodes and edges start empty so opening any .beam file
-// does not flash placeholder or mock nodes before loadPipeline message arrives.
+// Initial nodes and edges start empty so opening a .spark file never flashes placeholder nodes.
 export const initialNodes: PipelineNode[] = [];
 export const initialEdges: Edge[] = [];
 
@@ -59,19 +74,101 @@ export interface UsePipelineGraphOptions {
   setPipelineConfig: React.Dispatch<React.SetStateAction<any>>;
   project?: (position: { x: number; y: number }) => { x: number; y: number };
   fitView?: (options?: any) => void;
+  jobConfig?: Record<string, any>;
 }
 
 /**
- * Custom React hook managing pipeline graph nodes, edges, selection, validation, layout, and transform mutations.
- *
- * @param options Graph initialization and synchronization options.
- * @returns State and event handlers for the React Flow canvas.
+ * Compares two optional ReadMode arrays for shallow element equality.
+ */
+function sameReadModes(a?: ReadMode[], b?: ReadMode[]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Evaluates whether a proposed connection obeys Spark node direction, handle, and arity rules.
+ */
+function canConnectEdge(
+  connection: Connection,
+  currentNodes: PipelineNode[],
+  currentEdges: Edge[]
+): boolean {
+  if (!connection.source || !connection.target) {
+    return false;
+  }
+  if (connection.source === connection.target) {
+    return false;
+  }
+
+  const sourceNode = currentNodes.find((n) => n.id === connection.source);
+  const targetNode = currentNodes.find((n) => n.id === connection.target);
+
+  if (!sourceNode || !targetNode) {
+    return false;
+  }
+
+  if (targetNode.data?.type === 'SOURCE') {
+    return false;
+  }
+
+  if (sourceNode.data?.type === 'SINK') {
+    return false;
+  }
+
+  if (isConditionalSplitNode(sourceNode as any)) {
+    if (connection.sourceHandle) {
+      const validHandles = getConditionalSplitHandles(sourceNode as any);
+      if (!validHandles.some((h) => h.id === connection.sourceHandle)) {
+        return false;
+      }
+    }
+  } else if (
+    sourceNode.data?.type === 'STEP' &&
+    connection.sourceHandle === 'error' &&
+    !isErrorCapableStep(sourceNode as any)
+  ) {
+    return false;
+  }
+
+  if (isJoinNode(targetNode as any)) {
+    const targetHandle = connection.targetHandle;
+    if (targetHandle !== 'left' && targetHandle !== 'right') {
+      return false;
+    }
+    const handleOccupied = currentEdges.some(
+      (e) => e.target === connection.target && e.targetHandle === targetHandle
+    );
+    return !handleOccupied;
+  }
+
+  const inputArity = getNodeInputArity(targetNode as any);
+  if (inputArity === 'n') {
+    const duplicateEdge = currentEdges.some(
+      (e) =>
+        e.source === connection.source &&
+        e.target === connection.target &&
+        (e.sourceHandle ?? null) === (connection.sourceHandle ?? null)
+    );
+    return !duplicateEdge;
+  }
+
+  const alreadyHasInput = currentEdges.some((e) => e.target === connection.target);
+  return !alreadyHasInput;
+}
+
+/**
+ * Manages pipeline graph nodes, edges, selection, validation, execution planning, layout, and mutations.
  */
 export function usePipelineGraph({
   takeSnapshot,
   setPipelineConfig,
   project,
   fitView,
+  jobConfig,
 }: UsePipelineGraphOptions) {
   const [nodes, setNodes, onNodesChange] = useNodesState<PipelineNodeData>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -80,7 +177,6 @@ export function usePipelineGraph({
 
   const hasPubSubSource = nodes.some(isPubSubSourceNode);
 
-  // Wrap state changes to set needsRebuild: true when structural nodes change
   const handleNodesChange = useCallback(
     (changes: any) => {
       onNodesChange(changes);
@@ -92,7 +188,6 @@ export function usePipelineGraph({
     [onNodesChange, setPipelineConfig]
   );
 
-  // Wrap edge changes to set needsRebuild: true when edges are removed
   const handleEdgesChange = useCallback(
     (changes: any) => {
       onEdgesChange(changes);
@@ -104,35 +199,36 @@ export function usePipelineGraph({
     [onEdgesChange, setPipelineConfig]
   );
 
-  // Validate connections between nodes
   const isValidConnection = useCallback(
-    (connection: Connection) => {
-      const sourceNode = nodes.find((n) => n.id === connection.source);
-      const targetNode = nodes.find((n) => n.id === connection.target);
-
-      if (!sourceNode || !targetNode) {
-        return false;
-      }
-
-      return true;
-    },
-    [nodes]
+    (connection: Connection) => canConnectEdge(connection, nodes, edges),
+    [nodes, edges]
   );
 
-  // Connects two nodes with an edge and flags pipeline for rebuild
   const onConnect = useCallback(
     (params: Connection | Edge) => {
+      if (!params.source || !params.target) {
+        return;
+      }
+      const normalizedConnection: Connection = {
+        source: params.source,
+        target: params.target,
+        sourceHandle: params.sourceHandle ?? null,
+        targetHandle: params.targetHandle ?? null,
+      };
+      if (!canConnectEdge(normalizedConnection, nodes, edges)) {
+        return;
+      }
       takeSnapshot();
-      setEdges((eds) => addEdge(params, eds));
+      setEdges((eds) =>
+        canConnectEdge(normalizedConnection, nodes, eds) ? addEdge(params, eds) : eds
+      );
       setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
-    [setEdges, takeSnapshot, setPipelineConfig]
+    [nodes, edges, setEdges, takeSnapshot, setPipelineConfig]
   );
 
-  // Updates properties and special instructions for a specific node
   const handleApplyProperties = useCallback(
     (nodeId: string, properties: any) => {
-      console.log('[@usePipelineGraph] handleApplyProperties called', nodeId, properties);
       takeSnapshot();
       setNodes((nds) =>
         nds.map((node) => {
@@ -160,7 +256,6 @@ export function usePipelineGraph({
     [setNodes, takeSnapshot, setPipelineConfig]
   );
 
-  // Updates the label/name of a specific node
   const handleNodeLabelChange = useCallback(
     (nodeId: string, newLabel: string) => {
       takeSnapshot();
@@ -183,118 +278,6 @@ export function usePipelineGraph({
     [setNodes, takeSnapshot, setPipelineConfig]
   );
 
-  /**
-   * Inserts a KV Mapper step before a Window node.
-   * NOTE: Rewires ALL incoming edges that targeted the Window node to target the new KV Mapper,
-   * preserving edge attributes and unique IDs. Connects the new KV Mapper to the Window node.
-   */
-  const handleAddKVMapper = useCallback(
-    (windowNodeId: string) => {
-      const windowNode = nodes.find((n) => n.id === windowNodeId);
-      if (!windowNode) return;
-
-      const kvMapperId = createNodeId('kv_mapper_');
-      const newKVMapperNode: PipelineNode = {
-        id: kvMapperId,
-        type: 'pipeline',
-        position: {
-          x: windowNode.position.x - 250,
-          y: windowNode.position.y,
-        },
-        data: {
-          label: 'KV Mapper',
-          type: 'STEP',
-          iconName: 'Hash',
-          spark_transform: 'KVMapper',
-          properties: {
-            keyPropertyName: 'id',
-          },
-        },
-      };
-
-      takeSnapshot();
-
-      // Redirect ALL incoming edges to target the new KV Mapper instead.
-      // NOTE: We map over all edges targeting windowNodeId rather than using findIndex,
-      // ensuring multiple inbound edges are all rewired to the new KV Mapper.
-      // Edge IDs and other edge properties are preserved to prevent DAG corruption.
-      const updatedEdges = edges.map((edge) => {
-        if (edge.target === windowNodeId) {
-          return {
-            ...edge,
-            target: kvMapperId,
-            targetHandle: undefined,
-          };
-        }
-        return edge;
-      });
-
-      // Add the new edge connecting KV Mapper valid output to Window input
-      const connectorEdge = {
-        id: `e-${kvMapperId}-${windowNodeId}`,
-        source: kvMapperId,
-        sourceHandle: 'valid',
-        target: windowNodeId,
-      };
-      updatedEdges.push(connectorEdge);
-
-      // Update both nodes and edges states
-      setNodes((nds) => nds.concat(newKVMapperNode));
-      setEdges(updatedEdges);
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
-    },
-    [nodes, edges, setNodes, setEdges, takeSnapshot, setPipelineConfig]
-  );
-
-  /**
-   * Inserts a PubSubIO Source node in front of a target node (e.g. FhirIO with readResources()).
-   */
-  const handleAddPubSubSource = useCallback(
-    (targetNodeId: string) => {
-      const targetNode = nodes.find((n) => n.id === targetNodeId);
-      if (!targetNode) return;
-
-      // Avoid adding a duplicate upstream PubSubIO if one is already connected
-      const alreadyConnected = edges.some((e) => {
-        if (e.target !== targetNodeId) return false;
-        const src = nodes.find((n) => n.id === e.source);
-        return isPubSubNode(src);
-      });
-      if (alreadyConnected) return;
-
-      const pubSubId = createNodeId('pubsub_');
-      const newPubSubNode: PipelineNode = {
-        id: pubSubId,
-        type: 'pipeline',
-        position: {
-          x: targetNode.position.x - 250,
-          y: targetNode.position.y,
-        },
-        data: {
-          label: 'PubSub',
-          type: 'SOURCE',
-          iconName: 'Radio',
-          spark_transform: 'PubSubIO',
-          properties: {
-            readMode: 'subscription',
-          },
-        },
-      };
-
-      const connectorEdge: Edge = {
-        id: `e-${pubSubId}-${targetNodeId}`,
-        source: pubSubId,
-        target: targetNodeId,
-      };
-
-      takeSnapshot();
-      setNodes((nds) => nds.concat(newPubSubNode));
-      setEdges((eds) => eds.concat(connectorEdge));
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
-    },
-    [nodes, edges, setNodes, setEdges, takeSnapshot, setPipelineConfig]
-  );
-
   const triggerFitView = useCallback(() => {
     if (fitView) {
       setTimeout(() => {
@@ -311,7 +294,14 @@ export function usePipelineGraph({
   }, [nodes, edges, setNodes, takeSnapshot, triggerFitView]);
 
   const onDragStart = useCallback(
-    (event: React.DragEvent, nodeType: string, label: string, type: string, iconName: string, sparkTransform?: string) => {
+    (
+      event: React.DragEvent,
+      nodeType: string,
+      label: string,
+      type: string,
+      iconName: string,
+      sparkTransform?: string
+    ) => {
       event.dataTransfer.setData(
         'application/reactflow',
         JSON.stringify({ nodeType, label, type, iconName, sparkTransform })
@@ -326,11 +316,6 @@ export function usePipelineGraph({
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
-  /**
-   * Handles the drop event when a node is dragged from the sidebar onto the canvas.
-   * It creates a new node at the drop position and automatically connects it to a source
-   * if it's the first step or if it's a PubSub specific step.
-   */
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
@@ -367,10 +352,6 @@ export function usePipelineGraph({
     [project, setNodes, setEdges, nodes, edges, takeSnapshot, setPipelineConfig]
   );
 
-  /**
-   * Directly adds a node to the React Flow canvas when '+' is clicked on a SidebarItem,
-   * and triggers auto-layout + fitView so the newly added node is immediately visible on screen.
-   */
   const handleAddNode = useCallback(
     (label: string, type: string, iconName: string, sparkTransform?: string) => {
       const nodeCount = nodes.length;
@@ -399,12 +380,13 @@ export function usePipelineGraph({
     [nodes, edges, setNodes, setEdges, takeSnapshot, setPipelineConfig, triggerFitView]
   );
 
-  // Deletes currently selected node or edge and records undo snapshot
   const deleteSelected = useCallback(() => {
     if (selectedNodeId) {
       takeSnapshot();
       setNodes((nds) => nds.filter((node) => node.id !== selectedNodeId));
-      setEdges((eds) => eds.filter((edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId));
+      setEdges((eds) =>
+        eds.filter((edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId)
+      );
       setSelectedNodeId(null);
       setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     } else if (selectedEdgeId) {
@@ -415,44 +397,93 @@ export function usePipelineGraph({
     }
   }, [selectedNodeId, selectedEdgeId, setNodes, setEdges, takeSnapshot, setPipelineConfig]);
 
-  // Dynamically compute DAG topology validation using Kahn's algorithm
   const dagValidation = useMemo<DagValidationResult>(
-    () => validateDagTopology(nodes as any, edges as any),
+    () =>
+      validateDagTopology(
+        nodes as any,
+        edges as any,
+        jobConfig?.checkpointRoot !== undefined ? { jobConfig } : undefined
+      ),
+    [nodes, edges, jobConfig]
+  );
+
+  const streamingPropagation = useMemo(
+    () => computeStreamingNodeSet(nodes as any, edges as any),
     [nodes, edges]
   );
 
-  // Decorate nodes with topological error/warning flags for React Flow canvas rendering
+  const executionPlan = useMemo<ExecutionPlan>(
+    () => buildExecutionPlan(nodes as any, edges as any, jobConfig),
+    [nodes, edges, jobConfig]
+  );
+
+  const pipelineMode: ReadMode = executionPlan.pipelineMode;
+
   const displayNodes = useMemo(() => {
     const cycleSet = new Set(dagValidation.cycleNodeIds);
     const orphanSet = new Set(dagValidation.orphanNodeIds);
     const missingUpstreamSet = new Set(dagValidation.missingUpstreamNodeIds || []);
     const invalidUpstreamSet = new Set(dagValidation.invalidUpstreamNodeIds || []);
-    const sideInputMismatchSet = new Set(dagValidation.sideInputMismatchNodeIds || []);
+    const nodeErrorsMap = dagValidation.nodeErrors;
+    const nodeWarningsMap = dagValidation.nodeWarnings;
 
     return nodes.map((node) => {
+      const nodeErrors = nodeErrorsMap?.[node.id];
+      const nodeWarnings = nodeWarningsMap?.[node.id];
       const isMissingUpstream = missingUpstreamSet.has(node.id);
       const isInvalidUpstream = invalidUpstreamSet.has(node.id);
-      const isSideInputMismatch = sideInputMismatchSet.has(node.id);
       const hasCycle = cycleSet.has(node.id);
-      const hasValidationError = isMissingUpstream || isInvalidUpstream || isSideInputMismatch;
+      const hasValidationError =
+        Boolean(nodeErrors && nodeErrors.length > 0) || isMissingUpstream || isInvalidUpstream;
       const isOrphan = orphanSet.has(node.id);
-      const isDicom = isDicomIoNode(node);
-      const transformName = isDicom ? 'DicomIO' : 'FhirIO';
-      const requiredMode = isDicom ? 'readStudyMetadata' : 'readResources';
-      const readMode = node.data?.properties?.readMode || requiredMode;
-      const validationError = isMissingUpstream
-        ? `${transformName}.${requiredMode}() requires an upstream PubSubIO node connected in front of it.`
-        : isInvalidUpstream
-        ? `${transformName}.${readMode}() does not accept an upstream connection. Remove the connected upstream node or switch back to ${transformName}.${requiredMode}().`
-        : hasCycle
-        ? dagValidation.errors[0]
-        : undefined;
+
+      const matchedError = dagValidation.errors.find(
+        (err) => err.includes(node.id) || (node.data.label && err.includes(node.data.label))
+      );
+
+      const validationError =
+        nodeErrors && nodeErrors.length > 0
+          ? nodeErrors[0]
+          : hasCycle
+          ? dagValidation.errors.find((err) => err.includes('Cyclic')) || dagValidation.errors[0]
+          : isMissingUpstream
+          ? matchedError || 'Node is missing a required upstream input connection.'
+          : isInvalidUpstream
+          ? matchedError || 'Node has an invalid upstream input connection.'
+          : undefined;
+
+      const validationWarning =
+        nodeWarnings && nodeWarnings.length > 0
+          ? nodeWarnings[0]
+          : isOrphan
+          ? 'Orphan node: disconnected from pipeline'
+          : undefined;
+
+      const nodePlan = executionPlan.nodes[node.id];
+      const executionMode: ReadMode =
+        nodePlan?.executionMode ??
+        (streamingPropagation.streamingNodeIds.has(node.id) ? 'streaming' : 'batch');
+      const isCached = Boolean(nodePlan?.isCached);
+      const isForeachBatchSink = Boolean(nodePlan?.isForeachBatchSink);
+
+      let supportedReadModes = node.data.supportedReadModes;
+      if (node.data.type === 'SOURCE' && !supportedReadModes) {
+        supportedReadModes = getNodeCapabilities(
+          getNodeSparkTransform(node as any),
+          'SOURCE'
+        ).supportedReadModes;
+      }
 
       if (
         node.data.hasCycle === hasCycle &&
         node.data.hasValidationError === hasValidationError &&
         node.data.isOrphan === isOrphan &&
-        node.data.validationError === validationError
+        node.data.validationError === validationError &&
+        node.data.validationWarning === validationWarning &&
+        node.data.executionMode === executionMode &&
+        node.data.isCached === isCached &&
+        node.data.isForeachBatchSink === isForeachBatchSink &&
+        sameReadModes(node.data.supportedReadModes, supportedReadModes)
       ) {
         return node;
       }
@@ -465,13 +496,16 @@ export function usePipelineGraph({
           hasValidationError,
           isOrphan,
           validationError,
-          validationWarning: isOrphan ? 'Orphan node: disconnected from pipeline' : undefined,
+          validationWarning,
+          executionMode,
+          isCached,
+          isForeachBatchSink,
+          ...(supportedReadModes ? { supportedReadModes } : {}),
         },
       };
     });
-  }, [nodes, dagValidation]);
+  }, [nodes, dagValidation, executionPlan, streamingPropagation]);
 
-  // Decorate edges participating in cycles or invalid upstream connections with red styling
   const displayEdges = useMemo(() => {
     const cycleEdgeSet = new Set(dagValidation.cycleEdgeIds);
     const cycleNodeSet = new Set(dagValidation.cycleNodeIds);
@@ -517,6 +551,8 @@ export function usePipelineGraph({
     displayNodes,
     displayEdges,
     dagValidation,
+    executionPlan,
+    pipelineMode,
     onNodesChange,
     onEdgesChange,
     selectedNodeId,
@@ -530,8 +566,6 @@ export function usePipelineGraph({
     onConnect,
     handleApplyProperties,
     handleNodeLabelChange,
-    handleAddKVMapper,
-    handleAddPubSubSource,
     onLayout,
     onDrop,
     handleAddNode,

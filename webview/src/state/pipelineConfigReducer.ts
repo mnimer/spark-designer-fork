@@ -5,6 +5,11 @@
  */
 
 /**
+ * Language values accepted by `setLanguage` actions, including `'PySpark'` normalized to `'Python'`.
+ */
+export type PipelineLanguageInput = 'PySpark' | 'Python' | 'Java';
+
+/**
  * Configuration settings for the pipeline generator and language target.
  */
 export interface PipelineConfig {
@@ -17,13 +22,23 @@ export interface PipelineConfig {
  * Discriminated union of actions supported by `pipelineConfigReducer`.
  */
 export type PipelineConfigAction =
-  | { type: 'setLanguage'; language: 'Python' | 'Java' }
+  | { type: 'setLanguage'; language: PipelineLanguageInput }
   | { type: 'setOutputFolder'; folder: string }
   /** Host-driven sync; first hydration from '' does not dirty the pipeline, any later change does. */
   | { type: 'syncOutputFolderFromHost'; folder: string }
   | { type: 'markBuilt' }
   | { type: 'markDirty' }
-  | { type: 'reset'; config: PipelineConfig };
+  | { type: 'reset'; config: Omit<PipelineConfig, 'language'> & { language: PipelineLanguageInput } };
+
+/**
+ * Normalizes `'PySpark'` to `'Python'` so downstream file-lookup slices remain type-compatible.
+ *
+ * @param language Input language identifier.
+ * @returns Normalized `'Python' | 'Java'` language value.
+ */
+export function normalizePipelineLanguage(language: PipelineLanguageInput): 'Python' | 'Java' {
+  return language === 'Java' ? 'Java' : 'Python';
+}
 
 /**
  * Pure helper that merges a partial patch (excluding `needsRebuild`) into `prev`
@@ -72,7 +87,9 @@ export function pipelineConfigReducer(
 ): PipelineConfig {
   switch (action.type) {
     case 'setLanguage':
-      return withRebuildIfChanged(state, { language: action.language });
+      return withRebuildIfChanged(state, {
+        language: normalizePipelineLanguage(action.language),
+      });
 
     case 'setOutputFolder':
       return withRebuildIfChanged(state, { outputFolder: action.folder });
@@ -110,9 +127,10 @@ export function pipelineConfigReducer(
         needsRebuild: true,
       };
 
-    case 'reset':
+    case 'reset': {
+      const normalizedLanguage = normalizePipelineLanguage(action.config.language);
       if (
-        state.language === action.config.language &&
+        state.language === normalizedLanguage &&
         state.outputFolder === action.config.outputFolder &&
         state.needsRebuild === action.config.needsRebuild
       ) {
@@ -120,7 +138,9 @@ export function pipelineConfigReducer(
       }
       return {
         ...action.config,
+        language: normalizedLanguage,
       };
+    }
 
     default:
       return state;

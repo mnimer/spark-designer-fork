@@ -228,6 +228,7 @@ edges:
     render(<AppWithProvider />);
 
     expect(screen.getByTestId('canvas-toolbar')).toBeInTheDocument();
+    expect(screen.getByTestId('toolbar-pipeline-mode')).toHaveTextContent('BATCH');
     expect(screen.getByTestId('canvas-undo-button')).toBeDisabled();
     expect(screen.getByTestId('canvas-redo-button')).toBeDisabled();
     expect(screen.getByTestId('canvas-autolayout-button')).toHaveTextContent('Auto Layout');
@@ -351,104 +352,93 @@ edges:
     expect(outputFolderInput.value).toBe('test/parse message/parse-message-pipeline');
   });
 
-  it('spawns FileIO Match and FileIO Read Matches connected nodes on FileIO source drop', () => {
+  it('spawns a single Spark format source node on drop without legacy multi-node expansion', () => {
     render(<AppWithProvider />);
 
     const reactFlow = screen.getByTestId('react-flow');
+    reactFlow.getBoundingClientRect = vi.fn().mockReturnValue({ left: 0, top: 0 });
 
     fireEvent.drop(reactFlow, {
       clientX: 200,
       clientY: 200,
       dataTransfer: {
         getData: () => JSON.stringify({
-          nodeType: 'pipelineNode',
-          label: 'FileIO',
+          nodeType: 'pipeline',
+          label: 'CSV Source',
           type: 'SOURCE',
-          iconName: 'Folder',
-          sparkTransform: 'FileIO'
+          iconName: 'FileText',
+          sparkTransform: 'CsvSource'
         }),
       },
     });
 
-    expect(screen.getByText('FileIO Match')).toBeInTheDocument();
-    expect(screen.getByText('FileIO Read Matches')).toBeInTheDocument();
+    expect(screen.getByText('CSV Source')).toBeInTheDocument();
+    expect(capturedNodes).toHaveLength(1);
+    expect(capturedEdges).toHaveLength(0);
   });
 
-  /**
-   * M16 Finding Regression Test:
-   * Edge redirection must rewire ALL inbound edges when inserting a KV Mapper,
-   * not just the first one returned by findIndex.
-   */
-  it('M16: redirects ALL incoming edges when inserting KV Mapper before a Window node', async () => {
+  it('loads and validates direct SOURCE -> SINK pipelines cleanly without errors (A2)', () => {
     render(<AppWithProvider />);
 
-    // Load a pipeline with 3 source nodes, all connected to 1 Window node
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'csv-to-parquet.spark',
         data: `
 nodes:
-  - id: 's1'
+  - id: 'csv_1'
     type: 'pipeline'
-    position: { x: 100, y: 100 }
-    data: { label: 'Source 1', type: 'SOURCE', iconName: 'Radio' }
-  - id: 's2'
+    position: { x: 100, y: 150 }
+    data: { label: 'CSV Source', type: 'SOURCE', iconName: 'FileText', spark_transform: 'CsvSource' }
+  - id: 'parquet_1'
     type: 'pipeline'
-    position: { x: 100, y: 200 }
-    data: { label: 'Source 2', type: 'SOURCE', iconName: 'Radio' }
-  - id: 's3'
-    type: 'pipeline'
-    position: { x: 100, y: 300 }
-    data: { label: 'Source 3', type: 'SOURCE', iconName: 'Radio' }
-  - id: 'w1'
-    type: 'pipeline'
-    position: { x: 400, y: 200 }
-    data: { label: 'Window', type: 'STEP', iconName: 'Clock', spark_transform: 'Window', properties: { windowType: 'Session Window' } }
+    position: { x: 400, y: 150 }
+    data: { label: 'Parquet Sink', type: 'SINK', iconName: 'Database', spark_transform: 'ParquetSink' }
 edges:
-  - id: 'e-s1-w1'
-    source: 's1'
-    target: 'w1'
-  - id: 'e-s2-w1'
-    source: 's2'
-    target: 'w1'
-  - id: 'e-s3-w1'
-    source: 's3'
-    target: 'w1'
+  - id: 'e-csv-parquet'
+    source: 'csv_1'
+    target: 'parquet_1'
 `
       }
     }));
 
-    // Select the Window node to display PropertyPane
-    const windowNode = screen.getByTestId('node-w1');
-    fireEvent.click(windowNode);
+    expect(capturedNodes).toHaveLength(2);
+    expect(capturedEdges).toHaveLength(1);
+    expect(capturedNodes.every((n) => !n.data.hasValidationError)).toBe(true);
+    expect(capturedNodes.every((n) => !n.data.validationError)).toBe(true);
+    expect(screen.getByTestId('toolbar-pipeline-mode')).toHaveTextContent('BATCH');
+  });
 
-    // Find and click the 'Add KV Mapper' button inside Session Window property panel
-    // (the Windowing panel is code-split, so wait for its chunk to load)
-    const addKVMapperBtn = await screen.findByRole('button', { name: /Add KV Mapper/i });
-    expect(addKVMapperBtn).toBeInTheDocument();
-    fireEvent.click(addKVMapperBtn);
+  it('switches toolbar pipeline mode indicator to STREAMING when a streaming source is loaded (A4)', () => {
+    render(<AppWithProvider />);
 
-    // After insertion, all 3 original edges must target the newly inserted KV Mapper node
-    const edge1 = capturedEdges.find(e => e.id === 'e-s1-w1');
-    const edge2 = capturedEdges.find(e => e.id === 'e-s2-w1');
-    const edge3 = capturedEdges.find(e => e.id === 'e-s3-w1');
+    expect(screen.getByTestId('toolbar-pipeline-mode')).toHaveTextContent('BATCH');
 
-    expect(edge1).toBeDefined();
-    expect(edge2).toBeDefined();
-    expect(edge3).toBeDefined();
+    fireEvent(window, new MessageEvent('message', {
+      data: {
+        command: 'loadPipeline',
+        filename: 'kafka-to-iceberg.spark',
+        data: `
+nodes:
+  - id: 'kafka_1'
+    type: 'pipeline'
+    position: { x: 100, y: 150 }
+    data: { label: 'Kafka Stream', type: 'SOURCE', iconName: 'Radio', spark_transform: 'KafkaSource' }
+  - id: 'iceberg_1'
+    type: 'pipeline'
+    position: { x: 400, y: 150 }
+    data: { label: 'Iceberg Sink', type: 'SINK', iconName: 'Database', spark_transform: 'IcebergSink' }
+edges:
+  - id: 'e-k-i'
+    source: 'kafka_1'
+    target: 'iceberg_1'
+`
+      }
+    }));
 
-    // The new target should be the KV Mapper node (kv_mapper_...)
-    const newTargetId = edge1?.target;
-    expect(newTargetId).toMatch(/^kv_mapper_/);
-
-    // ALL three inbound edges must point to the new KV Mapper node (M16 fix verification)
-    expect(edge2?.target).toBe(newTargetId);
-    expect(edge3?.target).toBe(newTargetId);
-
-    // And a new connector edge connects KV Mapper to the window node
-    const connectorEdge = capturedEdges.find(e => e.source === newTargetId && e.target === 'w1');
-    expect(connectorEdge).toBeDefined();
+    expect(screen.getByTestId('toolbar-pipeline-mode')).toHaveTextContent('STREAMING');
+    expect(capturedNodes.find((n) => n.id === 'kafka_1')?.data.executionMode).toBe('streaming');
+    expect(capturedNodes.find((n) => n.id === 'iceberg_1')?.data.executionMode).toBe('streaming');
   });
 
   /**

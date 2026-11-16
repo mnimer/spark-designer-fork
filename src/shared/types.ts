@@ -68,3 +68,48 @@ export const DEFAULT_LANGUAGE: SupportedLanguage = 'PySpark';
  * Default Apache Spark runtime version baseline.
  */
 export const DEFAULT_SPARK_VERSION = '4.0';
+
+/**
+ * Trigger execution strategies supported by Spark Structured Streaming queries.
+ */
+export type SparkStreamingTriggerType =
+    | 'processingTime'
+    | 'availableNow'
+    | 'once'
+    | 'continuous';
+
+/**
+ * Trigger selector values for per-sink overrides, including pipeline inheritance.
+ */
+export type SparkSinkTriggerSelection = 'inherit' | SparkStreamingTriggerType;
+
+/**
+ * Output modes supported by Spark Structured Streaming DataStreamWriter sinks.
+ */
+export type SparkStreamingOutputMode = 'append' | 'complete' | 'update';
+
+/**
+ * Per-sink Structured Streaming configuration overrides stored in sink node properties.
+ */
+export interface SparkStreamingSinkOverrides {
+    /** Structured Streaming output mode ('append' default, 'complete', or 'update'). */
+    outputMode?: SparkStreamingOutputMode;
+    /** Trigger mode override, or 'inherit' to use the pipeline default trigger. */
+    triggerType?: SparkSinkTriggerSelection;
+    /** Trigger interval expression when triggerType uses an interval (for example '10 seconds'). */
+    triggerInterval?: string;
+    /** Explicit checkpoint URI override. If blank, Spark inherits '<checkpointRoot>/<nodeId>'. */
+    checkpointLocation?: string;
+}
+
+/**
+ * Pipeline-level Structured Streaming defaults stored in jobConfig.
+ */
+export interface SparkPipelineStreamingDefaults {
+    /** Base storage URI for streaming query checkpoints (for example 'gs://bucket/checkpoints'). */
+    checkpointRoot?: string;
+    /** Default trigger strategy inherited by streaming sinks ('processingTime' default). */
+    defaultTriggerType?: SparkStreamingTriggerType;
+    /** Default trigger interval inherited when defaultTriggerType uses an interval. */
+    defaultTriggerInterval?: string;
+}

@@ -1,15 +1,7 @@
 /**
- * Unit tests for usePipelineGraph hook
- * 
+ * Unit tests for usePipelineGraph hook.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
- * Tests:
- * - Empty initial nodes and edges
- * - Disallowing direct SOURCE to SINK connections
- * - M16: handleAddKVMapper rewires ALL inbound edges to new KV Mapper
- * - Node label modification
- * - Property application
- * - Edge and node deletion
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -30,7 +22,7 @@ describe('usePipelineGraph', () => {
     expect(result.current.hasPubSubSource).toBe(false);
   });
 
-  it('isValidConnection disallows direct connection from SOURCE to SINK', () => {
+  it('allows direct SOURCE -> SINK connections for zero-transform Spark pipelines (A2)', () => {
     const takeSnapshot = vi.fn();
     const setPipelineConfig = vi.fn();
 
@@ -38,26 +30,99 @@ describe('usePipelineGraph', () => {
       usePipelineGraph({ takeSnapshot, setPipelineConfig })
     );
 
-    // Set up source and sink nodes
+    const sparkNodes: PipelineNode[] = [
+      {
+        id: 'csv_src',
+        type: 'pipeline',
+        position: { x: 0, y: 0 },
+        data: { label: 'CSV Source', type: 'SOURCE', iconName: 'FileText', spark_transform: 'CsvSource' },
+      },
+      {
+        id: 'parquet_snk',
+        type: 'pipeline',
+        position: { x: 300, y: 0 },
+        data: { label: 'Parquet Sink', type: 'SINK', iconName: 'Database', spark_transform: 'ParquetSink' },
+      },
+      {
+        id: 'jdbc_src',
+        type: 'pipeline',
+        position: { x: 0, y: 160 },
+        data: { label: 'JDBC Source', type: 'SOURCE', iconName: 'Database', spark_transform: 'JdbcSource' },
+      },
+      {
+        id: 'bq_snk',
+        type: 'pipeline',
+        position: { x: 300, y: 160 },
+        data: { label: 'BigQuery Sink', type: 'SINK', iconName: 'Database', spark_transform: 'BigQuerySink' },
+      },
+      {
+        id: 'filter_step',
+        type: 'pipeline',
+        position: { x: 150, y: 80 },
+        data: { label: 'Filter', type: 'STEP', iconName: 'Filter', spark_transform: 'Filter' },
+      },
+    ];
+
     act(() => {
-      result.current.setNodes([
-        { id: 'src', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Source', type: 'SOURCE', iconName: 'Radio' } },
-        { id: 'snk', type: 'pipeline', position: { x: 200, y: 0 }, data: { label: 'Sink', type: 'SINK', iconName: 'Database' } },
-        { id: 'step', type: 'pipeline', position: { x: 100, y: 0 }, data: { label: 'Step', type: 'STEP', iconName: 'Clock' } },
-      ]);
+      result.current.setNodes(sparkNodes);
     });
 
-    // SOURCE -> SINK is invalid
-    expect(result.current.isValidConnection({ source: 'src', target: 'snk', sourceHandle: null, targetHandle: null })).toBe(false);
+    // Direct SOURCE -> SINK connections (CSV -> Parquet, JDBC -> BigQuery) are valid
+    expect(
+      result.current.isValidConnection({
+        source: 'csv_src',
+        target: 'parquet_snk',
+        sourceHandle: null,
+        targetHandle: null,
+      })
+    ).toBe(true);
+    expect(
+      result.current.isValidConnection({
+        source: 'jdbc_src',
+        target: 'bq_snk',
+        sourceHandle: null,
+        targetHandle: null,
+      })
+    ).toBe(true);
 
-    // SOURCE -> STEP is valid
-    expect(result.current.isValidConnection({ source: 'src', target: 'step', sourceHandle: null, targetHandle: null })).toBe(true);
+    // SOURCE -> STEP and STEP -> SINK remain valid
+    expect(
+      result.current.isValidConnection({
+        source: 'csv_src',
+        target: 'filter_step',
+        sourceHandle: null,
+        targetHandle: null,
+      })
+    ).toBe(true);
+    expect(
+      result.current.isValidConnection({
+        source: 'filter_step',
+        target: 'parquet_snk',
+        sourceHandle: 'valid',
+        targetHandle: null,
+      })
+    ).toBe(true);
 
-    // STEP -> SINK is valid
-    expect(result.current.isValidConnection({ source: 'step', target: 'snk', sourceHandle: null, targetHandle: null })).toBe(true);
+    // Connect CSV -> Parquet directly via onConnect and verify DAG validation
+    act(() => {
+      result.current.setNodes([sparkNodes[0], sparkNodes[1]]);
+    });
+    act(() => {
+      result.current.onConnect({
+        source: 'csv_src',
+        target: 'parquet_snk',
+        sourceHandle: null,
+        targetHandle: null,
+      });
+    });
+
+    expect(result.current.edges).toHaveLength(1);
+    expect(result.current.dagValidation.isValid).toBe(true);
+    expect(result.current.displayNodes.every((n) => !n.data.hasValidationError)).toBe(true);
+    expect(result.current.displayNodes.every((n) => !n.data.validationError)).toBe(true);
   });
 
-  it('handleAddKVMapper rewires ALL inbound edges targeting window node (M16)', () => {
+  it('rejects self-connections, connections targeting SOURCE, and connections originating from SINK', () => {
     const takeSnapshot = vi.fn();
     const setPipelineConfig = vi.fn();
 
@@ -67,38 +132,35 @@ describe('usePipelineGraph', () => {
 
     act(() => {
       result.current.setNodes([
-        { id: 's1', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Source 1', type: 'SOURCE', iconName: 'Radio' } },
-        { id: 's2', type: 'pipeline', position: { x: 0, y: 100 }, data: { label: 'Source 2', type: 'SOURCE', iconName: 'Radio' } },
-        { id: 'w1', type: 'pipeline', position: { x: 300, y: 50 }, data: { label: 'Window', type: 'STEP', iconName: 'Clock' } },
-      ]);
-      result.current.setEdges([
-        { id: 'e1', source: 's1', target: 'w1' },
-        { id: 'e2', source: 's2', target: 'w1' },
+        { id: 'src', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Source', type: 'SOURCE', iconName: 'Radio', spark_transform: 'KafkaSource' } },
+        { id: 'step', type: 'pipeline', position: { x: 150, y: 0 }, data: { label: 'Step', type: 'STEP', iconName: 'Code', spark_transform: 'Select' } },
+        { id: 'snk', type: 'pipeline', position: { x: 300, y: 0 }, data: { label: 'Sink', type: 'SINK', iconName: 'Database', spark_transform: 'IcebergSink' } },
       ]);
     });
 
+    // Self-connections rejected
+    expect(result.current.isValidConnection({ source: 'step', target: 'step', sourceHandle: 'valid', targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'src', target: 'src', sourceHandle: null, targetHandle: null })).toBe(false);
+
+    // Targeting a SOURCE rejected
+    expect(result.current.isValidConnection({ source: 'step', target: 'src', sourceHandle: 'valid', targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'src', target: 'src', sourceHandle: null, targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'snk', target: 'src', sourceHandle: null, targetHandle: null })).toBe(false);
+
+    // Originating from a SINK rejected
+    expect(result.current.isValidConnection({ source: 'snk', target: 'step', sourceHandle: null, targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'snk', target: 'snk', sourceHandle: null, targetHandle: null })).toBe(false);
+
+    // Missing endpoints or unknown node IDs rejected
+    expect(result.current.isValidConnection({ source: null, target: 'snk', sourceHandle: null, targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'unknown', target: 'snk', sourceHandle: null, targetHandle: null })).toBe(false);
+
+    // Programmatic onConnect also ignores invalid connections
     act(() => {
-      result.current.handleAddKVMapper('w1');
+      result.current.onConnect({ source: 'snk', target: 'step', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 'step', target: 'src', sourceHandle: 'valid', targetHandle: null });
     });
-
-    expect(takeSnapshot).toHaveBeenCalled();
-    expect(setPipelineConfig).toHaveBeenCalled();
-
-    // Check newly added node
-    const kvNode = result.current.nodes.find((n) => n.data.spark_transform === 'KVMapper');
-    expect(kvNode).toBeDefined();
-    const kvId = kvNode!.id;
-
-    // Both e1 and e2 must be rewired to kvId
-    const e1 = result.current.edges.find((e) => e.id === 'e1');
-    const e2 = result.current.edges.find((e) => e.id === 'e2');
-    expect(e1?.target).toBe(kvId);
-    expect(e2?.target).toBe(kvId);
-
-    // New connector edge links kvId to w1
-    const connector = result.current.edges.find((e) => e.source === kvId && e.target === 'w1');
-    expect(connector).toBeDefined();
-    expect(connector?.sourceHandle).toBe('valid');
+    expect(result.current.edges).toHaveLength(0);
   });
 
   it('handleNodeLabelChange updates node label and flags pipeline for rebuild', () => {
@@ -211,9 +273,8 @@ describe('usePipelineGraph', () => {
       usePipelineGraph({ takeSnapshot, setPipelineConfig, fitView })
     );
 
-    // 1. Add a PubSub source node via '+'
     act(() => {
-      result.current.handleAddNode('PubSub', 'SOURCE', 'Radio', 'PubSubIO');
+      result.current.handleAddNode('PubSub', 'SOURCE', 'Radio', 'PubSubSource');
     });
 
     expect(result.current.nodes).toHaveLength(1);
@@ -224,34 +285,15 @@ describe('usePipelineGraph', () => {
     });
     expect(fitView).toHaveBeenCalledWith({ duration: 300, padding: 1 });
 
-    // 2. Add a first STEP node via '+' — auto-connects to the source and lays out into column 1 (x = 380)
     fitView.mockClear();
     act(() => {
-      result.current.handleAddNode('ParDo', 'STEP', 'Code', 'ParDo');
+      result.current.handleAddNode('Filter', 'STEP', 'Filter', 'Filter');
     });
 
     expect(result.current.nodes).toHaveLength(2);
     expect(result.current.edges).toHaveLength(1);
     expect(result.current.nodes[0].position).toEqual({ x: 80, y: 150 });
     expect(result.current.nodes[1].position).toEqual({ x: 380, y: 150 });
-
-    act(() => {
-      vi.advanceTimersByTime(150);
-    });
-    expect(fitView).toHaveBeenCalledWith({ duration: 300, padding: 1 });
-
-    // 3. Add a FileIO source via '+' — spawns FileIO Match (col 0) and FileIO Read Matches (col 1) and lays out all 4 nodes
-    fitView.mockClear();
-    act(() => {
-      result.current.handleAddNode('FileIO', 'SOURCE', 'Folder', 'FileIO');
-    });
-
-    expect(result.current.nodes).toHaveLength(4);
-    expect(result.current.edges).toHaveLength(2);
-    const matchNode = result.current.nodes.find((n) => n.data.spark_transform === 'FileIO.match');
-    const readMatchesNode = result.current.nodes.find((n) => n.data.spark_transform === 'FileIO.readMatches');
-    expect(matchNode?.position.x).toBe(80);
-    expect(readMatchesNode?.position.x).toBe(380);
 
     act(() => {
       vi.advanceTimersByTime(150);
@@ -269,8 +311,8 @@ describe('usePipelineGraph', () => {
     );
 
     act(() => {
-      result.current.handleAddNode('Source 1', 'SOURCE', 'Radio');
-      result.current.handleAddNode('Source 2', 'SOURCE', 'Radio');
+      result.current.handleAddNode('Source 1', 'SOURCE', 'Radio', 'CsvSource');
+      result.current.handleAddNode('Source 2', 'SOURCE', 'Radio', 'ParquetSource');
     });
 
     expect(result.current.nodes).toHaveLength(2);
@@ -278,7 +320,60 @@ describe('usePipelineGraph', () => {
     expect(result.current.nodes[0].id).not.toBe(result.current.nodes[1].id);
   });
 
-  it('keeps all nodes and edges when adding a regular node and a FileIO pair back-to-back in the same act()', () => {
+  it('decorates displayNodes with executionMode, supportedReadModes, isCached, isForeachBatchSink, and exposes pipelineMode (A4)', () => {
+    const takeSnapshot = vi.fn();
+    const setPipelineConfig = vi.fn();
+
+    const { result } = renderHook(() =>
+      usePipelineGraph({ takeSnapshot, setPipelineConfig })
+    );
+
+    // 1. Batch fan-out pipeline: CsvSource -> WithColumns -> (ParquetSink + BigQuerySink)
+    act(() => {
+      result.current.setNodes([
+        { id: 'csv', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'CSV', type: 'SOURCE', iconName: 'FileText', spark_transform: 'CsvSource' } },
+        { id: 'enrich', type: 'pipeline', position: { x: 200, y: 0 }, data: { label: 'WithColumns', type: 'STEP', iconName: 'Code', spark_transform: 'WithColumns' } },
+        { id: 'snk1', type: 'pipeline', position: { x: 400, y: -50 }, data: { label: 'Parquet', type: 'SINK', iconName: 'Database', spark_transform: 'ParquetSink' } },
+        { id: 'snk2', type: 'pipeline', position: { x: 400, y: 50 }, data: { label: 'BigQuery', type: 'SINK', iconName: 'Database', spark_transform: 'BigQuerySink' } },
+      ]);
+      result.current.setEdges([
+        { id: 'e1', source: 'csv', target: 'enrich' },
+        { id: 'e2', source: 'enrich', sourceHandle: 'valid', target: 'snk1' },
+        { id: 'e3', source: 'enrich', sourceHandle: 'valid', target: 'snk2' },
+      ]);
+    });
+
+    expect(result.current.pipelineMode).toBe('batch');
+    const csvDisplay = result.current.displayNodes.find((n) => n.id === 'csv')!;
+    const enrichDisplay = result.current.displayNodes.find((n) => n.id === 'enrich')!;
+    const snk1Display = result.current.displayNodes.find((n) => n.id === 'snk1')!;
+    expect(csvDisplay.data.executionMode).toBe('batch');
+    expect(csvDisplay.data.supportedReadModes).toEqual(['batch', 'streaming']);
+    expect(enrichDisplay.data.executionMode).toBe('batch');
+    expect(enrichDisplay.data.isCached).toBe(true);
+    expect(snk1Display.data.executionMode).toBe('batch');
+    expect(snk1Display.data.isForeachBatchSink).toBe(false);
+
+    // 2. Switch CsvSource readMode to streaming and write to SpannerSink (foreachBatch)
+    act(() => {
+      result.current.setNodes([
+        { id: 'kafka', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Kafka', type: 'SOURCE', iconName: 'Radio', spark_transform: 'KafkaSource' } },
+        { id: 'spanner', type: 'pipeline', position: { x: 300, y: 0 }, data: { label: 'Spanner', type: 'SINK', iconName: 'Database', spark_transform: 'SpannerSink' } },
+      ]);
+      result.current.setEdges([
+        { id: 'e-ks', source: 'kafka', target: 'spanner' },
+      ]);
+    });
+
+    expect(result.current.pipelineMode).toBe('streaming');
+    const kafkaDisplay = result.current.displayNodes.find((n) => n.id === 'kafka')!;
+    const spannerDisplay = result.current.displayNodes.find((n) => n.id === 'spanner')!;
+    expect(kafkaDisplay.data.executionMode).toBe('streaming');
+    expect(spannerDisplay.data.executionMode).toBe('streaming');
+    expect(spannerDisplay.data.isForeachBatchSink).toBe(true);
+  });
+
+  it('restricts outgoing error handle connections to error-capable steps only (A5)', () => {
     const takeSnapshot = vi.fn();
     const setPipelineConfig = vi.fn();
 
@@ -287,144 +382,122 @@ describe('usePipelineGraph', () => {
     );
 
     act(() => {
-      result.current.handleAddNode('PubSub', 'SOURCE', 'Radio', 'PubSubIO');
-      result.current.handleAddNode('FileIO', 'SOURCE', 'Folder', 'FileIO');
+      result.current.setNodes([
+        { id: 'select', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Select', type: 'STEP', iconName: 'Code', spark_transform: 'Select' } },
+        { id: 'parse', type: 'pipeline', position: { x: 0, y: 120 }, data: { label: 'ParsePayload', type: 'STEP', iconName: 'FileCode', spark_transform: 'ParsePayload' } },
+        { id: 'dlq', type: 'pipeline', position: { x: 300, y: 120 }, data: { label: 'DLQ Console', type: 'SINK', iconName: 'Terminal', spark_transform: 'ConsoleSink' } },
+      ]);
     });
 
-    // 1 PubSub + 2 FileIO nodes = 3 nodes
-    expect(result.current.nodes).toHaveLength(3);
-    const ids = new Set(result.current.nodes.map((n) => n.id));
-    expect(ids.size).toBe(3);
-    expect(result.current.edges).toHaveLength(1);
+    expect(result.current.isValidConnection({ source: 'select', sourceHandle: 'error', target: 'dlq', targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'select', sourceHandle: 'valid', target: 'dlq', targetHandle: null })).toBe(true);
+    expect(result.current.isValidConnection({ source: 'parse', sourceHandle: 'error', target: 'dlq', targetHandle: null })).toBe(true);
   });
-});
 
-
-describe('usePipelineGraph — ParDo side inputs (F1)', () => {
-  const baseNodes = (): PipelineNode[] => [
-    { id: 'src', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'PubSub', type: 'SOURCE', iconName: 'Radio', spark_transform: 'PubSubIO' } },
-    { id: 'lookup', type: 'pipeline', position: { x: 0, y: 200 }, data: { label: 'Lookup Table', type: 'SOURCE', iconName: 'Database', spark_transform: 'BigQueryIO' } },
-    { id: 'pardo', type: 'pipeline', position: { x: 300, y: 0 }, data: { label: 'Enrich', type: 'STEP', iconName: 'Code', spark_transform: 'ParDo', properties: {} } },
-    { id: 'map', type: 'pipeline', position: { x: 300, y: 200 }, data: { label: 'Map', type: 'STEP', iconName: 'Code', spark_transform: 'Map', properties: {} } },
-    { id: 'sink', type: 'pipeline', position: { x: 600, y: 0 }, data: { label: 'BigQuery', type: 'SINK', iconName: 'Database', spark_transform: 'BigQueryIO' } },
-  ];
-
-  const setup = () => {
+  it('enforces Join left/right single-edge handles, N-input multi-edges, and single-input step/sink arity (A6)', () => {
     const takeSnapshot = vi.fn();
     const setPipelineConfig = vi.fn();
-    const hook = renderHook(() => usePipelineGraph({ takeSnapshot, setPipelineConfig }));
-    act(() => {
-      hook.result.current.setNodes(baseNodes());
-    });
-    return { ...hook, takeSnapshot, setPipelineConfig };
-  };
 
-  it('isValidConnection only accepts side_input connections on ParDo targets', () => {
-    const { result } = setup();
-    expect(result.current.isValidConnection({ source: 'lookup', target: 'pardo', sourceHandle: null, targetHandle: 'side_input' })).toBe(true);
-    expect(result.current.isValidConnection({ source: 'lookup', target: 'map', sourceHandle: null, targetHandle: 'side_input' })).toBe(false);
-  });
-
-  it('auto-creates a sideInputs binding when an edge connects to the side_input handle', () => {
-    const { result } = setup();
+    const { result } = renderHook(() =>
+      usePipelineGraph({ takeSnapshot, setPipelineConfig })
+    );
 
     act(() => {
-      result.current.onConnect({ source: 'src', target: 'pardo', sourceHandle: null, targetHandle: null });
-      result.current.onConnect({ source: 'lookup', target: 'pardo', sourceHandle: null, targetHandle: 'side_input' });
-    });
-
-    const pardo = result.current.nodes.find((n) => n.id === 'pardo')!;
-    expect(pardo.data.properties?.sideInputs).toEqual([
-      expect.objectContaining({
-        sourceNodeId: 'lookup',
-        sourceLabel: 'Lookup Table',
-        variableName: 'lookupTable',
-        viewType: 'SINGLETON',
-        refreshPattern: 'STATIC',
-      }),
-    ]);
-    // Non-ParDo nodes are never touched
-    expect(result.current.nodes.find((n) => n.id === 'map')!.data.properties?.sideInputs).toBeUndefined();
-  });
-
-  it('removes the binding when the side_input edge is deleted and preserves user config for surviving bindings', () => {
-    const { result } = setup();
-
-    act(() => {
-      result.current.setEdges([
-        { id: 'e-main', source: 'src', target: 'pardo' },
-        { id: 'e-side', source: 'lookup', target: 'pardo', targetHandle: 'side_input' },
-      ]);
-    });
-    expect(result.current.nodes.find((n) => n.id === 'pardo')!.data.properties?.sideInputs).toHaveLength(1);
-
-    // User customises the binding through the property panel
-    act(() => {
-      result.current.handleApplyProperties('pardo', {
-        sideInputs: [
-          { sourceNodeId: 'lookup', sourceLabel: 'Lookup Table', variableName: 'rates', viewType: 'MAP', hasDefaultValue: false, defaultValue: '', refreshPattern: 'STATIC', updateIntervalSeconds: 3600 },
-        ],
-      });
-    });
-    expect(result.current.nodes.find((n) => n.id === 'pardo')!.data.properties?.sideInputs[0]).toMatchObject({ variableName: 'rates', viewType: 'MAP' });
-
-    // Edge removal → binding dropped
-    act(() => {
-      result.current.setEdges((eds) => eds.filter((e) => e.id !== 'e-side'));
-    });
-    expect(result.current.nodes.find((n) => n.id === 'pardo')!.data.properties?.sideInputs).toEqual([]);
-  });
-
-  it('refreshes sourceLabel when the upstream node is renamed', () => {
-    const { result } = setup();
-    act(() => {
-      result.current.setEdges([
-        { id: 'e-main', source: 'src', target: 'pardo' },
-        { id: 'e-side', source: 'lookup', target: 'pardo', targetHandle: 'side_input' },
-      ]);
-    });
-    act(() => {
-      result.current.handleNodeLabelChange('lookup', 'FX Rates');
-    });
-    expect(result.current.nodes.find((n) => n.id === 'pardo')!.data.properties?.sideInputs[0]).toMatchObject({
-      sourceLabel: 'FX Rates',
-      variableName: 'lookupTable', // identifier is user-owned and must not be regenerated on rename
-    });
-  });
-
-  it('renders side_input edges dashed with a "side" label and leaves main edges untouched', () => {
-    const { result } = setup();
-    act(() => {
-      result.current.setEdges([
-        { id: 'e-main', source: 'src', target: 'pardo' },
-        { id: 'e-side', source: 'lookup', target: 'pardo', targetHandle: 'side_input' },
-        { id: 'e-out', source: 'pardo', target: 'sink', sourceHandle: 'valid' },
+      result.current.setNodes([
+        { id: 's1', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Orders', type: 'SOURCE', iconName: 'Database', spark_transform: 'BigQuerySource' } },
+        { id: 's2', type: 'pipeline', position: { x: 0, y: 100 }, data: { label: 'Customers', type: 'SOURCE', iconName: 'Database', spark_transform: 'CloudSqlSource' } },
+        { id: 's3', type: 'pipeline', position: { x: 0, y: 200 }, data: { label: 'Archive', type: 'SOURCE', iconName: 'FileText', spark_transform: 'ParquetSource' } },
+        { id: 'join', type: 'pipeline', position: { x: 250, y: 50 }, data: { label: 'Join', type: 'STEP', iconName: 'GitMerge', spark_transform: 'Join' } },
+        { id: 'union', type: 'pipeline', position: { x: 250, y: 180 }, data: { label: 'Union', type: 'STEP', iconName: 'Layers', spark_transform: 'UnionByName' } },
+        { id: 'sql', type: 'pipeline', position: { x: 250, y: 280 }, data: { label: 'SQL', type: 'STEP', iconName: 'Code', spark_transform: 'SparkSqlQuery' } },
+        { id: 'select', type: 'pipeline', position: { x: 500, y: 50 }, data: { label: 'Select', type: 'STEP', iconName: 'Code', spark_transform: 'Select' } },
+        { id: 'sink', type: 'pipeline', position: { x: 750, y: 50 }, data: { label: 'Iceberg', type: 'SINK', iconName: 'Database', spark_transform: 'IcebergSink' } },
       ]);
     });
 
-    const side = result.current.displayEdges.find((e) => e.id === 'e-side')!;
-    expect(side.style).toMatchObject({ strokeDasharray: '5 4', stroke: '#facc15' });
-    expect(side.label).toBe('side');
+    // Join requires targetHandle 'left' or 'right' and allows 1 edge per handle
+    expect(result.current.isValidConnection({ source: 's1', target: 'join', sourceHandle: null, targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 's1', target: 'join', sourceHandle: null, targetHandle: 'left' })).toBe(true);
+    expect(result.current.isValidConnection({ source: 's2', target: 'join', sourceHandle: null, targetHandle: 'right' })).toBe(true);
 
-    const main = result.current.displayEdges.find((e) => e.id === 'e-main')!;
-    expect(main.style?.strokeDasharray).toBeUndefined();
-    expect(main.label).toBeUndefined();
+    act(() => {
+      result.current.onConnect({ source: 's1', target: 'join', sourceHandle: null, targetHandle: 'left' });
+      result.current.onConnect({ source: 's2', target: 'join', sourceHandle: null, targetHandle: 'right' });
+    });
+    expect(result.current.edges.filter((e) => e.target === 'join')).toHaveLength(2);
+    // Rejects a second connection to an occupied Join handle
+    expect(result.current.isValidConnection({ source: 's3', target: 'join', sourceHandle: null, targetHandle: 'left' })).toBe(false);
+    expect(result.current.isValidConnection({ source: 's3', target: 'join', sourceHandle: null, targetHandle: 'right' })).toBe(false);
+
+    // UnionByName and SparkSqlQuery accept N ordered inputs (3 upstream branches)
+    act(() => {
+      result.current.onConnect({ source: 's1', target: 'union', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 's2', target: 'union', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 's3', target: 'union', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 's1', target: 'sql', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 's2', target: 'sql', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 's3', target: 'sql', sourceHandle: null, targetHandle: null });
+    });
+    expect(result.current.edges.filter((e) => e.target === 'union')).toHaveLength(3);
+    expect(result.current.edges.filter((e) => e.target === 'sql')).toHaveLength(3);
+
+    // Single-input step (Select) and sink (IcebergSink) accept 1 input and reject a 2nd input
+    act(() => {
+      result.current.onConnect({ source: 'join', sourceHandle: 'valid', target: 'select', targetHandle: null });
+      result.current.onConnect({ source: 'union', sourceHandle: 'valid', target: 'select', targetHandle: null });
+      result.current.onConnect({ source: 'select', sourceHandle: 'valid', target: 'sink', targetHandle: null });
+      result.current.onConnect({ source: 'sql', sourceHandle: 'valid', target: 'sink', targetHandle: null });
+    });
+    expect(result.current.edges.filter((e) => e.target === 'select')).toHaveLength(1);
+    expect(result.current.edges.filter((e) => e.target === 'sink')).toHaveLength(1);
+    expect(result.current.isValidConnection({ source: 'union', sourceHandle: 'valid', target: 'select', targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'sql', sourceHandle: 'valid', target: 'sink', targetHandle: null })).toBe(false);
   });
 
-  it('flags a side-input-only ParDo with a ParDo-specific validation error', () => {
-    const { result } = setup();
+  it('validates dynamic rule and else sourceHandles on ConditionalSplit nodes and marks batch fan-out cached (A7)', () => {
+    const takeSnapshot = vi.fn();
+    const setPipelineConfig = vi.fn();
+
+    const { result } = renderHook(() =>
+      usePipelineGraph({ takeSnapshot, setPipelineConfig })
+    );
+
     act(() => {
-      result.current.setEdges([
-        { id: 'e-side', source: 'lookup', target: 'pardo', targetHandle: 'side_input' },
-        { id: 'e-out', source: 'pardo', target: 'sink', sourceHandle: 'valid' },
-        { id: 'e-src', source: 'src', target: 'map' },
-        { id: 'e-map', source: 'map', target: 'sink' },
+      result.current.setNodes([
+        { id: 'src', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Orders', type: 'SOURCE', iconName: 'Database', spark_transform: 'BigQuerySource' } },
+        {
+          id: 'split',
+          type: 'pipeline',
+          position: { x: 250, y: 0 },
+          data: {
+            label: 'Router',
+            type: 'STEP',
+            iconName: 'GitBranch',
+            spark_transform: 'ConditionalSplit',
+            properties: {
+              rules: [
+                { name: 'vip', condition: 'total >= 1000' },
+                { name: 'standard', condition: 'total < 1000' },
+              ],
+            },
+          },
+        },
+        { id: 'snk_vip', type: 'pipeline', position: { x: 500, y: -60 }, data: { label: 'VIP Iceberg', type: 'SINK', iconName: 'Database', spark_transform: 'IcebergSink' } },
+        { id: 'snk_else', type: 'pipeline', position: { x: 500, y: 60 }, data: { label: 'Fallback Parquet', type: 'SINK', iconName: 'Database', spark_transform: 'ParquetSink' } },
       ]);
     });
 
-    expect(result.current.dagValidation.missingUpstreamNodeIds).toEqual(['pardo']);
-    const pardo = result.current.displayNodes.find((n) => n.id === 'pardo')!;
-    expect(pardo.data.hasValidationError).toBe(true);
-    expect(pardo.data.validationError).toContain('only has side input connections');
+    expect(result.current.isValidConnection({ source: 'split', sourceHandle: 'vip', target: 'snk_vip', targetHandle: null })).toBe(true);
+    expect(result.current.isValidConnection({ source: 'split', sourceHandle: 'else', target: 'snk_else', targetHandle: null })).toBe(true);
+    expect(result.current.isValidConnection({ source: 'split', sourceHandle: 'unknown_rule', target: 'snk_vip', targetHandle: null })).toBe(false);
+
+    act(() => {
+      result.current.onConnect({ source: 'src', target: 'split', sourceHandle: null, targetHandle: null });
+      result.current.onConnect({ source: 'split', sourceHandle: 'vip', target: 'snk_vip', targetHandle: null });
+      result.current.onConnect({ source: 'split', sourceHandle: 'else', target: 'snk_else', targetHandle: null });
+    });
+
+    const splitDisplay = result.current.displayNodes.find((n) => n.id === 'split')!;
+    expect(splitDisplay.data.isCached).toBe(true);
   });
 });

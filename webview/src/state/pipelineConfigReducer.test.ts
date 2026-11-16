@@ -49,6 +49,29 @@ describe('pipelineConfigReducer', () => {
       expect(next.needsRebuild).toBe(true);
       expect(next.language).toBe('Java');
     });
+
+    it('accepts PySpark target language and normalizes to Python while preserving referential equality', () => {
+      const javaConfig: PipelineConfig = {
+        language: 'Java',
+        outputFolder: 'output/dir',
+        needsRebuild: false,
+      };
+      const pysparkNext = pipelineConfigReducer(javaConfig, {
+        type: 'setLanguage',
+        language: 'PySpark',
+      });
+      expect(pysparkNext).toEqual({
+        language: 'Python',
+        outputFolder: 'output/dir',
+        needsRebuild: true,
+      });
+
+      const unchanged = pipelineConfigReducer(pysparkNext, {
+        type: 'setLanguage',
+        language: 'PySpark',
+      });
+      expect(unchanged).toBe(pysparkNext);
+    });
   });
 
   describe('setOutputFolder action', () => {

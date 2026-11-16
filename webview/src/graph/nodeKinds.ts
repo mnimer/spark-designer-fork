@@ -1,5 +1,5 @@
 /**
- * @fileoverview Pure predicates for runtime node and palette item kind detection.
+ * @fileoverview Pure predicates for runtime Spark node and palette item kind detection.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
@@ -30,11 +30,7 @@ export interface PaletteItemLike {
 }
 
 /**
- * Normalizes input to access node data properties regardless of whether
- * a full node (`{ data: ... }`) or raw data object is passed.
- *
- * @param target - A node object or node data object.
- * @returns The inner NodeDataLike object, or undefined if target is null/undefined.
+ * Normalizes input to access node data properties from either a full node or a raw data object.
  */
 function getData(target?: NodeLike | NodeDataLike | null): NodeDataLike | undefined {
   if (!target || typeof target !== 'object') {
@@ -47,10 +43,7 @@ function getData(target?: NodeLike | NodeDataLike | null): NodeDataLike | undefi
 }
 
 /**
- * Safely extracts the display label from a node, data object, or raw string.
- *
- * @param target - A node object, node data object, or raw string label.
- * @returns The extracted string label, or undefined if absent.
+ * Extracts the display label from a node, data object, or raw string.
  */
 export function extractLabel(target?: NodeLike | NodeDataLike | string | null): string | undefined {
   if (typeof target === 'string') {
@@ -61,56 +54,40 @@ export function extractLabel(target?: NodeLike | NodeDataLike | string | null): 
 }
 
 /**
- * Checks whether a palette item represents a FileIO source transform.
- * Palette items do not have a data wrapper; checks `type === 'SOURCE'` and FileIO label or transform.
- *
- * @param item - The palette item to test.
- * @returns True if the item is a SOURCE and specifies FileIO by label or sparkTransform.
+ * Checks whether a palette item represents a payload parsing step.
  */
-export function isFileIoSourceItem(item?: PaletteItemLike | null): boolean {
+export function isParseMessageItem(
+  item?: { label?: string; sparkTransform?: string } | null
+): boolean {
   if (!item || typeof item !== 'object') {
     return false;
   }
-  return item.type === 'SOURCE' && (item.label === 'FileIO' || item.sparkTransform === 'FileIO');
+  return (
+    item.sparkTransform === 'ParsePayload' ||
+    item.sparkTransform === 'ParseMessage' ||
+    item.label === 'Parse Payload' ||
+    item.label === 'Parse Message'
+  );
 }
 
 /**
- * Checks whether a palette item represents a Parse Message step.
- *
- * @param item - The palette item to test.
- * @returns True if the item has label 'Parse Message'.
- */
-export function isParseMessageItem(item?: { label?: string } | null): boolean {
-  if (!item || typeof item !== 'object') {
-    return false;
-  }
-  return item.label === 'Parse Message';
-}
-
-/**
- * Checks whether a node represents a PubSub transform.
- * Checks the stable discriminator `data.spark_transform === 'PubSubIO'` first,
- * falling back to `data.label.includes('PubSub')`.
- *
- * @param target - A node object or node data object to evaluate.
- * @returns True if target matches PubSubIO spark_transform or label.
+ * Checks whether a node represents a Pub/Sub transform.
  */
 export function isPubSubNode(target?: NodeLike | NodeDataLike | null): boolean {
   const data = getData(target);
   if (!data) {
     return false;
   }
-  return data.spark_transform === 'PubSubIO' || Boolean(data.label && data.label.includes('PubSub'));
+  return (
+    data.spark_transform === 'PubSubSource' ||
+    data.spark_transform === 'PubSubSink' ||
+    data.spark_transform === 'PubSubIO' ||
+    Boolean(data.label && (data.label.includes('PubSub') || data.label.includes('Pub/Sub')))
+  );
 }
 
 /**
- * Checks whether a node represents a PubSub SOURCE node.
- * Verifies `data.type === 'SOURCE'` and delegates to `isPubSubNode`.
- * This adds the `spark_transform` check to lookup so renamed PubSub sources
- * (e.g. label 'My stream', spark_transform 'PubSubIO') still auto-wire to Parse Message steps.
- *
- * @param target - A node object or node data object to evaluate.
- * @returns True if the node is a SOURCE and represents a PubSub transform.
+ * Checks whether a node represents a Pub/Sub SOURCE node.
  */
 export function isPubSubSourceNode(target?: NodeLike | NodeDataLike | null): boolean {
   const data = getData(target);
@@ -118,36 +95,4 @@ export function isPubSubSourceNode(target?: NodeLike | NodeDataLike | null): boo
     return false;
   }
   return data.type === 'SOURCE' && isPubSubNode(data);
-}
-
-/**
- * Checks whether a node represents a FhirIO transform.
- * Checks the stable discriminator `data.spark_transform === 'FhirIO'` first,
- * falling back to `data.label.includes('FhirIO')`.
- *
- * @param target - A node object or node data object to evaluate.
- * @returns True if target matches FhirIO spark_transform or label.
- */
-export function isFhirIoNode(target?: NodeLike | NodeDataLike | null): boolean {
-  const data = getData(target);
-  if (!data) {
-    return false;
-  }
-  return data.spark_transform === 'FhirIO' || Boolean(data.label && data.label.includes('FhirIO'));
-}
-
-/**
- * Checks whether a node represents a DicomIO transform.
- * Checks the stable discriminator `data.spark_transform === 'DicomIO'` first,
- * falling back to `data.label.includes('DicomIO')`.
- *
- * @param target - A node object or node data object to evaluate.
- * @returns True if target matches DicomIO spark_transform or label.
- */
-export function isDicomIoNode(target?: NodeLike | NodeDataLike | null): boolean {
-  const data = getData(target);
-  if (!data) {
-    return false;
-  }
-  return data.spark_transform === 'DicomIO' || Boolean(data.label && data.label.includes('DicomIO'));
 }

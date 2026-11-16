@@ -1,29 +1,24 @@
 /**
- * @fileoverview Pure factory functions for creating pipeline graph nodes and edges.
+ * @fileoverview Pure factory functions for creating Spark pipeline graph nodes and edges.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
 import type { Edge } from 'reactflow';
 import type { PipelineNode } from '../hooks/usePipelineGraph';
-import { isFileIoSourceItem, isParseMessageItem, isPubSubSourceNode } from './nodeKinds';
+import { isParseMessageItem, isPubSubSourceNode } from './nodeKinds';
 
 let fallbackCounter = 0;
 
 /**
- * Generates a unique node ID, optionally prefixed with a domain descriptor.
- * Uses crypto.randomUUID() when available, falling back to counter + Math.random
- * ONLY inside this function if the runtime environment lacks crypto.randomUUID.
- *
- * @param prefix - Optional prefix (e.g. 'kv_mapper_', 'pubsub_') to prepend to the ID.
- * @returns A unique node ID string.
+ * Generates a unique node ID with an optional prefix.
+ * If crypto.randomUUID is unavailable, fall back to a counter with random suffix.
  */
 export function createNodeId(prefix: string = ''): string {
   let uuid: string;
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     uuid = crypto.randomUUID();
   } else {
-    // Fallback counter + Math.random only when crypto.randomUUID is unavailable in runtime/tests
     fallbackCounter += 1;
     uuid = `${fallbackCounter}-${Math.random().toString(36).slice(2, 10)}`;
   }
@@ -40,7 +35,7 @@ export interface PaletteItem {
   type: string;
   /** Name of the icon to render. */
   iconName: string;
-  /** Optional Apache Beam transform identifier (e.g. 'FileIO', 'PubSubIO'). */
+  /** Optional Apache Spark transform identifier (e.g. 'CsvSource', 'ParquetSink'). */
   sparkTransform?: string;
   /** Optional React Flow node component type (defaults to 'pipeline'). */
   nodeType?: string;
@@ -52,21 +47,12 @@ export interface PaletteItem {
 export interface CreatedPipelineElements {
   /** Constructed pipeline nodes. */
   nodes: PipelineNode[];
-  /** Constructed edges (e.g. FileIO match->readMatches or auto-wired step edges). */
+  /** Constructed auto-wired edges. */
   edges: Edge[];
 }
 
 /**
- * Constructs pipeline nodes and any automatic edges for a palette item.
- * Handles single node creation as well as special multi-node transforms like FileIO
- * (which generates both FileIO.match and FileIO.readMatches connected by an edge),
- * and connects step nodes to upstream sources if applicable.
- *
- * @param item - Palette item describing the node to create.
- * @param position - The target position (or drop position) on the canvas.
- * @param existingNodes - Existing pipeline nodes for determining auto-connections.
- * @param existingEdges - Existing edges in the graph.
- * @returns An object containing the created nodes and any newly created edges.
+ * Constructs a pipeline node and any automatic upstream edge for a palette item.
  */
 export function createNodesForPaletteItem(
   item: PaletteItem,
@@ -76,52 +62,8 @@ export function createNodesForPaletteItem(
   _existingEdges: Edge[] = []
 ): CreatedPipelineElements {
   const nodeType = item.nodeType ?? 'pipeline';
-
-  // Special handling for FileIO Source: Spawns both FileIO.match() and FileIO.readMatches() connected by an edge
-  if (isFileIoSourceItem(item)) {
-    const matchId = createNodeId();
-    const readMatchesId = createNodeId();
-
-    const matchNode: PipelineNode = {
-      id: matchId,
-      type: nodeType,
-      position,
-      data: {
-        label: 'FileIO Match',
-        type: 'SOURCE',
-        iconName: 'Folder',
-        spark_transform: 'FileIO.match',
-      },
-    };
-
-    const readMatchesNode: PipelineNode = {
-      id: readMatchesId,
-      type: nodeType,
-      position: {
-        x: position.x + 240,
-        y: position.y,
-      },
-      data: {
-        label: 'FileIO Read Matches',
-        type: 'STEP',
-        iconName: 'FileCode',
-        spark_transform: 'FileIO.readMatches',
-      },
-    };
-
-    const edge: Edge = {
-      id: `e-${matchId}-${readMatchesId}`,
-      source: matchId,
-      target: readMatchesId,
-    };
-
-    return {
-      nodes: [matchNode, readMatchesNode],
-      edges: [edge],
-    };
-  }
-
   const nodeId = createNodeId();
+
   const newNode: PipelineNode = {
     id: nodeId,
     type: nodeType,
@@ -154,6 +96,7 @@ export function createNodesForPaletteItem(
             id: `e-${sourceNode.id}-${newNode.id}`,
             source: sourceNode.id,
             target: newNode.id,
+            ...(item.sparkTransform === 'Join' ? { targetHandle: 'left' } : {}),
           });
         }
       }

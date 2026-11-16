@@ -1,7 +1,8 @@
 ---
-name: "Dataflow Pipeline Designer"
-description: "Unified UI/UX design system and token specification for the visual Apache Beam and Google Cloud Dataflow pipeline builder VS Code extension."
-version: "alpha"
+name: "Apache Spark Pipeline Designer"
+author: "Mike Nimer <mikenimer@google.com>"
+description: "Unified UI/UX design system and token specification for the visual Apache Spark and Managed Spark pipeline builder VS Code extension."
+version: "2.0.0"
 colors:
   canvas-bg: "#0d1117"
   workbench-bg: "#161b22"
@@ -206,13 +207,24 @@ Surfaces use a combination of layered background shades and subtle drop shadows 
 
 ## Components
 
-### 1. DAG Node (`PipelineNode`)
+### 1. DAG Node (`PipelineNode`) & Canvas Toolbar (`CanvasToolbar`)
 - **Container**: `bg-[var(--vscode-node-bg)] border rounded-md shadow-xl p-3 flex items-center gap-3 min-w-[180px]`.
 - **Category Icon Box**: Left container with category background (`bg-*/10`), border (`border-*/30`), and 20px Lucide icon.
 - **Editable Title**: Inline double-clickable `<input className="nodrag bg-[var(--vscode-input-bg)] border border-[var(--vscode-highlight)] rounded px-1.5 py-0.5 text-sm font-bold text-[var(--vscode-text-primary)]" />` with `Enter` (commit) and `Escape` (cancel).
+- **Execution & Planner Micro-Badges**:
+  - `BATCH` vs `STREAM` (`data-testid="node-mode-badge"`): Rendered on `SOURCE` and `SINK` cards from deterministic streaming propagation.
+  - `CACHE` (`data-testid="node-cache-badge"`): Rendered on batch nodes marked for `.cache()` by `executionPlanner.ts`.
+  - `foreachBatch` (`data-testid="node-foreachbatch-badge"`): Rendered on streaming sinks grouped into `.writeStream.foreachBatch(...)`.
+  - `BROADCAST` (`data-testid="node-broadcast-badge"`): Rendered on `Join` steps when `broadcastRight` is enabled.
+  - `N-IN` (`data-testid="node-multi-input-badge"`): Rendered on multi-input steps (`UnionByName`, `SetOperation`, `SparkSqlQuery`).
+  - **Toolbar Pipeline Mode Pill** (`data-testid="toolbar-pipeline-mode"`): Displays `BATCH` or `STREAMING` in `CanvasToolbar`.
 - **Connection Handles**:
-  - `Source`: 1 right output handle (`bg-emerald-500`).
-  - `Step`: 1 left target handle (`bg-blue-500`), 2 right source handles (`valid` in green, `error`/DLQ in red).
+  - `Source`: 1 right output handle (`bg-emerald-500`). Direct `SOURCE -> SINK` connections are valid.
+  - `Step (Structural)`: 1 left target handle (`bg-blue-500`) and 1 centered right output handle (`id="valid"` at `50%`).
+  - `Step (Error-Capable)`: 1 left target handle and 2 right output handles (`id="valid"` at `30%` in green, `id="error"` DLQ at `70%` in red) when `errorOutput: true`.
+  - `Step (Join)`: 2 labeled left target handles (`id="left"` at `32%` and `id="right"` at `68%`), each accepting 1 upstream edge.
+  - `Step (N-Input)`: 1 left target handle accepting $N$ ordered upstream inputs (`UnionByName`, `SetOperation`, `SparkSqlQuery`).
+  - `Step (ConditionalSplit)`: Dynamic right output handles (1 per configured rule plus `id="else"`), scaling node `minHeight` on the 8pt grid.
   - `Sink`: 1 left target handle (`bg-rose-500`).
 
 ### 2. Left Node Palette (`NodesCard` & `SidebarItem`)
@@ -223,6 +235,9 @@ Surfaces use a combination of layered background shades and subtle drop shadows 
 
 ### 3. Right Property Inspector (`PropertyPane` & `PropertyForm`)
 - **Header**: Category tag, editable node label, and monospace Node ID.
+- **Shared Execution & Streaming Controls**:
+  - `StepExecutionSettingsField`: Exposes `Read Mode` (`batch` vs `streaming`) on dual-mode sources and manual `Cache Output` overrides (`auto`, `true`, `false`) on batch steps.
+  - `StreamingSinkSettingsField`: Exposes per-sink `outputMode`, `triggerType`, `triggerInterval`, and `checkpointLocation` overrides on streaming sinks.
 - **Field Layout**:
   - Stack: `flex flex-col gap-1`.
   - Label: `text-xs font-bold uppercase text-[var(--vscode-text-muted)] flex items-center gap-1.5`.
