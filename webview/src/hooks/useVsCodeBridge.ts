@@ -18,7 +18,15 @@ import { DEFAULT_SAMPLES, type SamplePipeline } from '../components/NodesCard';
 import { serializePipeline } from './usePipelinePersistence';
 import { type TokenUsage } from '../components/BottomPanel/SourceCodeTab';
 import { getVsCodeApi } from '../bridge/vscodeApi';
-import { pipelineConfigReducer, type PipelineConfig } from '../state/pipelineConfigReducer';
+import {
+  pipelineConfigReducer,
+  type PipelineConfig,
+  type PipelineLanguageInput,
+} from '../state/pipelineConfigReducer';
+import type {
+  DataprocClusterOption,
+  SessionTemplateOption,
+} from '../components/BottomPanel/deployment/AdvancedConfig';
 
 export type { PipelineConfig };
 
@@ -147,6 +155,9 @@ export function useVsCodeBridge({
   const [samples, setSamples] = useState<SamplePipeline[]>(DEFAULT_SAMPLES);
   const [generatedCode, setGeneratedCode] = useState('');
   const [subnetworks, setSubnetworks] = useState<{ name: string; region: string; network: string; value: string }[]>([]);
+  const [clusters, setClusters] = useState<DataprocClusterOption[]>([]);
+  const [sessionTemplates, setSessionTemplates] = useState<SessionTemplateOption[]>([]);
+  const [regions, setRegions] = useState<string[]>([]);
   const [folderFiles, setFolderFiles] = useState<string[]>([]);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<string | null>(null);
@@ -237,6 +248,9 @@ export function useVsCodeBridge({
     if (vs) {
       vs.postMessage({ command: 'ready' });
       vs.postMessage({ command: 'getSubnetworks' });
+      vs.postMessage({ command: 'getDataprocClusters' });
+      vs.postMessage({ command: 'getSessionTemplates' });
+      vs.postMessage({ command: 'getRegions' });
       vs.postMessage({ command: 'getSamples' });
 
       const handleMessage = (event: MessageEvent) => {
@@ -288,7 +302,7 @@ export function useVsCodeBridge({
               });
 
               const rawConfig = data.pipelineConfig || {};
-              const config: PipelineConfig = {
+              const config: Omit<PipelineConfig, 'language'> & { language: PipelineLanguageInput } = {
                 ...rawConfig,
                 language: 'PySpark',
                 outputFolder: rawConfig.outputFolder || '',
@@ -378,6 +392,12 @@ export function useVsCodeBridge({
           setGenerationProgress(null);
         } else if (message.command === 'subnetworksLoaded') {
           setSubnetworks(message.subnetworks);
+        } else if (message.command === 'dataprocClustersLoaded') {
+          setClusters(Array.isArray(message.clusters) ? message.clusters : []);
+        } else if (message.command === 'sessionTemplatesLoaded') {
+          setSessionTemplates(Array.isArray(message.sessionTemplates) ? message.sessionTemplates : []);
+        } else if (message.command === 'regionsLoaded') {
+          setRegions(Array.isArray(message.regions) ? message.regions : []);
         } else if (message.command === 'folderFilesRead') {
           if (message.tokenUsage) {
             setTokenUsage(message.tokenUsage);
@@ -439,6 +459,12 @@ export function useVsCodeBridge({
     setGeneratedCode,
     subnetworks,
     setSubnetworks,
+    clusters,
+    setClusters,
+    sessionTemplates,
+    setSessionTemplates,
+    regions,
+    setRegions,
     folderFiles,
     setFolderFiles,
     selectedFileName,

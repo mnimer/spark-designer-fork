@@ -75,7 +75,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
         });
 
         // Ensure CLI resolves
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await listAssets(
@@ -108,7 +108,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(err, '', stderrOutput);
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await listAssets(
@@ -141,7 +141,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(err, '', '');
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await listAssets(
@@ -165,7 +165,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
     it('listAssets posts an error when the CLI cannot be resolved at all (ENOENT / missing CLI)', async () => {
         // Isolate PATH so resolver cannot find unconfigured unknown binary
         process.env.PATH = '';
-        mockConfigValues['dataflowDesigner.gcloudPath'] = undefined;
+        mockConfigValues['sparkDesigner.gcloudPath'] = undefined;
 
         const postedMessages: any[] = [];
         await listAssets(
@@ -194,7 +194,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(null, invalidJsonOutput, '');
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         // Must NOT throw exception
@@ -225,7 +225,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(null, '[]', '');
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await listAssets(
@@ -249,18 +249,18 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
     // 6. resolveCli returns configured path for gcloud when setting is set, and falls back correctly
     it('resolveCli returns the configured path for gcloud when the setting is set, and falls back correctly', () => {
         // When setting is explicitly configured
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/custom/tools/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/custom/tools/gcloud';
         expect(resolveCli('gcloud')).toBe('/custom/tools/gcloud');
         expect(findGcloudPath()).toBe('/custom/tools/gcloud');
 
         // When setting is whitespace, should ignore and fall back
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '   ';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '   ';
         const fallback = resolveCli('gcloud');
         expect(fallback).not.toBe('   ');
 
         // When setting is not configured, should resolve via PATH: put a fake
         // gcloud on an isolated PATH so this branch is always exercised.
-        mockConfigValues['dataflowDesigner.gcloudPath'] = undefined;
+        mockConfigValues['sparkDesigner.gcloudPath'] = undefined;
         const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-gcloud-'));
         const exeName = process.platform === 'win32' ? 'gcloud.cmd' : 'gcloud';
         const fakeGcloud = path.join(binDir, exeName);
@@ -289,7 +289,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(null, mockBqOutput, '');
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await listAssets(
@@ -328,7 +328,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(null, mockHealthcareOutput, '');
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await handleGetHealthcareDatasets(
@@ -367,7 +367,7 @@ describe('A2, M6, M8 — Asset Discovery, CLI Resolution, and Error Surfacing', 
             callback(err, '', 'ERROR: (gcloud.healthcare.datasets.list) API healthcare.googleapis.com not enabled.');
         });
 
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/mock/bin/gcloud';
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/mock/bin/gcloud';
 
         const postedMessages: any[] = [];
         await handleGetHealthcareDatasets(

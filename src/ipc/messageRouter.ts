@@ -27,6 +27,10 @@ import {
     handleGetSqlInstances,
     handleGetSqlDatabases,
     handleGetProjects,
+    handleGetDataprocClusters,
+    handleGetSessionTemplates,
+    handleGetBigLakeCatalogs,
+    handleGetRegions,
     handleGetRunningJobs,
 } from './handlers/discoveryHandlers';
 import {
@@ -67,6 +71,10 @@ export const MESSAGE_HANDLERS: Record<string, MessageHandler> = {
     getSqlInstances: handleGetSqlInstances,
     getSqlDatabases: handleGetSqlDatabases,
     getProjects: handleGetProjects,
+    getDataprocClusters: handleGetDataprocClusters,
+    getSessionTemplates: handleGetSessionTemplates,
+    getBigLakeCatalogs: handleGetBigLakeCatalogs,
+    getRegions: handleGetRegions,
     ready: handleReady,
     getSamples: handleGetSamples,
     openSample: handleOpenSample,
@@ -105,6 +113,10 @@ export const ASSET_REQUEST_COMMANDS: ReadonlySet<string> = new Set([
     'getSqlInstances',
     'getSqlDatabases',
     'getProjects',
+    'getDataprocClusters',
+    'getSessionTemplates',
+    'getBigLakeCatalogs',
+    'getRegions',
 ]);
 
 /**

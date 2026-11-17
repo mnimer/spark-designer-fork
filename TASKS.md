@@ -104,12 +104,12 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
-| [D1](#d1) | 🔍 Discovery | Add `fetchDataprocClusters` handler (`src/ipc/handlers/discoveryHandlers.ts`): runs `gcloud dataproc clusters list --region=<REGION> --filter="status.state = RUNNING" --limit=100 --format=json`. | ⬜ Not Started |
-| [D2](#d2) | 🔍 Discovery | Add `fetchSessionTemplates` handler: runs `gcloud beta dataproc session-templates list --location=<REGION> --limit=50 --format=json` for Spark Connect profiles and BigLake Iceberg catalog discovery. | ⬜ Not Started |
-| [D3](#d3) | 🔍 Discovery | Add `fetchBigLakeCatalogs` handler: lists BigLake Iceberg catalogs / GCS warehouse buckets for `IcebergSource` and `IcebergSink`. | ⬜ Not Started |
-| [D4](#d4) | 🔍 Discovery | Retain and verify `fetchDatasets` and `fetchTables` (`bq ls --format=json`) for `BigQuerySource` and `BigQuerySink`. | ⬜ Not Started |
-| [D5](#d5) | 🔍 Discovery | Retain and verify `fetchBuckets` (`gcloud storage buckets list`), `fetchSubnetworks`, and `fetchRegions` handlers. | ⬜ Not Started |
-| [D6](#d6) | 🔍 Discovery | Retain and verify `fetchSecrets` (`gcloud secrets list`) for `SecretManagerAuthFields.tsx`. | ⬜ Not Started |
+| [D1](#d1) | 🔍 Discovery | Add `fetchDataprocClusters` handler (`src/ipc/handlers/discoveryHandlers.ts`): runs `gcloud dataproc clusters list --region=<REGION> --filter="status.state = RUNNING" --limit=100 --format=json`. | ✅ Done |
+| [D2](#d2) | 🔍 Discovery | Add `fetchSessionTemplates` handler: runs `gcloud beta dataproc session-templates list --location=<REGION> --limit=50 --format=json` for Spark Connect profiles and BigLake Iceberg catalog discovery. | ✅ Done |
+| [D3](#d3) | 🔍 Discovery | Add `fetchBigLakeCatalogs` handler: lists BigLake Iceberg catalogs / GCS warehouse buckets for `IcebergSource` and `IcebergSink`. | ✅ Done |
+| [D4](#d4) | 🔍 Discovery | Retain and verify `fetchDatasets` and `fetchTables` (`bq ls --format=json`) for `BigQuerySource` and `BigQuerySink`. | ✅ Done |
+| [D5](#d5) | 🔍 Discovery | Retain and verify `fetchBuckets` (`gcloud storage buckets list`), `fetchSubnetworks`, and `fetchRegions` handlers. | ✅ Done |
+| [D6](#d6) | 🔍 Discovery | Retain and verify `fetchSecrets` (`gcloud secrets list`) for `SecretManagerAuthFields.tsx`. | ✅ Done |
 
 ### Phase 5 — Sources Catalog, Property Forms & Skills (`SRC1`–`SRC38`)
 

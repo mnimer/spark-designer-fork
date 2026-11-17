@@ -207,7 +207,12 @@ export function deactivate() { }
 export { findLastCompleteFileEndOffset, parseOrRepairJson } from './codegen/jsonRepair';
 
 export { findExecutableInPath, resolveCli, findGcloudPath } from './cli/cliResolver';
-export type { SecretManagerItem } from './cli/resourceMappers';
+export type {
+    SecretManagerItem,
+    DataprocClusterItem,
+    SessionTemplateItem,
+    BigLakeCatalogItem,
+} from './cli/resourceMappers';
 export {
     toShortSecretId,
     mapSecretManagerItems,
@@ -219,7 +224,11 @@ export {
     mapProjects,
     parseBigtableInstanceParam,
     parseSqlInstanceParam,
-    mapHealthcareDatasetItems
+    mapHealthcareDatasetItems,
+    mapDataprocClusters,
+    mapSessionTemplates,
+    mapBigLakeCatalogs,
+    mapRegions,
 } from './cli/resourceMappers';
 export { listAssets, getGcloudProject } from './cli/gcloudClient';
 
@@ -323,7 +332,21 @@ export {
     handleGetSqlInstances,
     handleGetSqlDatabases,
     handleGetProjects,
+    handleGetDataprocClusters,
+    handleGetSessionTemplates,
+    handleGetBigLakeCatalogs,
+    handleGetRegions,
     handleGetRunningJobs,
+    fetchDataprocClusters,
+    fetchSessionTemplates,
+    fetchBigLakeCatalogs,
+    fetchDatasets,
+    fetchTables,
+    fetchBuckets,
+    fetchStorageBuckets,
+    fetchSubnetworks,
+    fetchRegions,
+    fetchSecrets,
 } from './ipc/handlers/discoveryHandlers';
 export {
     handleReady,

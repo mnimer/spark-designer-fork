@@ -7,6 +7,7 @@
 import React from 'react';
 import { InfoTooltip } from '../../InfoTooltip';
 import { normalizeSparkRunner } from './RunnerSettings';
+import { useAssetLoader } from '../../../hooks/useAssetLoader';
 import type {
   SparkPipelineStreamingDefaults,
   SparkStreamingTriggerType,
@@ -84,6 +85,8 @@ export interface AdvancedConfigProps {
   clusters?: DataprocClusterOption[];
   /** Optional list of discovered Spark Connect session templates for Local mode. */
   sessionTemplates?: SessionTemplateOption[];
+  /** Optional list of discovered GCP regions for DataprocCluster mode. */
+  regions?: string[];
 }
 
 const STREAMING_TRIGGER_OPTIONS: Array<{ value: SparkStreamingTriggerType; label: string }> = [
@@ -157,6 +160,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
   subnetworks,
   clusters = [],
   sessionTemplates = [],
+  regions = [],
 }) => {
   const effectiveRunner = normalizeSparkRunner(jobConfig.runner);
 
@@ -178,6 +182,72 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
   const clusterNameValue = jobConfig.clusterName ?? '';
   const regionValue = jobConfig.region || 'us-central1';
   const customJarUrisValue = jobConfig.customJarUris ?? jobConfig.sparkJars ?? '';
+
+  // Live GCP asset discovery for clusters (D1), session templates (D2), regions & buckets (D5)
+  const { items: loadedClusters } = useAssetLoader<DataprocClusterOption | string>(
+    'dataprocClusters',
+    {
+      params: { region: regionValue },
+      enabled: effectiveRunner === 'DataprocCluster',
+    }
+  );
+  const { items: loadedSessionTemplates } = useAssetLoader<SessionTemplateOption>(
+    'sessionTemplates',
+    {
+      params: { region: regionValue },
+      enabled: effectiveRunner === 'Local',
+    }
+  );
+  const { items: loadedRegions } = useAssetLoader<string | { name?: string; value?: string }>(
+    'regions',
+    {
+      enabled: effectiveRunner === 'DataprocCluster',
+    }
+  );
+  const { items: loadedBuckets } = useAssetLoader<string>('storageBuckets', {
+    enabled: effectiveRunner === 'ServerlessSpark',
+  });
+
+  const effectiveClusters: DataprocClusterOption[] = React.useMemo(() => {
+    const map = new Map<string, DataprocClusterOption>();
+    for (const item of [...clusters, ...loadedClusters]) {
+      const normalized: DataprocClusterOption =
+        typeof item === 'string' ? { name: item } : item;
+      if (normalized && normalized.name && !map.has(normalized.name)) {
+        map.set(normalized.name, normalized);
+      }
+    }
+    return Array.from(map.values());
+  }, [clusters, loadedClusters]);
+
+  const effectiveSessionTemplates: SessionTemplateOption[] = React.useMemo(() => {
+    const map = new Map<string, SessionTemplateOption>();
+    for (const tpl of [...sessionTemplates, ...loadedSessionTemplates]) {
+      const key = typeof tpl === 'string' ? tpl : tpl.value || tpl.name;
+      if (key && !map.has(key)) {
+        map.set(key, tpl);
+      }
+    }
+    return Array.from(map.values());
+  }, [sessionTemplates, loadedSessionTemplates]);
+
+  const effectiveRegions: string[] = React.useMemo(() => {
+    const rawList = loadedRegions.length > 0 ? loadedRegions : regions;
+    const normalized = rawList
+      .map((r) => (typeof r === 'string' ? r : r?.value || r?.name || ''))
+      .filter((r): r is string => Boolean(r && r.trim()));
+    return normalized.length > 0 ? Array.from(new Set(normalized)) : COMMON_GCP_REGIONS;
+  }, [loadedRegions, regions]);
+
+  const depsBucketSuggestions: string[] = React.useMemo(() => {
+    return loadedBuckets
+      .map((b) => {
+        const trimmed = typeof b === 'string' ? b.trim().replace(/\/+$/, '') : '';
+        if (!trimmed) return '';
+        return trimmed.startsWith('gs://') ? trimmed : `gs://${trimmed}`;
+      })
+      .filter(Boolean);
+  }, [loadedBuckets]);
 
   // ServerlessSpark mode values (R4)
   const runtimeVersionValue = jobConfig.runtimeVersion === '3.0' ? '3.0' : '4.0';
@@ -335,7 +405,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
             />
             <datalist id="advancedSessionTemplatesList">
-              {sessionTemplates.map((tpl, idx) => {
+              {effectiveSessionTemplates.map((tpl, idx) => {
                 const value = typeof tpl === 'string' ? tpl : tpl.value || tpl.name;
                 const label = typeof tpl === 'string' ? tpl : tpl.name;
                 return (
@@ -378,7 +448,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
             />
             <datalist id="advancedDataprocClustersList">
-              {clusters.map((cluster, idx) => (
+              {effectiveClusters.map((cluster, idx) => (
                 <option key={idx} value={cluster.name}>
                   {cluster.name}
                   {cluster.status ? ` (${cluster.status})` : ''}
@@ -406,7 +476,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
             />
             <datalist id="advancedClusterRegionsList">
-              {COMMON_GCP_REGIONS.map((reg) => (
+              {effectiveRegions.map((reg) => (
                 <option key={reg} value={reg}>
                   {reg}
                 </option>
@@ -523,6 +593,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               id="advancedDepsBucket"
               name="depsBucket"
               type="text"
+              list="advancedDepsBucketsList"
               value={depsBucketValue}
               onChange={handleDepsBucketChange}
               placeholder="gs://<bucket>"
@@ -533,6 +604,13 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
                   : 'border-[var(--vscode-border)] focus:border-[var(--vscode-highlight)]'
               }`}
             />
+            <datalist id="advancedDepsBucketsList">
+              {depsBucketSuggestions.map((bucketUri) => (
+                <option key={bucketUri} value={bucketUri}>
+                  {bucketUri}
+                </option>
+              ))}
+            </datalist>
             {depsBucketWarning && (
               <span
                 role="alert"

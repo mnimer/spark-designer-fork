@@ -204,3 +204,210 @@ export function mapHealthcareDatasetItems(json: any): string[] {
         .map((d: any) => (typeof d?.name === 'string' ? d.name.trim() : ''))
         .filter((name: string) => name.length > 0);
 }
+
+/** Normalized Dataproc cluster item returned to the webview. */
+export interface DataprocClusterItem {
+    name: string;
+    status?: string;
+    region?: string;
+    value?: string;
+}
+
+/**
+ * Maps `gcloud dataproc clusters list --format=json` output into normalized
+ * DataprocClusterItem entries.
+ *
+ * @param json Parsed JSON array from gcloud dataproc clusters list
+ * @returns Array of normalized DataprocClusterItem entries
+ */
+export function mapDataprocClusters(json: any): DataprocClusterItem[] {
+    if (!Array.isArray(json)) {
+        return [];
+    }
+    return json
+        .map((c: any): DataprocClusterItem | null => {
+            const rawClusterName =
+                typeof c?.clusterName === 'string' && c.clusterName.trim()
+                    ? c.clusterName.trim()
+                    : lastPathSegment(c?.name);
+            if (!rawClusterName) {
+                return null;
+            }
+            const status =
+                typeof c?.status?.state === 'string' && c.status.state.trim()
+                    ? c.status.state.trim()
+                    : typeof c?.status === 'string' && c.status.trim()
+                        ? c.status.trim()
+                        : undefined;
+            const rawRegion =
+                typeof c?.region === 'string' && c.region.trim()
+                    ? c.region.trim()
+                    : typeof c?.labels?.['goog-dataproc-location'] === 'string' &&
+                        c.labels['goog-dataproc-location'].trim()
+                        ? c.labels['goog-dataproc-location'].trim()
+                        : undefined;
+            const region = rawRegion ? lastPathSegment(rawRegion) || rawRegion : undefined;
+            return {
+                name: rawClusterName,
+                value: rawClusterName,
+                ...(status ? { status } : {}),
+                ...(region ? { region } : {}),
+            };
+        })
+        .filter((item): item is DataprocClusterItem => item !== null);
+}
+
+/** Normalized Dataproc Serverless session template item returned to the webview. */
+export interface SessionTemplateItem {
+    name: string;
+    value: string;
+    fullName: string;
+    description?: string;
+    defaultCatalog?: string;
+    catalogNames?: string[];
+    warehouse?: string;
+}
+
+/**
+ * Maps `gcloud beta dataproc session-templates list --format=json` output into
+ * normalized SessionTemplateItem entries, including any BigLake Iceberg catalog
+ * properties defined under `runtimeConfig.properties`.
+ *
+ * @param json Parsed JSON array from gcloud beta dataproc session-templates list
+ * @returns Array of normalized SessionTemplateItem entries
+ */
+export function mapSessionTemplates(json: any): SessionTemplateItem[] {
+    if (!Array.isArray(json)) {
+        return [];
+    }
+    return json
+        .map((t: any): SessionTemplateItem | null => {
+            const rawName = typeof t?.name === 'string' ? t.name.trim() : '';
+            const shortName = lastPathSegment(rawName);
+            if (!shortName) {
+                return null;
+            }
+            const description =
+                typeof t?.description === 'string' && t.description.trim()
+                    ? t.description.trim()
+                    : undefined;
+
+            let defaultCatalog: string | undefined;
+            const catalogSet = new Set<string>();
+            const warehouseByCatalog: Record<string, string> = {};
+
+            const props = t?.runtimeConfig?.properties;
+            if (props && typeof props === 'object') {
+                if (
+                    typeof props['spark.sql.defaultCatalog'] === 'string' &&
+                    props['spark.sql.defaultCatalog'].trim()
+                ) {
+                    defaultCatalog = props['spark.sql.defaultCatalog'].trim();
+                    catalogSet.add(defaultCatalog);
+                }
+                for (const [key, val] of Object.entries(props)) {
+                    const match = /^spark\.sql\.catalog\.([^.]+)(?:\.(.+))?$/.exec(key);
+                    if (match) {
+                        const catName = match[1];
+                        const propSuffix = match[2];
+                        catalogSet.add(catName);
+                        if (propSuffix === 'warehouse' && typeof val === 'string' && val.trim()) {
+                            warehouseByCatalog[catName] = val.trim();
+                        }
+                    }
+                }
+            }
+
+            const catalogNames = catalogSet.size > 0 ? [...catalogSet] : undefined;
+            const warehouse =
+                (defaultCatalog && warehouseByCatalog[defaultCatalog]) ||
+                Object.values(warehouseByCatalog)[0] ||
+                undefined;
+
+            return {
+                name: shortName,
+                value: shortName,
+                fullName: rawName,
+                ...(description ? { description } : {}),
+                ...(defaultCatalog ? { defaultCatalog } : {}),
+                ...(catalogNames ? { catalogNames } : {}),
+                ...(warehouse ? { warehouse } : {}),
+            };
+        })
+        .filter((item): item is SessionTemplateItem => item !== null);
+}
+
+/** Normalized BigLake Iceberg catalog item returned to the webview. */
+export interface BigLakeCatalogItem {
+    name: string;
+    id: string;
+    fullName: string;
+    value: string;
+    warehouse: string;
+    catalogType?: string;
+}
+
+/**
+ * Maps `gcloud biglake iceberg catalogs list --format=json` (or GCS bucket objects)
+ * into normalized BigLakeCatalogItem entries.
+ *
+ * @param json Parsed JSON array from gcloud biglake iceberg catalogs list
+ * @returns Array of normalized BigLakeCatalogItem entries
+ */
+export function mapBigLakeCatalogs(json: any): BigLakeCatalogItem[] {
+    if (!Array.isArray(json)) {
+        return [];
+    }
+    return json
+        .map((item: any): BigLakeCatalogItem | null => {
+            const rawName =
+                typeof item === 'string'
+                    ? item.trim()
+                    : typeof item?.name === 'string'
+                        ? item.name.trim()
+                        : typeof item?.id === 'string'
+                            ? item.id.trim()
+                            : '';
+            if (!rawName) {
+                return null;
+            }
+            const stripped = rawName.replace(/^gs:\/\//, '').replace(/\/+$/, '');
+            const shortId = lastPathSegment(stripped);
+            if (!shortId) {
+                return null;
+            }
+            const warehouse =
+                (typeof item?.warehouse === 'string' && item.warehouse.trim()) ||
+                (typeof item?.default_location === 'string' && item.default_location.trim()) ||
+                (typeof item?.defaultLocation === 'string' && item.defaultLocation.trim()) ||
+                `gs://${shortId}`;
+            const catalogType =
+                (typeof item?.catalog_type === 'string' && item.catalog_type.trim()) ||
+                (typeof item?.catalogType === 'string' && item.catalogType.trim()) ||
+                'biglake';
+            return {
+                name: shortId,
+                id: shortId,
+                fullName: rawName || shortId,
+                value: shortId,
+                warehouse,
+                catalogType,
+            };
+        })
+        .filter((item): item is BigLakeCatalogItem => item !== null);
+}
+
+/**
+ * Maps `gcloud compute regions list --format=json` to region names.
+ *
+ * @param json Parsed JSON array from gcloud compute regions list
+ * @returns Array of region name strings
+ */
+export function mapRegions(json: any): string[] {
+    if (!Array.isArray(json)) {
+        return [];
+    }
+    return json
+        .map((r: any) => (typeof r === 'string' ? lastPathSegment(r.trim()) : lastPathSegment(r?.name)))
+        .filter(Boolean);
+}

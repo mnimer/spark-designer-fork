@@ -17,9 +17,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { IcebergIOSourceProperties } from './IcebergIO';
+import { IcebergIOSourceProperties, ICEBERG_CATALOG_TYPES } from './IcebergIO';
 
 describe('IcebergIOSourceProperties', () => {
   let originalVscode: any;
@@ -397,5 +397,69 @@ describe('IcebergIOSourceProperties', () => {
         system_instructions: 'Read Iceberg records and apply pushdown projection'
       })
     );
+  });
+
+  it('includes biglake in ICEBERG_CATALOG_TYPES and populates BigLake catalog datalist via useAssetLoader (D3)', () => {
+    expect(ICEBERG_CATALOG_TYPES.some((opt) => opt.value === 'biglake')).toBe(true);
+
+    const mockPostMessage = vi.fn();
+    (window as any).vscode = { postMessage: mockPostMessage };
+
+    const mockNode: any = {
+      data: {
+        properties: {
+          table: 'analytics.events',
+          warehouseLocation: 'gs://lakehouse/warehouse',
+          catalogType: 'biglake',
+        },
+      },
+    };
+
+    const { container } = render(
+      <IcebergIOSourceProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getBigLakeCatalogs' });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'bigLakeCatalogsLoaded',
+            catalogs: [
+              {
+                name: 'lakehouse_catalog',
+                id: 'lakehouse_catalog',
+                value: 'lakehouse_catalog',
+                warehouse: 'gs://lakehouse_catalog',
+              },
+              'projects/my-proj/locations/us-central1/catalogs/analytics_cat',
+            ],
+          },
+        })
+      );
+    });
+
+    const datalist = container.querySelector('#iceberg-source-catalogs-list');
+    expect(datalist).toBeInTheDocument();
+    expect(datalist?.querySelector('option[value="lakehouse_catalog"]')).toBeInTheDocument();
+    expect(datalist?.querySelector('option[value="analytics_cat"]')).toBeInTheDocument();
+
+    // Also verify catalog discovery error alert surfaces cleanly
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'bigLakeCatalogsLoaded',
+            catalogs: [],
+            error: 'PERMISSION_DENIED: biglake.catalogs.list',
+          },
+        })
+      );
+    });
+
+    expect(
+      screen.getByText(/Failed to load BigLake catalogs: PERMISSION_DENIED/i)
+    ).toBeInTheDocument();
   });
 });

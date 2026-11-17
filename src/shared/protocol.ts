@@ -34,6 +34,10 @@ export const WEBVIEW_TO_HOST_COMMANDS = [
     'getSqlInstances',
     'getSqlDatabases',
     'getProjects',
+    'getDataprocClusters',
+    'getSessionTemplates',
+    'getBigLakeCatalogs',
+    'getRegions',
     'ready',
     'getSamples',
     'openSample',
@@ -79,7 +83,11 @@ export type AssetResponseCommand =
     | 'bigtableTablesLoaded'
     | 'sqlInstancesLoaded'
     | 'sqlDatabasesLoaded'
-    | 'projectsLoaded';
+    | 'projectsLoaded'
+    | 'dataprocClustersLoaded'
+    | 'sessionTemplatesLoaded'
+    | 'bigLakeCatalogsLoaded'
+    | 'regionsLoaded';
 
 /**
  * Result of an asset lookup. The item array lives under a per-command key

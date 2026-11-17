@@ -331,5 +331,85 @@ describe('useAssetLoader', () => {
       expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getTables', dataset: 'ds_a' });
     });
   });
+
+  describe('Phase 4 Live GCP Asset Discovery (D1-D6)', () => {
+    it.each([
+      [
+        'dataprocClusters',
+        'getDataprocClusters',
+        'dataprocClustersLoaded',
+        'clusters',
+        [{ name: 'spark-cluster-1', status: 'RUNNING', region: 'us-central1' }],
+      ],
+      [
+        'clusters',
+        'getDataprocClusters',
+        'dataprocClustersLoaded',
+        'clusters',
+        [{ name: 'spark-cluster-2', status: 'RUNNING', region: 'us-east1' }],
+      ],
+      [
+        'sessionTemplates',
+        'getSessionTemplates',
+        'sessionTemplatesLoaded',
+        'sessionTemplates',
+        [{ name: 'interactive-tpl', value: 'interactive-tpl', fullName: 'projects/p/locations/us-central1/sessionTemplates/interactive-tpl' }],
+      ],
+      [
+        'bigLakeCatalogs',
+        'getBigLakeCatalogs',
+        'bigLakeCatalogsLoaded',
+        'catalogs',
+        [{ name: 'lakehouse', id: 'lakehouse', value: 'lakehouse', warehouse: 'gs://lakehouse' }],
+      ],
+      [
+        'icebergCatalogs',
+        'getBigLakeCatalogs',
+        'bigLakeCatalogsLoaded',
+        'catalogs',
+        [{ name: 'iceberg_cat', id: 'iceberg_cat', value: 'iceberg_cat', warehouse: 'gs://iceberg_cat' }],
+      ],
+      [
+        'regions',
+        'getRegions',
+        'regionsLoaded',
+        'regions',
+        ['us-central1', 'europe-west1'],
+      ],
+    ] as const)(
+      'requests %s (%s) and populates items on %s',
+      (assetType, requestCommand, responseCommand, responseKey, payload) => {
+        const TestComponent = () => {
+          const { items, loading, error } = useAssetLoader<any>(assetType, {
+            params: { region: 'us-central1' },
+          });
+          return (
+            <div>
+              <span data-testid="loading">{String(loading)}</span>
+              <span data-testid="error">{error || 'none'}</span>
+              <span data-testid="count">{items.length}</span>
+            </div>
+          );
+        };
+
+        render(<TestComponent />);
+        expect(mockPostMessage).toHaveBeenCalledWith({
+          command: requestCommand,
+          region: 'us-central1',
+        });
+        expect(screen.getByTestId('loading')).toHaveTextContent('true');
+
+        dispatch({
+          command: responseCommand,
+          [responseKey]: payload,
+          requestParams: { region: 'us-central1' },
+        });
+
+        expect(screen.getByTestId('loading')).toHaveTextContent('false');
+        expect(screen.getByTestId('error')).toHaveTextContent('none');
+        expect(screen.getByTestId('count')).toHaveTextContent(String(payload.length));
+      }
+    );
+  });
 });
 

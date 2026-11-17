@@ -49,6 +49,11 @@ import { SelectField } from '../../components/common/SelectField';
 import type { SelectFieldOption } from '../../components/common/SelectField';
 import { StoragePathField } from '../../components/common/StoragePathField';
 import { SecretManagerAuthFields } from '../../components/common/SecretManagerAuthFields';
+import { useAssetLoader } from '../../hooks/useAssetLoader';
+import {
+  normalizeBigLakeCatalogOptions,
+  type BigLakeCatalogOption,
+} from '../source/IcebergIO';
 
 /**
  * React Flow node shape for the Iceberg sink panel, including its persisted configuration data.
@@ -90,6 +95,7 @@ export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
   { value: 'hadoop', label: 'Hadoop (Filesystem catalog)' },
   { value: 'hive', label: 'Hive Metastore (HMS)' },
   { value: 'rest', label: 'REST Catalog' },
+  { value: 'biglake', label: 'BigLake Metastore / Iceberg REST Catalog' },
   { value: 'glue', label: 'AWS Glue Data Catalog' },
   { value: 'nessie', label: 'Project Nessie Catalog' },
   { value: 'bigquery', label: 'BigQuery Metastore' }
@@ -117,6 +123,14 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
   const secretName = properties.secretName || '';
 
   const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+
+  // D3: Request BigLake Iceberg catalogs via useAssetLoader for datalist autocompletion
+  const {
+    items: rawCatalogs,
+    loading: catalogsLoading,
+    error: catalogError,
+  } = useAssetLoader<string | BigLakeCatalogOption>('bigLakeCatalogs');
+  const catalogOptions = normalizeBigLakeCatalogOptions(rawCatalogs);
 
   // Validation: table and warehouseLocation are required to write to the Iceberg table.
   const isTableInvalid = !table.trim();
@@ -184,6 +198,9 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
         value={catalogName}
         onChange={handleChange}
         placeholder="lakehouse"
+        list="iceberg-sink-catalogs-list"
+        datalist={catalogOptions}
+        loading={catalogsLoading}
         mono={true}
         helperText={
           <span className="text-[11px] text-[var(--vscode-text-muted)]">
@@ -191,6 +208,11 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
           </span>
         }
       />
+      {catalogError && (
+        <span className="text-xs text-red-400 mt-1" role="alert">
+          Failed to load BigLake catalogs: {catalogError}
+        </span>
+      )}
 
       {/* Catalog Type Select */}
       <SelectField

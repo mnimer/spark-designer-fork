@@ -39,7 +39,13 @@ export type AssetType =
   | 'bigtableTables'
   | 'sqlInstances'
   | 'sqlDatabases'
-  | 'projects';
+  | 'projects'
+  | 'dataprocClusters'
+  | 'clusters'
+  | 'sessionTemplates'
+  | 'bigLakeCatalogs'
+  | 'icebergCatalogs'
+  | 'regions';
 
 /**
  * Configuration descriptor for an asset type IPC request/response contract.
@@ -154,6 +160,36 @@ export const ASSET_CONFIGS: Record<string, AssetConfig> = {
     requestCommand: 'getProjects',
     responseCommand: 'projectsLoaded',
     responseKey: 'projects'
+  },
+  dataprocClusters: {
+    requestCommand: 'getDataprocClusters',
+    responseCommand: 'dataprocClustersLoaded',
+    responseKey: 'clusters'
+  },
+  clusters: {
+    requestCommand: 'getDataprocClusters',
+    responseCommand: 'dataprocClustersLoaded',
+    responseKey: 'clusters'
+  },
+  sessionTemplates: {
+    requestCommand: 'getSessionTemplates',
+    responseCommand: 'sessionTemplatesLoaded',
+    responseKey: 'sessionTemplates'
+  },
+  bigLakeCatalogs: {
+    requestCommand: 'getBigLakeCatalogs',
+    responseCommand: 'bigLakeCatalogsLoaded',
+    responseKey: 'catalogs'
+  },
+  icebergCatalogs: {
+    requestCommand: 'getBigLakeCatalogs',
+    responseCommand: 'bigLakeCatalogsLoaded',
+    responseKey: 'catalogs'
+  },
+  regions: {
+    requestCommand: 'getRegions',
+    responseCommand: 'regionsLoaded',
+    responseKey: 'regions'
   }
 };
 

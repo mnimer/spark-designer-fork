@@ -42,6 +42,52 @@ import { SelectField } from '../../components/common/SelectField';
 import type { SelectFieldOption } from '../../components/common/SelectField';
 import { StoragePathField } from '../../components/common/StoragePathField';
 import { SecretManagerAuthFields } from '../../components/common/SecretManagerAuthFields';
+import { useAssetLoader } from '../../hooks/useAssetLoader';
+import type { PropertyFieldOption } from '../../components/common/PropertyField';
+
+/** Discovered BigLake Iceberg catalog descriptor from the extension host. */
+export interface BigLakeCatalogOption {
+  name?: string;
+  id?: string;
+  value?: string;
+  warehouse?: string;
+  catalogType?: string;
+  [key: string]: any;
+}
+
+/**
+ * Normalizes raw BigLake catalog items (strings or objects) into PropertyField datalist options.
+ *
+ * @param items Raw catalog items from `useAssetLoader('bigLakeCatalogs')`.
+ * @returns Normalized datalist options.
+ */
+export function normalizeBigLakeCatalogOptions(
+  items: Array<string | BigLakeCatalogOption>
+): PropertyFieldOption[] {
+  const seen = new Set<string>();
+  const options: PropertyFieldOption[] = [];
+  for (const item of items || []) {
+    const raw =
+      typeof item === 'string'
+        ? item.trim()
+        : (item?.value || item?.id || item?.name || '').trim();
+    if (!raw) continue;
+    const stripped = raw.replace(/^gs:\/\//, '').replace(/\/+$/, '');
+    const parts = stripped.split('/').filter(Boolean);
+    const shortName = parts[parts.length - 1] || '';
+    if (!shortName || seen.has(shortName)) continue;
+    seen.add(shortName);
+    const warehouse =
+      typeof item === 'object' && item !== null && typeof item.warehouse === 'string'
+        ? item.warehouse.trim()
+        : '';
+    options.push({
+      value: shortName,
+      label: warehouse ? `${shortName} (${warehouse})` : shortName,
+    });
+  }
+  return options;
+}
 
 /** React Flow node shape for the IcebergIO source panel, including its persisted configuration data. */
 export interface IcebergIOSourceNode {
@@ -81,6 +127,7 @@ export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
   { value: 'hadoop', label: 'Hadoop (Filesystem catalog)' },
   { value: 'hive', label: 'Hive Metastore (HMS)' },
   { value: 'rest', label: 'REST Catalog' },
+  { value: 'biglake', label: 'BigLake Metastore / Iceberg REST Catalog' },
   { value: 'glue', label: 'AWS Glue Data Catalog' },
   { value: 'nessie', label: 'Project Nessie Catalog' },
   { value: 'bigquery', label: 'BigQuery Metastore' }
@@ -105,6 +152,14 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
   const configProperties = properties.configProperties || '';
 
   const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+
+  // D3: Request BigLake Iceberg catalogs via useAssetLoader for datalist autocompletion
+  const {
+    items: rawCatalogs,
+    loading: catalogsLoading,
+    error: catalogError,
+  } = useAssetLoader<string | BigLakeCatalogOption>('bigLakeCatalogs');
+  const catalogOptions = normalizeBigLakeCatalogOptions(rawCatalogs);
 
   // Validation: table and warehouseLocation are required to locate the Iceberg table and catalog metadata.
   const isTableInvalid = !table.trim();
@@ -185,6 +240,9 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         value={catalogName}
         onChange={handleChange}
         placeholder="lakehouse"
+        list="iceberg-source-catalogs-list"
+        datalist={catalogOptions}
+        loading={catalogsLoading}
         mono={true}
         helperText={
           <span className="text-[11px] text-[var(--vscode-text-muted)]">
@@ -192,6 +250,11 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
           </span>
         }
       />
+      {catalogError && (
+        <span className="text-xs text-red-400 mt-1" role="alert">
+          Failed to load BigLake catalogs: {catalogError}
+        </span>
+      )}
 
       {/* Catalog Type Select */}
       <SelectField

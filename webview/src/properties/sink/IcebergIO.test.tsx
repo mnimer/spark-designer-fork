@@ -18,9 +18,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { IcebergIOSinkProperties } from './IcebergIO';
+import { IcebergIOSinkProperties, ICEBERG_CATALOG_TYPES } from './IcebergIO';
 
 describe('IcebergIOSinkProperties', () => {
   let originalVscode: any;
@@ -367,5 +367,66 @@ describe('IcebergIOSinkProperties', () => {
     });
     const emitted = mockOnChange.mock.calls[0][0];
     expect(emitted.partitionFields).toBe('date');
+  });
+
+  it('includes biglake in ICEBERG_CATALOG_TYPES and populates BigLake catalog datalist via useAssetLoader (D3)', () => {
+    expect(ICEBERG_CATALOG_TYPES.some((opt) => opt.value === 'biglake')).toBe(true);
+
+    const mockPostMessage = vi.fn();
+    (window as any).vscode = { postMessage: mockPostMessage };
+
+    const mockNode: any = {
+      data: {
+        properties: {
+          table: 'analytics.events_out',
+          warehouseLocation: 'gs://lakehouse/warehouse',
+          catalogType: 'biglake',
+        },
+      },
+    };
+
+    const { container } = render(
+      <IcebergIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getBigLakeCatalogs' });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'bigLakeCatalogsLoaded',
+            catalogs: [
+              {
+                name: 'sink_lakehouse',
+                id: 'sink_lakehouse',
+                value: 'sink_lakehouse',
+                warehouse: 'gs://sink_lakehouse',
+              },
+            ],
+          },
+        })
+      );
+    });
+
+    const datalist = container.querySelector('#iceberg-sink-catalogs-list');
+    expect(datalist).toBeInTheDocument();
+    expect(datalist?.querySelector('option[value="sink_lakehouse"]')).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'bigLakeCatalogsLoaded',
+            catalogs: [],
+            error: 'BigLake API not enabled',
+          },
+        })
+      );
+    });
+
+    expect(
+      screen.getByText(/Failed to load BigLake catalogs: BigLake API not enabled/i)
+    ).toBeInTheDocument();
   });
 });

@@ -40,7 +40,30 @@ import {
     handleGetBigtableTables,
     handleGetSqlInstances,
     handleGetSqlDatabases,
-    handleGetProjects
+    handleGetProjects,
+    handleGetDataprocClusters,
+    handleGetSessionTemplates,
+    handleGetBigLakeCatalogs,
+    handleGetDatasets,
+    handleGetTables,
+    handleGetStorageBuckets,
+    handleGetSubnetworks,
+    handleGetRegions,
+    handleGetSecrets,
+    fetchDataprocClusters,
+    fetchSessionTemplates,
+    fetchBigLakeCatalogs,
+    fetchDatasets,
+    fetchTables,
+    fetchBuckets,
+    fetchStorageBuckets,
+    fetchSubnetworks,
+    fetchRegions,
+    fetchSecrets,
+    mapDataprocClusters,
+    mapSessionTemplates,
+    mapBigLakeCatalogs,
+    mapRegions,
 } from '../../extension';
 
 type Posted = Record<string, any>;
@@ -74,7 +97,7 @@ function makeCtx(): { ctx: MessageContext; posted: Posted[] } {
 describe('Discovery handlers (Bigtable, Cloud SQL, projects)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockConfigValues = { 'dataflowDesigner.gcloudPath': '/mock/bin/gcloud' };
+        mockConfigValues = { 'sparkDesigner.gcloudPath': '/mock/bin/gcloud' };
         vi.spyOn(console, 'log').mockImplementation(() => undefined);
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
     });
@@ -191,5 +214,405 @@ describe('Discovery handlers (Bigtable, Cloud SQL, projects)', () => {
         expect(posted[0].sqlInstances).toEqual([]);
         expect(posted[0].error).toContain('Failed to list sqlInstances via gcloud');
         expect(posted[0].error).toContain('PERMISSION_DENIED');
+    });
+});
+
+describe('Phase 4 Live GCP Asset Discovery (D1–D6)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockConfigValues = { 'sparkDesigner.gcloudPath': '/mock/bin/gcloud' };
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+
+    it('exports fetch* aliases matching their handleGet* counterparts', () => {
+        expect(fetchDataprocClusters).toBe(handleGetDataprocClusters);
+        expect(fetchSessionTemplates).toBe(handleGetSessionTemplates);
+        expect(fetchBigLakeCatalogs).toBe(handleGetBigLakeCatalogs);
+        expect(fetchDatasets).toBe(handleGetDatasets);
+        expect(fetchTables).toBe(handleGetTables);
+        expect(fetchBuckets).toBe(handleGetStorageBuckets);
+        expect(fetchStorageBuckets).toBe(handleGetStorageBuckets);
+        expect(fetchSubnetworks).toBe(handleGetSubnetworks);
+        expect(fetchRegions).toBe(handleGetRegions);
+        expect(fetchSecrets).toBe(handleGetSecrets);
+    });
+
+    describe('D1 — fetchDataprocClusters / handleGetDataprocClusters', () => {
+        it('lists RUNNING Dataproc clusters with default region us-central1', async () => {
+            const { calls } = mockCliSuccess([
+                {
+                    clusterName: 'spark-prod-cluster',
+                    status: { state: 'RUNNING' },
+                    labels: { 'goog-dataproc-location': 'us-central1' },
+                },
+                {
+                    name: 'projects/p1/regions/us-central1/clusters/spark-analytics',
+                    status: 'RUNNING',
+                    region: 'projects/p1/regions/us-central1',
+                },
+                { status: { state: 'RUNNING' } },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchDataprocClusters(ctx, { command: 'getDataprocClusters' });
+
+            expect(calls).toEqual([
+                [
+                    'dataproc',
+                    'clusters',
+                    'list',
+                    '--region=us-central1',
+                    '--filter=status.state = RUNNING',
+                    '--limit=100',
+                    '--format=json',
+                ],
+            ]);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].command).toBe('dataprocClustersLoaded');
+            expect(posted[0].clusters).toEqual([
+                {
+                    name: 'spark-prod-cluster',
+                    value: 'spark-prod-cluster',
+                    status: 'RUNNING',
+                    region: 'us-central1',
+                },
+                {
+                    name: 'spark-analytics',
+                    value: 'spark-analytics',
+                    status: 'RUNNING',
+                    region: 'us-central1',
+                },
+            ]);
+            expect(posted[0].error).toBeUndefined();
+        });
+
+        it('passes explicit region and validated projectId to gcloud', async () => {
+            const { calls } = mockCliSuccess([{ clusterName: 'eu-cluster', status: { state: 'RUNNING' } }]);
+            const { ctx, posted } = makeCtx();
+
+            await handleGetDataprocClusters(ctx, {
+                command: 'getDataprocClusters',
+                region: 'europe-west1',
+                projectId: 'my-spark-proj',
+            });
+
+            expect(calls).toEqual([
+                [
+                    'dataproc',
+                    'clusters',
+                    'list',
+                    '--region=europe-west1',
+                    '--filter=status.state = RUNNING',
+                    '--limit=100',
+                    '--format=json',
+                    '--project=my-spark-proj',
+                ],
+            ]);
+            expect(posted[0].clusters).toEqual([
+                { name: 'eu-cluster', value: 'eu-cluster', status: 'RUNNING' },
+            ]);
+        });
+
+        it('rejects invalid region identifiers without invoking gcloud', async () => {
+            const { calls } = mockCliSuccess([]);
+            const { ctx, posted } = makeCtx();
+
+            await handleGetDataprocClusters(ctx, {
+                command: 'getDataprocClusters',
+                region: 'us-central1; rm -rf /',
+            });
+
+            expect(calls).toEqual([]);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].command).toBe('dataprocClustersLoaded');
+            expect(posted[0].clusters).toEqual([]);
+            expect(posted[0].error).toContain("Invalid region identifier: 'us-central1; rm -rf /'");
+        });
+
+        it('mapDataprocClusters returns empty array for non-array input', () => {
+            expect(mapDataprocClusters(null)).toEqual([]);
+            expect(mapDataprocClusters({})).toEqual([]);
+        });
+    });
+
+    describe('D2 — fetchSessionTemplates / handleGetSessionTemplates', () => {
+        it('lists session templates and extracts BigLake Iceberg catalog metadata from runtimeConfig.properties', async () => {
+            const { calls } = mockCliSuccess([
+                {
+                    name: 'projects/p1/locations/us-central1/sessionTemplates/lakehouse-tpl',
+                    description: 'Interactive Spark Connect with BigLake',
+                    runtimeConfig: {
+                        properties: {
+                            'spark.sql.defaultCatalog': 'biglake_cat',
+                            'spark.sql.catalog.biglake_cat': 'org.apache.iceberg.spark.SparkCatalog',
+                            'spark.sql.catalog.biglake_cat.warehouse': 'gs://corp-iceberg-warehouse/prod',
+                            'spark.sql.catalog.secondary_cat.warehouse': 'gs://corp-iceberg-warehouse/staging',
+                        },
+                    },
+                },
+                {
+                    name: 'projects/p1/locations/us-central1/sessionTemplates/basic-tpl',
+                },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchSessionTemplates(ctx, {
+                command: 'getSessionTemplates',
+                location: 'us-central1',
+                projectId: 'p1',
+            });
+
+            expect(calls).toEqual([
+                [
+                    'beta',
+                    'dataproc',
+                    'session-templates',
+                    'list',
+                    '--location=us-central1',
+                    '--limit=50',
+                    '--format=json',
+                    '--project=p1',
+                ],
+            ]);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].command).toBe('sessionTemplatesLoaded');
+            expect(posted[0].sessionTemplates).toEqual([
+                {
+                    name: 'lakehouse-tpl',
+                    value: 'lakehouse-tpl',
+                    fullName: 'projects/p1/locations/us-central1/sessionTemplates/lakehouse-tpl',
+                    description: 'Interactive Spark Connect with BigLake',
+                    defaultCatalog: 'biglake_cat',
+                    catalogNames: ['biglake_cat', 'secondary_cat'],
+                    warehouse: 'gs://corp-iceberg-warehouse/prod',
+                },
+                {
+                    name: 'basic-tpl',
+                    value: 'basic-tpl',
+                    fullName: 'projects/p1/locations/us-central1/sessionTemplates/basic-tpl',
+                },
+            ]);
+        });
+
+        it('rejects invalid location without invoking gcloud', async () => {
+            const { calls } = mockCliSuccess([]);
+            const { ctx, posted } = makeCtx();
+
+            await handleGetSessionTemplates(ctx, {
+                command: 'getSessionTemplates',
+                location: 'invalid_location!',
+            });
+
+            expect(calls).toEqual([]);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].command).toBe('sessionTemplatesLoaded');
+            expect(posted[0].sessionTemplates).toEqual([]);
+            expect(posted[0].error).toContain("Invalid location identifier: 'invalid_location!'");
+        });
+
+        it('mapSessionTemplates handles non-array and empty entries', () => {
+            expect(mapSessionTemplates(undefined)).toEqual([]);
+            expect(mapSessionTemplates([{}, { name: '' }])).toEqual([]);
+        });
+    });
+
+    describe('D3 — fetchBigLakeCatalogs / handleGetBigLakeCatalogs', () => {
+        it('lists BigLake Iceberg catalogs and normalizes resource names and GCS bucket warehouses', async () => {
+            const { calls } = mockCliSuccess([
+                {
+                    name: 'projects/p1/locations/global/catalogs/lakehouse_prod',
+                    default_location: 'gs://lakehouse-prod-warehouse',
+                    catalog_type: 'BIGLAKE',
+                },
+                {
+                    name: 'gs://my-warehouse-bucket/',
+                },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchBigLakeCatalogs(ctx, { command: 'getBigLakeCatalogs', projectId: 'p1' });
+
+            expect(calls).toEqual([
+                ['biglake', 'iceberg', 'catalogs', 'list', '--format=json', '--project=p1'],
+            ]);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].command).toBe('bigLakeCatalogsLoaded');
+            expect(posted[0].catalogs).toEqual([
+                {
+                    name: 'lakehouse_prod',
+                    id: 'lakehouse_prod',
+                    fullName: 'projects/p1/locations/global/catalogs/lakehouse_prod',
+                    value: 'lakehouse_prod',
+                    warehouse: 'gs://lakehouse-prod-warehouse',
+                    catalogType: 'BIGLAKE',
+                },
+                {
+                    name: 'my-warehouse-bucket',
+                    id: 'my-warehouse-bucket',
+                    fullName: 'gs://my-warehouse-bucket/',
+                    value: 'my-warehouse-bucket',
+                    warehouse: 'gs://my-warehouse-bucket',
+                    catalogType: 'biglake',
+                },
+            ]);
+        });
+
+        it('mapBigLakeCatalogs handles string items and non-array inputs', () => {
+            expect(mapBigLakeCatalogs(null)).toEqual([]);
+            expect(mapBigLakeCatalogs(['my-cat'])).toEqual([
+                {
+                    name: 'my-cat',
+                    id: 'my-cat',
+                    fullName: 'my-cat',
+                    value: 'my-cat',
+                    warehouse: 'gs://my-cat',
+                    catalogType: 'biglake',
+                },
+            ]);
+        });
+    });
+
+    describe('D4 — fetchDatasets and fetchTables (bq ls --format=json)', () => {
+        it('fetchDatasets lists BigQuery datasets and extracts projectId', async () => {
+            const { calls } = mockCliSuccess([
+                { datasetReference: { datasetId: 'raw_events', projectId: 'analytics-p1' } },
+                { datasetReference: { datasetId: 'curated_marts', projectId: 'analytics-p1' } },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchDatasets(ctx, { command: 'getDatasets' });
+
+            expect(calls).toEqual([['ls', '--format=json']]);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].command).toBe('datasetsLoaded');
+            expect(posted[0].datasets).toEqual(['raw_events', 'curated_marts']);
+            expect(posted[0].projectId).toBe('analytics-p1');
+        });
+
+        it('fetchTables lists BigQuery tables for a valid dataset and rejects invalid datasets', async () => {
+            const { calls } = mockCliSuccess([
+                { tableReference: { tableId: 'orders' } },
+                { tableReference: { tableId: 'customers' } },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchTables(ctx, { command: 'getTables', dataset: 'raw_events' });
+
+            expect(calls).toEqual([['ls', '--format=json', 'raw_events']]);
+            expect(posted[0]).toEqual(
+                expect.objectContaining({
+                    command: 'tablesLoaded',
+                    tables: ['orders', 'customers'],
+                })
+            );
+
+            // Reject invalid dataset without invoking bq
+            const { calls: badCalls } = mockCliSuccess([]);
+            const { ctx: badCtx, posted: badPosted } = makeCtx();
+            await fetchTables(badCtx, { command: 'getTables', dataset: 'raw_events; drop table' });
+            expect(badCalls).toEqual([]);
+            expect(badPosted[0].error).toContain('Invalid or missing dataset identifier');
+        });
+    });
+
+    describe('D5 — fetchBuckets, fetchSubnetworks, and fetchRegions', () => {
+        it('fetchBuckets lists Cloud Storage buckets with gs:// and trailing slashes stripped', async () => {
+            const { calls } = mockCliSuccess([
+                { name: 'gs://spark-staging-bucket/' },
+                { id: 'spark-warehouse-bucket' },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchBuckets(ctx, { command: 'getStorageBuckets' });
+
+            expect(calls).toEqual([['storage', 'buckets', 'list', '--format=json']]);
+            expect(posted[0]).toEqual(
+                expect.objectContaining({
+                    command: 'storageBucketsLoaded',
+                    buckets: ['spark-staging-bucket', 'spark-warehouse-bucket'],
+                })
+            );
+        });
+
+        it('fetchSubnetworks lists VPC subnetworks with region and relative value path', async () => {
+            const { calls } = mockCliSuccess([
+                {
+                    name: 'spark-subnet',
+                    region: 'https://www.googleapis.com/compute/v1/projects/p1/regions/us-central1',
+                    network: 'https://www.googleapis.com/compute/v1/projects/p1/global/networks/default',
+                },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchSubnetworks(ctx, { command: 'getSubnetworks' });
+
+            expect(calls).toEqual([['compute', 'networks', 'subnets', 'list', '--format=json']]);
+            expect(posted[0]).toEqual(
+                expect.objectContaining({
+                    command: 'subnetworksLoaded',
+                    subnetworks: [
+                        {
+                            name: 'spark-subnet',
+                            region: 'us-central1',
+                            network: 'default',
+                            value: 'regions/us-central1/subnetworks/spark-subnet',
+                        },
+                    ],
+                })
+            );
+        });
+
+        it('fetchRegions lists Compute Engine regions', async () => {
+            const { calls } = mockCliSuccess([
+                { name: 'us-central1' },
+                { name: 'projects/p1/regions/europe-west1' },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchRegions(ctx, { command: 'getRegions' });
+
+            expect(calls).toEqual([['compute', 'regions', 'list', '--format=json']]);
+            expect(posted[0]).toEqual(
+                expect.objectContaining({
+                    command: 'regionsLoaded',
+                    regions: ['us-central1', 'europe-west1'],
+                })
+            );
+            expect(mapRegions(null)).toEqual([]);
+        });
+    });
+
+    describe('D6 — fetchSecrets (gcloud secrets list)', () => {
+        it('fetchSecrets lists Secret Manager secrets normalized to short IDs', async () => {
+            const { calls } = mockCliSuccess([
+                { name: 'projects/12345/secrets/jdbc-password' },
+                { name: 'projects/12345/secrets/aws-secret-key/' },
+            ]);
+            const { ctx, posted } = makeCtx();
+
+            await fetchSecrets(ctx, { command: 'getSecrets' });
+
+            expect(calls).toEqual([['secrets', 'list', '--format=json']]);
+            expect(posted[0]).toEqual(
+                expect.objectContaining({
+                    command: 'secretsLoaded',
+                    secrets: [
+                        {
+                            name: 'jdbc-password',
+                            id: 'jdbc-password',
+                            fullName: 'projects/12345/secrets/jdbc-password',
+                            value: 'jdbc-password',
+                        },
+                        {
+                            name: 'aws-secret-key',
+                            id: 'aws-secret-key',
+                            fullName: 'projects/12345/secrets/aws-secret-key/',
+                            value: 'aws-secret-key',
+                        },
+                    ],
+                })
+            );
+        });
     });
 });

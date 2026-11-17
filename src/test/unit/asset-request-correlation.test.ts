@@ -89,14 +89,18 @@ describe('F11 — router echoes request parameters on asset responses', () => {
     it('covers exactly the asset discovery commands', () => {
         expect([...ASSET_REQUEST_COMMANDS].sort()).toEqual([
             'getAwsQueues',
+            'getBigLakeCatalogs',
             'getBigtableInstances',
             'getBigtableTables',
             'getComputeInstances',
+            'getDataprocClusters',
             'getDatasets',
             'getHealthcareDatasets',
             'getNetworks',
             'getProjects',
+            'getRegions',
             'getSecrets',
+            'getSessionTemplates',
             'getSqlDatabases',
             'getSqlInstances',
             'getStorageBuckets',
@@ -105,6 +109,7 @@ describe('F11 — router echoes request parameters on asset responses', () => {
             'getTables',
             'getTopics',
         ]);
+        expect(ASSET_REQUEST_COMMANDS.size).toBe(20);
     });
 
     it('echoes parameters end-to-end through handleMessages for a validation error response', async () => {

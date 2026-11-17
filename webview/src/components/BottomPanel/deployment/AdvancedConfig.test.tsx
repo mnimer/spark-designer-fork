@@ -349,4 +349,120 @@ describe('AdvancedConfig', () => {
       expect(screen.getByLabelText(/Default Trigger Interval/i)).toHaveValue('30 seconds');
     });
   });
+
+  describe('Live GCP Asset Discovery integration (D1, D2, D5)', () => {
+    it('requests Dataproc clusters and regions in DataprocCluster mode and updates datalists on host response', () => {
+      const mockPostMessage = vi.fn();
+      window.vscode = { postMessage: mockPostMessage };
+
+      try {
+        let state: AdvancedJobConfig = { runner: 'DataprocCluster', region: 'us-central1' };
+        const setJobConfig = vi.fn((updater) => {
+          state = typeof updater === 'function' ? updater(state) : updater;
+        });
+
+        const { container, rerender } = render(
+          <AdvancedConfig
+            jobConfig={state}
+            setJobConfig={setJobConfig}
+            subnetworks={sampleSubnetworks}
+          />
+        );
+
+        expect(mockPostMessage).toHaveBeenCalledWith({
+          command: 'getDataprocClusters',
+          region: 'us-central1',
+        });
+        expect(mockPostMessage).toHaveBeenCalledWith({
+          command: 'getRegions',
+        });
+
+        // Simulate host responding with clusters and regions
+        fireEvent(
+          window,
+          new MessageEvent('message', {
+            data: {
+              command: 'dataprocClustersLoaded',
+              clusters: [{ name: 'live-cluster-1', status: 'RUNNING', region: 'us-central1' }],
+              requestParams: { region: 'us-central1' },
+            },
+          })
+        );
+        fireEvent(
+          window,
+          new MessageEvent('message', {
+            data: {
+              command: 'regionsLoaded',
+              regions: ['us-central1', 'northamerica-northeast1'],
+            },
+          })
+        );
+
+        const clusterDatalist = container.querySelector('#advancedDataprocClustersList');
+        expect(clusterDatalist?.querySelector('option[value="live-cluster-1"]')).toBeInTheDocument();
+
+        const regionDatalist = container.querySelector('#advancedClusterRegionsList');
+        expect(
+          regionDatalist?.querySelector('option[value="northamerica-northeast1"]')
+        ).toBeInTheDocument();
+
+        // Changing region re-triggers getDataprocClusters for the new region
+        mockPostMessage.mockClear();
+        state = { ...state, region: 'europe-west1' };
+        rerender(
+          <AdvancedConfig
+            jobConfig={state}
+            setJobConfig={setJobConfig}
+            subnetworks={sampleSubnetworks}
+          />
+        );
+        expect(mockPostMessage).toHaveBeenCalledWith({
+          command: 'getDataprocClusters',
+          region: 'europe-west1',
+        });
+      } finally {
+        delete window.vscode;
+      }
+    });
+
+    it('requests storageBuckets in ServerlessSpark mode and populates root gs://<bucket> datalist', () => {
+      const mockPostMessage = vi.fn();
+      window.vscode = { postMessage: mockPostMessage };
+
+      try {
+        const state: AdvancedJobConfig = { runner: 'ServerlessSpark' };
+        const { container } = render(
+          <AdvancedConfig
+            jobConfig={state}
+            setJobConfig={vi.fn()}
+            subnetworks={sampleSubnetworks}
+          />
+        );
+
+        expect(mockPostMessage).toHaveBeenCalledWith({
+          command: 'getStorageBuckets',
+        });
+
+        fireEvent(
+          window,
+          new MessageEvent('message', {
+            data: {
+              command: 'storageBucketsLoaded',
+              buckets: ['spark-deps-prod', 'gs://already-prefixed/'],
+            },
+          })
+        );
+
+        const bucketDatalist = container.querySelector('#advancedDepsBucketsList');
+        expect(
+          bucketDatalist?.querySelector('option[value="gs://spark-deps-prod"]')
+        ).toBeInTheDocument();
+        expect(
+          bucketDatalist?.querySelector('option[value="gs://already-prefixed"]')
+        ).toBeInTheDocument();
+      } finally {
+        delete window.vscode;
+      }
+    });
+  });
 });

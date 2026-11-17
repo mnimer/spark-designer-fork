@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import React from 'react';
 import {
@@ -143,5 +143,46 @@ describe('SecretManagerAuthFields', () => {
     expect(handleChange).toHaveBeenCalledTimes(2);
     expect(handleChange.mock.calls[1][0].target.value).toBe('updated-secret');
     expect(handleChange.mock.calls[1][0].target.name).toBe('secretName');
+  });
+
+  it('automatically requests getSecrets via useAssetLoader when secrets prop is omitted (D6)', () => {
+    const mockPostMessage = vi.fn();
+    (window as any).vscode = { postMessage: mockPostMessage };
+
+    try {
+      render(
+        <SecretManagerAuthFields
+          authMode="secretManager"
+          secretName=""
+          datalistId="live-secrets-list"
+          onChange={vi.fn()}
+        />
+      );
+
+      expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getSecrets' });
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'secretsLoaded',
+              secrets: [
+                {
+                  name: 'spark-db-password',
+                  id: 'spark-db-password',
+                  fullName: 'projects/my-proj/secrets/spark-db-password',
+                  value: 'spark-db-password',
+                },
+              ],
+            },
+          })
+        );
+      });
+
+      const datalist = document.getElementById('live-secrets-list');
+      expect(datalist?.querySelector('option[value="spark-db-password"]')).toBeInTheDocument();
+    } finally {
+      delete (window as any).vscode;
+    }
   });
 });

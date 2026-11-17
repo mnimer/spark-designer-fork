@@ -18,7 +18,7 @@ vi.mock('vscode', async () => (await import('./helpers/vscodeMock')).createVscod
     }
 }));
 
-import { toShortSecretId, parseSecretManagerOutput } from '../../extension';
+import { toShortSecretId, parseSecretManagerOutput, mapSecretManagerItems, fetchSecrets, handleGetSecrets } from '../../extension';
 
 describe('Secret Manager ID Parsing (M1)', () => {
     describe('toShortSecretId', () => {
@@ -108,6 +108,11 @@ describe('Secret Manager ID Parsing (M1)', () => {
         it('returns empty array when output is empty list or non-array JSON', () => {
             expect(parseSecretManagerOutput('[]')).toEqual([]);
             expect(parseSecretManagerOutput('{}')).toEqual([]);
+            expect(mapSecretManagerItems(null)).toEqual([]);
+        });
+
+        it('exposes fetchSecrets alias pointing to handleGetSecrets', () => {
+            expect(fetchSecrets).toBe(handleGetSecrets);
         });
     });
 });

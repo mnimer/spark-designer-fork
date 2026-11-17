@@ -877,7 +877,7 @@ runtimeVariables:
     expect(next.needsRebuild).toBe(true);
   });
 
-  it('normalizes lowercase java to Java and unsupported go to Python on loadPipeline', () => {
+  it('normalizes pipelineConfig language to Python (PySpark) on loadPipeline', () => {
     const setPipelineConfig = vi.fn();
     renderHook(() =>
       useVsCodeBridge({
@@ -894,7 +894,7 @@ runtimeVariables:
       })
     );
 
-    // 1. Loading with language: java (lowercase)
+    // 1. Loading with legacy language: java -> normalized to Python for PySpark-only designer
     const yamlJava = `
 nodes: []
 edges: []
@@ -907,7 +907,7 @@ pipelineConfig:
         new MessageEvent('message', {
           data: {
             command: 'loadPipeline',
-            filename: 'test.beam',
+            filename: 'test.spark',
             data: yamlJava,
           },
         })
@@ -917,14 +917,14 @@ pipelineConfig:
     const javaUpdater = setPipelineConfig.mock.calls[setPipelineConfig.mock.calls.length - 1][0];
     const initialConfig: PipelineConfig = { language: 'Python', outputFolder: '', needsRebuild: false };
     const resultingConfigJava = javaUpdater(initialConfig);
-    expect(resultingConfigJava.language).toBe('Java');
+    expect(resultingConfigJava.language).toBe('Python');
 
-    // 2. Loading with language: go (unsupported)
-    const yamlGo = `
+    // 2. Loading with language: PySpark -> normalized to Python
+    const yamlPySpark = `
 nodes: []
 edges: []
 pipelineConfig:
-  language: go
+  language: PySpark
   outputFolder: 'out'
 `;
     act(() => {
@@ -932,16 +932,72 @@ pipelineConfig:
         new MessageEvent('message', {
           data: {
             command: 'loadPipeline',
-            filename: 'test.beam',
-            data: yamlGo,
+            filename: 'test.spark',
+            data: yamlPySpark,
           },
         })
       );
     });
 
-    const goUpdater = setPipelineConfig.mock.calls[setPipelineConfig.mock.calls.length - 1][0];
-    const resultingConfigGo = goUpdater(initialConfig);
-    expect(resultingConfigGo.language).toBe('Python');
+    const pySparkUpdater = setPipelineConfig.mock.calls[setPipelineConfig.mock.calls.length - 1][0];
+    const resultingConfigPySpark = pySparkUpdater(initialConfig);
+    expect(resultingConfigPySpark.language).toBe('Python');
+  });
+
+  it('requests and updates clusters, sessionTemplates, and regions from extension host messages (D1, D2, D5)', () => {
+    const { result } = renderHook(() =>
+      useVsCodeBridge({
+        setNodes: vi.fn(),
+        setEdges: vi.fn(),
+        setRuntimeVariables: vi.fn(),
+        setJobConfig: vi.fn(),
+        pipelineConfig: { language: 'Python', outputFolder: '', needsRebuild: false },
+        setPipelineConfig: vi.fn(),
+        filename: 'test',
+        setFilename: vi.fn(),
+        projectId: 'proj',
+        setProjectId: vi.fn(),
+      })
+    );
+
+    expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getDataprocClusters' });
+    expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getSessionTemplates' });
+    expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getRegions' });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'dataprocClustersLoaded',
+            clusters: [{ name: 'prod-spark-cluster', status: 'RUNNING', region: 'us-central1' }],
+          },
+        })
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'sessionTemplatesLoaded',
+            sessionTemplates: [{ name: 'spark-connect-tpl', value: 'spark-connect-tpl' }],
+          },
+        })
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'regionsLoaded',
+            regions: ['us-central1', 'us-east1'],
+          },
+        })
+      );
+    });
+
+    expect(result.current.clusters).toEqual([
+      { name: 'prod-spark-cluster', status: 'RUNNING', region: 'us-central1' },
+    ]);
+    expect(result.current.sessionTemplates).toEqual([
+      { name: 'spark-connect-tpl', value: 'spark-connect-tpl' },
+    ]);
+    expect(result.current.regions).toEqual(['us-central1', 'us-east1']);
   });
 });
 

@@ -58,16 +58,20 @@ import {
 describe('A1 — Message Handler Registry & Dispatcher', () => {
     const EXPECTED_COMMANDS = [
         'getAwsQueues',
+        'getBigLakeCatalogs',
         'getBigtableInstances',
         'getBigtableTables',
         'getComputeInstances',
+        'getDataprocClusters',
         'getDatasets',
         'getHealthcareDatasets',
         'getNetworks',
         'getProjects',
+        'getRegions',
         'getRunningJobs',
         'getSamples',
         'getSecrets',
+        'getSessionTemplates',
         'getSqlDatabases',
         'getSqlInstances',
         'getStorageBuckets',
@@ -94,10 +98,10 @@ describe('A1 — Message Handler Registry & Dispatcher', () => {
     });
 
     describe('Registry completeness and structure', () => {
-        it('exposes exactly the 30 expected webview commands (simple case)', () => {
+        it('exposes exactly the 34 expected webview commands (simple case)', () => {
             const actualCommands = Object.keys(MESSAGE_HANDLERS).sort();
             expect(actualCommands).toEqual(EXPECTED_COMMANDS);
-            expect(actualCommands).toHaveLength(30);
+            expect(actualCommands).toHaveLength(34);
         });
 
         it('every registered entry is a callable handler function (extreme case)', () => {

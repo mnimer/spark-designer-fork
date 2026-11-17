@@ -15,11 +15,29 @@ import {
     parseBigtableInstanceParam,
     parseSqlInstanceParam,
     mapSecretManagerItems,
-    mapHealthcareDatasetItems
+    mapHealthcareDatasetItems,
+    mapDataprocClusters,
+    mapSessionTemplates,
+    mapBigLakeCatalogs,
+    mapRegions,
 } from '../../cli/resourceMappers';
 import { getDesignerOutputChannel } from '../../core/outputChannel';
 import { isValidGcpRegion } from '../../security/pathGuard';
 import { MessageContext } from '../messageContext';
+
+/**
+ * Extracts and validates an optional GCP project ID from an incoming IPC message.
+ *
+ * @param message Incoming IPC message
+ * @returns Validated project ID string, or undefined when absent/invalid
+ */
+function extractValidProjectId(message: any): string | undefined {
+    const raw = typeof message?.projectId === 'string' ? message.projectId.trim() : '';
+    if (!raw || raw === 'YOUR_PROJECT_ID' || !/^[a-zA-Z0-9.:-]+$/.test(raw)) {
+        return undefined;
+    }
+    return raw;
+}
 
 /**
  * Handler for 'getDatasets' command.
@@ -364,6 +382,148 @@ export async function handleGetProjects(ctx: MessageContext, _message: any): Pro
         ctx.postToWebview
     );
 }
+
+/**
+ * Handler for 'getDataprocClusters' command (D1).
+ * Validates region and fetches RUNNING Dataproc clusters via gcloud CLI.
+ *
+ * @param ctx Message context
+ * @param message Incoming IPC message with optional `region` and `projectId`
+ */
+export async function handleGetDataprocClusters(ctx: MessageContext, message: any): Promise<void> {
+    const rawRegion = typeof message?.region === 'string' ? message.region.trim() : '';
+    const region = rawRegion || 'us-central1';
+    if (!isValidGcpRegion(region)) {
+        const invalidErr = `Invalid region identifier: '${message?.region}'`;
+        console.error('[@extension.ts]', invalidErr);
+        ctx.postToWebview({
+            command: 'dataprocClustersLoaded',
+            clusters: [],
+            error: invalidErr,
+            debugLog: invalidErr,
+        });
+        return;
+    }
+    const validProject = extractValidProjectId(message);
+    await listAssets(
+        'gcloud',
+        [
+            'dataproc',
+            'clusters',
+            'list',
+            `--region=${region}`,
+            '--filter=status.state = RUNNING',
+            '--limit=100',
+            '--format=json',
+            ...(validProject ? [`--project=${validProject}`] : []),
+        ],
+        mapDataprocClusters,
+        'dataprocClustersLoaded',
+        'clusters',
+        ctx.postToWebview
+    );
+}
+
+/**
+ * Handler for 'getSessionTemplates' command (D2).
+ * Validates location/region and fetches Dataproc Serverless session templates via gcloud CLI.
+ *
+ * @param ctx Message context
+ * @param message Incoming IPC message with optional `location`, `region`, and `projectId`
+ */
+export async function handleGetSessionTemplates(ctx: MessageContext, message: any): Promise<void> {
+    const rawLocation =
+        typeof message?.location === 'string' && message.location.trim()
+            ? message.location.trim()
+            : typeof message?.region === 'string' && message.region.trim()
+                ? message.region.trim()
+                : '';
+    const location = rawLocation || 'us-central1';
+    if (!isValidGcpRegion(location)) {
+        const invalidErr = `Invalid location identifier: '${rawLocation}'`;
+        console.error('[@extension.ts]', invalidErr);
+        ctx.postToWebview({
+            command: 'sessionTemplatesLoaded',
+            sessionTemplates: [],
+            error: invalidErr,
+            debugLog: invalidErr,
+        });
+        return;
+    }
+    const validProject = extractValidProjectId(message);
+    await listAssets(
+        'gcloud',
+        [
+            'beta',
+            'dataproc',
+            'session-templates',
+            'list',
+            `--location=${location}`,
+            '--limit=50',
+            '--format=json',
+            ...(validProject ? [`--project=${validProject}`] : []),
+        ],
+        mapSessionTemplates,
+        'sessionTemplatesLoaded',
+        'sessionTemplates',
+        ctx.postToWebview
+    );
+}
+
+/**
+ * Handler for 'getBigLakeCatalogs' command (D3).
+ * Fetches BigLake Iceberg catalogs via gcloud CLI.
+ *
+ * @param ctx Message context
+ * @param message Incoming IPC message with optional `projectId`
+ */
+export async function handleGetBigLakeCatalogs(ctx: MessageContext, message: any): Promise<void> {
+    const validProject = extractValidProjectId(message);
+    await listAssets(
+        'gcloud',
+        [
+            'biglake',
+            'iceberg',
+            'catalogs',
+            'list',
+            '--format=json',
+            ...(validProject ? [`--project=${validProject}`] : []),
+        ],
+        mapBigLakeCatalogs,
+        'bigLakeCatalogsLoaded',
+        'catalogs',
+        ctx.postToWebview
+    );
+}
+
+/**
+ * Handler for 'getRegions' command (D5).
+ * Fetches Google Cloud Compute regions via gcloud CLI.
+ *
+ * @param ctx Message context
+ * @param _message Incoming IPC message (unused)
+ */
+export async function handleGetRegions(ctx: MessageContext, _message: any): Promise<void> {
+    await listAssets(
+        'gcloud',
+        ['compute', 'regions', 'list', '--format=json'],
+        mapRegions,
+        'regionsLoaded',
+        'regions',
+        ctx.postToWebview
+    );
+}
+
+export const fetchDataprocClusters = handleGetDataprocClusters;
+export const fetchSessionTemplates = handleGetSessionTemplates;
+export const fetchBigLakeCatalogs = handleGetBigLakeCatalogs;
+export const fetchDatasets = handleGetDatasets;
+export const fetchTables = handleGetTables;
+export const fetchBuckets = handleGetStorageBuckets;
+export const fetchStorageBuckets = handleGetStorageBuckets;
+export const fetchSubnetworks = handleGetSubnetworks;
+export const fetchRegions = handleGetRegions;
+export const fetchSecrets = handleGetSecrets;
 
 /**
  * Handler for 'getRunningJobs' command.
