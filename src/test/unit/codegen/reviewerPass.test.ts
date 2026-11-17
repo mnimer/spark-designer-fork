@@ -45,9 +45,9 @@ beforeAll(() => {
     skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewer-pass-'));
     writeSkill('codegen-common', 'common', '[generator, reviewer]');
     writeSkill('codegen-review', 'review', '[reviewer]');
-    writeSkill('runner-direct', 'runner', '[generator, reviewer]', '[direct]');
-    fs.mkdirSync(path.join(skillsRoot, 'runner-direct', 'templates', 'python'), { recursive: true });
-    fs.writeFileSync(path.join(skillsRoot, 'runner-direct', 'templates', 'python', 'run_directrunner.sh'), '#!/bin/bash');
+    writeSkill('runner-local', 'runner', '[generator, reviewer]', '[local]');
+    fs.mkdirSync(path.join(skillsRoot, 'runner-local', 'templates', 'python'), { recursive: true });
+    fs.writeFileSync(path.join(skillsRoot, 'runner-local', 'templates', 'python', 'run_local.sh'), '#!/bin/bash');
     clearCodegenSkillCatalogCache();
 });
 
@@ -84,8 +84,11 @@ describe('isReviewerEnabled', () => {
 describe('runReviewerPass', () => {
     it('reviews with the reviewer schema, fixes with the generator schema, and checks runner files (simple)', async () => {
         const responses = [
-            JSON.stringify({ findings: [{ file: 'src/orders.py', severity: 'blocking', problem: 'p', fix: 'f', skillRule: 'lang-python' }], summary: 's' }),
-            JSON.stringify({ files: [{ filename: 'src/orders.py', content: 'fixed' }] }),
+            JSON.stringify({
+                findings: [{ file: 'src/pipeline.py', severity: 'blocking', problem: 'p', fix: 'f', skillRule: 'core-pyspark' }],
+                summary: 's',
+            }),
+            JSON.stringify({ files: [{ filename: 'src/pipeline.py', content: 'fixed' }] }),
             JSON.stringify({ findings: [], summary: 'clean' }),
         ];
         const generateContent = vi.fn(async () => ({ text: responses.shift() }));
@@ -95,7 +98,7 @@ describe('runReviewerPass', () => {
 
         const outcome = await runReviewerPass({
             ai,
-            files: [{ filename: 'src/orders.py', content: 'bad' }],
+            files: [{ filename: 'src/pipeline.py', content: 'bad' }],
             generationPrompt: 'GEN',
             yamlText: 'nodes: []\n',
             language: 'PySpark',
@@ -118,7 +121,7 @@ describe('runReviewerPass', () => {
         expect(calls[0][0].config.maxOutputTokens).toBe(CODEGEN_MODEL_SETTINGS.maxOutputTokens);
         expect(calls[0][0].contents).toContain('REVIEW TEMPLATE');
         expect(calls[0][0].contents).toContain('CODEGEN-REVIEW BODY');
-        expect(calls[0][0].contents).toContain('run_directrunner.sh');
+        expect(calls[0][0].contents).toContain('run_local.sh');
         // Fix call: generator schema and generation prompt.
         expect(calls[1][0].config.responseSchema).toEqual({ generator: true });
         expect(calls[1][0].contents.startsWith('GEN')).toBe(true);

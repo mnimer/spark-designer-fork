@@ -209,12 +209,15 @@ export function useVsCodeBridge({
     }
   }, []);
 
-  const handleRegenerate = useCallback((graphState: { nodes: any[]; edges: any[]; runtimeVariables: any[]; jobConfig: any }) => {
+  const handleRegenerate = useCallback((graphState: { nodes: any[]; edges: any[]; runtimeVariables: any[]; jobConfig: any; enableReviewer?: boolean }) => {
     const vs = vsCodeRef.current;
     if (vs) {
       setIsGenerating(true);
       const state = {
-        ...graphState,
+        nodes: graphState.nodes,
+        edges: graphState.edges,
+        runtimeVariables: graphState.runtimeVariables,
+        jobConfig: graphState.jobConfig,
         pipelineConfig: { ...pipelineConfigRef.current, needsRebuild: false },
       };
       const yamlStr = serializePipeline(state);
@@ -224,6 +227,7 @@ export function useVsCodeBridge({
         filename: filenameRef.current,
         language: pipelineConfigRef.current.language,
         outputFolder: pipelineConfigRef.current.outputFolder,
+        ...(typeof graphState.enableReviewer === 'boolean' ? { enableReviewer: graphState.enableReviewer } : {}),
       });
     }
   }, []);

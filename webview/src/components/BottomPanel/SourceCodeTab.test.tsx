@@ -1,10 +1,21 @@
+/**
+ * @fileoverview Unit tests for SourceCodeTab and GeneratorSettings components.
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { SourceCodeTab, highlightCode } from './SourceCodeTab';
+import {
+  GeneratorSettings,
+  CODEGEN_REVIEWER_ENABLED_BY_DEFAULT,
+  PYSPARK_RUNTIME_BADGE_LABEL,
+} from './sourceCode/GeneratorSettings';
 import { renderWithBottomPanel } from './testUtils';
 
-describe('SourceCodeTab', () => {
+describe('SourceCodeTab & GeneratorSettings', () => {
   const mockProps = {
     generatedCode: 'print("pipeline")',
     language: 'Python' as const,
@@ -17,23 +28,29 @@ describe('SourceCodeTab', () => {
     files: ['job.py', 'requirements.txt'],
     selectedFile: null,
     onSelectFile: vi.fn(),
-    selectedFileContent: null
+    selectedFileContent: null,
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders correctly with default props when needsRebuild is false', () => {
+  it('renders read-only PySpark (Spark 4.x) badge and hides legacy Python/Java radio buttons (G12)', () => {
     renderWithBottomPanel(<SourceCodeTab />, mockProps);
 
-    // Check language options
-    expect(screen.getByLabelText('Python')).toBeInTheDocument();
-    expect(screen.getByLabelText('Java')).toBeInTheDocument();
-    expect(screen.getByLabelText('Python')).toBeChecked();
+    // Check read-only PySpark runtime badge
+    const runtimeBadge = screen.getByTestId('pyspark-runtime-badge');
+    expect(runtimeBadge).toBeInTheDocument();
+    expect(runtimeBadge).toHaveTextContent(PYSPARK_RUNTIME_BADGE_LABEL);
+    expect(runtimeBadge).toHaveTextContent('Python 3.12+');
+
+    // Legacy radio buttons for Python / Java should not exist
+    expect(screen.queryByRole('radio', { name: /Python/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /Java/i })).not.toBeInTheDocument();
 
     // Check folder inputs
     expect(screen.getByPlaceholderText('./scratch_flow/')).toHaveValue('src/output');
+    expect(screen.getByText('Valid PySpark package name: src/output')).toBeInTheDocument();
 
     // Check action buttons
     expect(screen.getByText('Generate Code')).toBeInTheDocument();
@@ -54,21 +71,110 @@ describe('SourceCodeTab', () => {
     expect(screen.getByTestId('download-code-btn')).toBeInTheDocument();
 
     // Default code should be visible
-    expect(screen.getByText((_content, node) => {
-      return node?.tagName === 'CODE' && node?.textContent === 'print("pipeline")';
-    })).toBeInTheDocument();
+    expect(
+      screen.getByText((_content, node) => {
+        return node?.tagName === 'CODE' && node?.textContent === 'print("pipeline")';
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('defaults AI Code Reviewer Pass toggle to off and passes enableReviewer state in onRegenerate (G12)', () => {
+    const onRegenerate = vi.fn();
+    const setEnableReviewer = vi.fn();
+    renderWithBottomPanel(<SourceCodeTab />, {
+      ...mockProps,
+      onRegenerate,
+      setEnableReviewer,
+    });
+
+    expect(CODEGEN_REVIEWER_ENABLED_BY_DEFAULT).toBe(false);
+
+    const reviewerToggle = screen.getByTestId('ai-reviewer-toggle') as HTMLInputElement;
+    expect(reviewerToggle).toBeInTheDocument();
+    expect(reviewerToggle.checked).toBe(false);
+
+    // Clicking Generate Code with default (false) passes { enableReviewer: false }
+    fireEvent.click(screen.getByText('Generate Code'));
+    expect(onRegenerate).toHaveBeenCalledWith({ enableReviewer: false });
+
+    // Toggling the AI Reviewer switch on updates state and passes { enableReviewer: true }
+    fireEvent.click(reviewerToggle);
+    expect(setEnableReviewer).toHaveBeenCalledWith(true);
+    expect(reviewerToggle.checked).toBe(true);
+
+    fireEvent.click(screen.getByText('Generate Code'));
+    expect(onRegenerate).toHaveBeenLastCalledWith({ enableReviewer: true });
+  });
+
+  it('respects controlled enableReviewer value from BottomPanelContext and disables toggle while generating (G12)', () => {
+    const onRegenerate = vi.fn();
+    const { rerenderWithContext } = renderWithBottomPanel(<SourceCodeTab />, {
+      ...mockProps,
+      onRegenerate,
+      enableReviewer: true,
+    });
+
+    const reviewerToggle = screen.getByTestId('ai-reviewer-toggle') as HTMLInputElement;
+    expect(reviewerToggle.checked).toBe(true);
+
+    fireEvent.click(screen.getByText('Generate Code'));
+    expect(onRegenerate).toHaveBeenCalledWith({ enableReviewer: true });
+
+    // Re-render with isGenerating: true -> toggle should be disabled
+    rerenderWithContext(<SourceCodeTab />, {
+      ...mockProps,
+      onRegenerate,
+      enableReviewer: true,
+      isGenerating: true,
+      generationProgress: 'Reviewer step 1/2: running py_compile and pytest checks...',
+    });
+
+    expect(screen.getByTestId('ai-reviewer-toggle')).toBeDisabled();
+    expect(screen.getByTestId('generation-progress')).toHaveTextContent(
+      'Reviewer step 1/2: running py_compile and pytest checks...',
+    );
+  });
+
+  it('renders GeneratorSettings directly with unsupportedNodes SDK opt-in and Reviewer toggle', () => {
+    const onRegenerate = vi.fn();
+    const onEnableReviewerChange = vi.fn();
+    const onUseSdkChange = vi.fn();
+
+    renderWithBottomPanel(
+      <GeneratorSettings
+        outputFolder="./my_spark_job/"
+        setOutputFolder={vi.fn()}
+        onPickFolder={vi.fn()}
+        onRegenerate={onRegenerate}
+        effectiveIsGraphValid={true}
+        effectiveValidationErrors={[]}
+        unsupportedNodes={[
+          { id: 'n1', label: 'Pub/Sub Source', sparkTransform: 'PubSubSource' },
+        ]}
+        useSdkForUnsupportedNodes={true}
+        onUseSdkForUnsupportedNodesChange={onUseSdkChange}
+        enableReviewer={false}
+        onEnableReviewerChange={onEnableReviewerChange}
+        packageDisplayName="my_spark_job"
+      />,
+      mockProps,
+    );
+
+    expect(screen.getByTestId('pyspark-runtime-badge')).toHaveTextContent('PySpark (Spark 4.x)');
+    expect(screen.getByTestId('use-sdk-for-unsupported')).toBeInTheDocument();
+    expect(screen.getByTestId('use-sdk-notice')).toHaveTextContent('Pub/Sub Source');
+
+    fireEvent.click(screen.getByTestId('ai-reviewer-toggle'));
+    expect(onEnableReviewerChange).toHaveBeenCalledWith(true);
   });
 
   it('displays color-coded file type badges in the vertical file list and sub-header', () => {
-    renderWithBottomPanel(
-      <SourceCodeTab />,
-      {
-        ...mockProps,
-        files: ['pipeline.py', 'test_pipeline.py', 'requirements.txt', 'README.md', 'Dockerfile'],
-        selectedFile: 'requirements.txt',
-        selectedFileContent: 'apache-beam[gcp]==2.60.0',
-      }
-    );
+    renderWithBottomPanel(<SourceCodeTab />, {
+      ...mockProps,
+      files: ['pipeline.py', 'test_pipeline.py', 'requirements.txt', 'README.md', 'Dockerfile'],
+      selectedFile: 'requirements.txt',
+      selectedFileContent: 'pyspark==4.0.0',
+    });
 
     expect(screen.getByTestId('generated-file-item-pipeline.py')).toHaveTextContent('PY');
     expect(screen.getByTestId('generated-file-item-test_pipeline.py')).toHaveTextContent('TEST');
@@ -80,13 +186,10 @@ describe('SourceCodeTab', () => {
   });
 
   it('toggles inline Find bar, highlights matches in active file, and closes on Escape', () => {
-    renderWithBottomPanel(
-      <SourceCodeTab />,
-      {
-        ...mockProps,
-        generatedCode: 'import apache_beam as beam\nbeam.Pipeline()',
-      }
-    );
+    renderWithBottomPanel(<SourceCodeTab />, {
+      ...mockProps,
+      generatedCode: 'from pyspark.sql import SparkSession\nSparkSession.builder.getOrCreate()',
+    });
 
     expect(screen.queryByTestId('find-in-files-bar')).not.toBeInTheDocument();
 
@@ -95,10 +198,10 @@ describe('SourceCodeTab', () => {
     expect(screen.getByTestId('find-in-files-bar')).toBeInTheDocument();
 
     const findInput = screen.getByTestId('find-in-files-input');
-    fireEvent.change(findInput, { target: { value: 'beam' } });
+    fireEvent.change(findInput, { target: { value: 'SparkSession' } });
 
-    expect(screen.getByTestId('find-match-count')).toHaveTextContent('3 matches');
-    expect(screen.getAllByTestId('search-match-highlight')).toHaveLength(3);
+    expect(screen.getByTestId('find-match-count')).toHaveTextContent('2 matches');
+    expect(screen.getAllByTestId('search-match-highlight')).toHaveLength(2);
 
     // Close via Escape key
     fireEvent.keyDown(findInput, { key: 'Escape' });
@@ -121,22 +224,19 @@ describe('SourceCodeTab', () => {
   });
 
   it('filters out venv, node_modules, and build cache files from the file list', () => {
-    renderWithBottomPanel(
-      <SourceCodeTab />,
-      {
-        ...mockProps,
-        files: [
-          'pipeline.py',
-          'venv/lib/python3.11/site-packages/beam.py',
-          'node_modules/pkg/index.js',
-          '.venv/lib/site-packages/test.py',
-          '__pycache__/pipeline.pyc'
-        ]
-      }
-    );
+    renderWithBottomPanel(<SourceCodeTab />, {
+      ...mockProps,
+      files: [
+        'pipeline.py',
+        'venv/lib/python3.11/site-packages/pyspark.py',
+        'node_modules/pkg/index.js',
+        '.venv/lib/site-packages/test.py',
+        '__pycache__/pipeline.pyc',
+      ],
+    });
 
     expect(screen.getByText('pipeline.py')).toBeInTheDocument();
-    expect(screen.queryByText('venv/lib/python3.11/site-packages/beam.py')).not.toBeInTheDocument();
+    expect(screen.queryByText('venv/lib/python3.11/site-packages/pyspark.py')).not.toBeInTheDocument();
     expect(screen.queryByText('.venv/lib/site-packages/test.py')).not.toBeInTheDocument();
   });
 
@@ -147,13 +247,6 @@ describe('SourceCodeTab', () => {
     const stopBtn = screen.getByText('Stop');
     fireEvent.click(stopBtn);
     expect(onStopGeneration).toHaveBeenCalled();
-  });
-
-  it('calls setLanguage when selecting radio buttons', () => {
-    renderWithBottomPanel(<SourceCodeTab />, mockProps);
-
-    fireEvent.click(screen.getByLabelText('Java'));
-    expect(mockProps.setLanguage).toHaveBeenCalledWith('Java');
   });
 
   it('calls setOutputFolder when typing in folder input', () => {
@@ -176,7 +269,7 @@ describe('SourceCodeTab', () => {
     renderWithBottomPanel(<SourceCodeTab />, mockProps);
 
     fireEvent.click(screen.getByText('Generate Code'));
-    expect(mockProps.onRegenerate).toHaveBeenCalled();
+    expect(mockProps.onRegenerate).toHaveBeenCalledWith({ enableReviewer: false });
   });
 
   it('calls onSelectFile when clicking a file from the list', () => {
@@ -201,23 +294,22 @@ describe('SourceCodeTab', () => {
   });
 
   it('renders selected file content when selectedFile is set', () => {
-    renderWithBottomPanel(
-      <SourceCodeTab />,
-      {
-        ...mockProps,
-        files: ['job.py', 'custom_transform.py', 'requirements.txt'],
-        selectedFile: 'custom_transform.py',
-        selectedFileContent: 'def process(element): return element',
-      }
-    );
+    renderWithBottomPanel(<SourceCodeTab />, {
+      ...mockProps,
+      files: ['job.py', 'custom_transform.py', 'requirements.txt'],
+      selectedFile: 'custom_transform.py',
+      selectedFileContent: 'def process(df): return df',
+    });
 
     // Selected file tab button
     expect(screen.getByText('custom_transform.py', { selector: 'span' })).toBeInTheDocument();
 
     // Selected file content
-    expect(screen.getByText((_content, node) => {
-      return node?.tagName === 'CODE' && node?.textContent === 'def process(element): return element';
-    })).toBeInTheDocument();
+    expect(
+      screen.getByText((_content, node) => {
+        return node?.tagName === 'CODE' && node?.textContent === 'def process(df): return df';
+      }),
+    ).toBeInTheDocument();
   });
 
   describe('highlightCode', () => {
@@ -237,7 +329,6 @@ describe('SourceCodeTab', () => {
       expect(highlighted).not.toContain('\uE000TOKEN_');
     });
 
-    // M11 (c): Correctness regression - special replacement patterns must render literally
     it('renders replacement patterns ($&, $`, $\', $1) literally without expansion or corruption', () => {
       const code = 'cost = "$& tax"\nprefix = "$` before"\nsuffix = "$\' after"\ngroup = "$1 match"';
       const highlighted = highlightCode(code, 'pipeline.py', 'Python');
@@ -249,7 +340,6 @@ describe('SourceCodeTab', () => {
       expect(highlighted).not.toContain('___TOKEN_');
     });
 
-    // M11: Security - HTML escaping before tokenisation prevents XSS
     it('escapes HTML tags to prevent XSS injection from untrusted model code', () => {
       const maliciousCode = '<script>alert(1)</script>\n<img src=x onerror=1>';
       const highlighted = highlightCode(maliciousCode, 'pipeline.py', 'Python');
@@ -262,16 +352,16 @@ describe('SourceCodeTab', () => {
       expect(highlighted).toContain('&lt;img src=x onerror=1&gt;');
     });
 
-    // M11: Behaviour preserved for representative Python snippet
     it('preserves expected syntax highlighting spans for representative Python snippets', () => {
-      const pythonSnippet = '# Pipeline definition\nimport apache_beam as beam\n\ndef run():\n    msg = "Hello World"\n    print(msg)';
+      const pythonSnippet =
+        '# Pipeline definition\nfrom pyspark.sql import SparkSession\n\ndef run():\n    msg = "Hello World"\n    print(msg)';
       const highlighted = highlightCode(pythonSnippet, 'pipeline.py', 'Python');
 
       // Comments
       expect(highlighted).toContain('<span class="text-slate-500"># Pipeline definition</span>');
       // Keywords
+      expect(highlighted).toContain('<span class="text-pink-500 font-bold">from</span>');
       expect(highlighted).toContain('<span class="text-pink-500 font-bold">import</span>');
-      expect(highlighted).toContain('<span class="text-pink-500 font-bold">as</span>');
       expect(highlighted).toContain('<span class="text-pink-500 font-bold">def</span>');
       // Strings
       expect(highlighted).toContain('<span class="text-green-400">"Hello World"</span>');
@@ -280,9 +370,9 @@ describe('SourceCodeTab', () => {
       expect(highlighted).toContain('<span class="text-blue-400">print</span>');
     });
 
-    // M11: Behaviour preserved for representative Java snippet
     it('preserves expected syntax highlighting spans for representative Java snippets', () => {
-      const javaSnippet = '// Main pipeline class\npackage com.example;\n\npublic class Pipeline {\n    /* entrypoint */\n    public static void main(String[] args) {\n        System.out.println("Started");\n    }\n}';
+      const javaSnippet =
+        '// Main pipeline class\npackage com.example;\n\npublic class Pipeline {\n    /* entrypoint */\n    public static void main(String[] args) {\n        System.out.println("Started");\n    }\n}';
       const highlighted = highlightCode(javaSnippet, 'Pipeline.java', 'Java');
 
       // Comments
@@ -302,33 +392,38 @@ describe('SourceCodeTab', () => {
       expect(highlighted).toContain('<span class="text-blue-400">println</span>');
     });
 
-    // M11 (b): Memoisation - re-rendering with identical code/language/file does not recompute
     it('does not recompute highlightCode when re-rendering with identical props', () => {
       const spy = vi.fn(highlightCode);
-      const { rerenderWithContext } = renderWithBottomPanel(<SourceCodeTab highlighter={spy} />, mockProps);
+      const { rerenderWithContext } = renderWithBottomPanel(
+        <SourceCodeTab highlighter={spy} />,
+        mockProps,
+      );
       expect(spy).toHaveBeenCalledTimes(1);
 
       // Re-rendering with an unrelated prop change does NOT re-run the highlighter
-      rerenderWithContext(<SourceCodeTab highlighter={spy} />, { ...mockProps, outputFolder: 'new/output/folder' });
+      rerenderWithContext(<SourceCodeTab highlighter={spy} />, {
+        ...mockProps,
+        outputFolder: 'new/output/folder',
+      });
       expect(spy).toHaveBeenCalledTimes(1);
 
       // Re-rendering with changed code DOES re-run the highlighter
-      rerenderWithContext(<SourceCodeTab highlighter={spy} />, { ...mockProps, generatedCode: "print('updated')" });
+      rerenderWithContext(<SourceCodeTab highlighter={spy} />, {
+        ...mockProps,
+        generatedCode: "print('updated')",
+      });
       expect(spy).toHaveBeenCalledTimes(2);
     });
 
     it('renders token usage message when tokenUsage prop is provided', () => {
-      renderWithBottomPanel(
-        <SourceCodeTab />,
-        {
-          ...mockProps,
-          tokenUsage: {
-            inputTokens: 1420,
-            outputTokens: 856,
-            totalTokens: 2276,
-          },
-        }
-      );
+      renderWithBottomPanel(<SourceCodeTab />, {
+        ...mockProps,
+        tokenUsage: {
+          inputTokens: 1420,
+          outputTokens: 856,
+          totalTokens: 2276,
+        },
+      });
 
       const tokenBox = screen.getByTestId('token-usage');
       expect(tokenBox).toBeInTheDocument();
@@ -343,14 +438,11 @@ describe('SourceCodeTab', () => {
     });
 
     it('disables Generate Code button and displays validation error callout when isGraphValid is false', () => {
-      renderWithBottomPanel(
-        <SourceCodeTab />,
-        {
-          ...mockProps,
-          isGraphValid: false,
-          validationErrors: ['Cyclic dependency detected: Step 1 -> Step 2 -> Step 1'],
-        }
-      );
+      renderWithBottomPanel(<SourceCodeTab />, {
+        ...mockProps,
+        isGraphValid: false,
+        validationErrors: ['Cyclic dependency detected: Step 1 -> Step 2 -> Step 1'],
+      });
 
       const generateBtn = screen.getByText('Generate Code').closest('button');
       expect(generateBtn).toBeDisabled();
@@ -358,80 +450,81 @@ describe('SourceCodeTab', () => {
       const errorCallout = screen.getByTestId('codegen-validation-error');
       expect(errorCallout).toBeInTheDocument();
       expect(errorCallout).toHaveTextContent('Cannot Generate Code');
-      expect(errorCallout).toHaveTextContent('Cyclic dependency detected: Step 1 -> Step 2 -> Step 1');
+      expect(errorCallout).toHaveTextContent(
+        'Cyclic dependency detected: Step 1 -> Step 2 -> Step 1',
+      );
 
       // Clicking disabled button does not trigger onRegenerate
       fireEvent.click(generateBtn!);
       expect(mockProps.onRegenerate).not.toHaveBeenCalled();
       expect(generateBtn).toHaveAttribute(
         'title',
-        'Cannot Generate Code:\nCyclic dependency detected: Step 1 -> Step 2 -> Step 1'
+        'Cannot Generate Code:\nCyclic dependency detected: Step 1 -> Step 2 -> Step 1',
       );
-      expect(screen.getByText('Generation disabled: resolve diagram errors to continue')).toBeInTheDocument();
+      expect(
+        screen.getByText('Generation disabled: resolve diagram errors to continue'),
+      ).toBeInTheDocument();
     });
 
     it('displays multiple validation errors and formats them as a list with tooltip on button', () => {
-      renderWithBottomPanel(
-        <SourceCodeTab />,
-        {
-          ...mockProps,
-          isGraphValid: false,
-          validationErrors: [
-            'Cyclic dependency detected: Step 1 -> Step 2 -> Step 1',
-            'Orphan node(s) detected: "Unconnected" (orphan). All steps must be connected into the pipeline.',
-          ],
-        }
-      );
+      renderWithBottomPanel(<SourceCodeTab />, {
+        ...mockProps,
+        isGraphValid: false,
+        validationErrors: [
+          'Cyclic dependency detected: Step 1 -> Step 2 -> Step 1',
+          'Orphan node(s) detected: "Unconnected" (orphan). All steps must be connected into the pipeline.',
+        ],
+      });
 
       const generateBtn = screen.getByText('Generate Code').closest('button');
       expect(generateBtn).toBeDisabled();
       expect(generateBtn).toHaveAttribute(
         'title',
-        'Cannot Generate Code:\nCyclic dependency detected: Step 1 -> Step 2 -> Step 1\nOrphan node(s) detected: "Unconnected" (orphan). All steps must be connected into the pipeline.'
+        'Cannot Generate Code:\nCyclic dependency detected: Step 1 -> Step 2 -> Step 1\nOrphan node(s) detected: "Unconnected" (orphan). All steps must be connected into the pipeline.',
       );
 
       const errorCallout = screen.getByTestId('codegen-validation-error');
-      expect(errorCallout).toHaveTextContent('Cyclic dependency detected: Step 1 -> Step 2 -> Step 1');
+      expect(errorCallout).toHaveTextContent(
+        'Cyclic dependency detected: Step 1 -> Step 2 -> Step 1',
+      );
       expect(errorCallout).toHaveTextContent('Orphan node(s) detected: "Unconnected" (orphan)');
-      expect(screen.getByText('Generation disabled: resolve diagram errors to continue')).toBeInTheDocument();
+      expect(
+        screen.getByText('Generation disabled: resolve diagram errors to continue'),
+      ).toBeInTheDocument();
     });
 
     it('enables Generate Code button and hides error callout when isGraphValid is true', () => {
-      renderWithBottomPanel(
-        <SourceCodeTab />,
-        {
-          ...mockProps,
-          isGraphValid: true,
-          validationErrors: [],
-        }
-      );
+      renderWithBottomPanel(<SourceCodeTab />, {
+        ...mockProps,
+        isGraphValid: true,
+        validationErrors: [],
+      });
 
       const generateBtn = screen.getByText('Generate Code').closest('button');
       expect(generateBtn).not.toBeDisabled();
       expect(generateBtn).not.toHaveAttribute('title');
       expect(screen.queryByTestId('codegen-validation-error')).not.toBeInTheDocument();
-      expect(screen.queryByText('Generation disabled: resolve diagram errors to continue')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText('Generation disabled: resolve diagram errors to continue'),
+      ).not.toBeInTheDocument();
     });
 
     it('renders code containing malicious HTML tags as literal text without creating DOM elements (XSS hardening)', () => {
       const maliciousSnippet = 'payload = "<img src=x onerror=alert(1)>"';
-      const { container } = renderWithBottomPanel(
-        <SourceCodeTab />,
-        {
-          ...mockProps,
-          generatedCode: maliciousSnippet,
-        }
-      );
+      const { container } = renderWithBottomPanel(<SourceCodeTab />, {
+        ...mockProps,
+        generatedCode: maliciousSnippet,
+      });
 
       // Verify no img element is injected into the DOM
       expect(container.querySelector('img')).toBeNull();
 
       // Verify literal text is rendered visibly inside the code preview
-      expect(screen.getByText((_content, node) => {
-        return node?.tagName === 'CODE' && node?.textContent === maliciousSnippet;
-      })).toBeInTheDocument();
+      expect(
+        screen.getByText((_content, node) => {
+          return node?.tagName === 'CODE' && node?.textContent === maliciousSnippet;
+        }),
+      ).toBeInTheDocument();
     });
   });
 });
-
-

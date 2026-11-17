@@ -10,7 +10,7 @@
  * with the Gemini client.
  *
  * Architectural decisions / notes for future sessions:
- * - OFF by default. `isReviewerEnabled` reads `dataflowDesigner.codegen.enableReviewer` and
+ * - OFF by default. `isReviewerEnabled` reads `sparkDesigner.codegen.enableReviewer` and
  *   falls back to `CODEGEN_REVIEWER_ENABLED_BY_DEFAULT`.
  * - No `vscode` import: the caller passes the configuration accessor. So the scratch A/B
  *   benchmark and unit tests can load this module in plain Node.
@@ -57,7 +57,9 @@ export interface ReviewerPassOptions {
     language: SupportedLanguage;
     /** Pipeline base name. */
     baseName: string;
-    /** Resolved Beam version. */
+    /** Resolved Spark runtime version. */
+    sparkVersion?: string;
+    /** Legacy alias for `sparkVersion`. */
     beamVersion?: string;
     /** Absolute path of `resources/codegen-skills`. */
     skillsRoot: string;
@@ -103,7 +105,7 @@ export async function runReviewerPass(options: ReviewerPassOptions): Promise<Rev
         skillsRoot: options.skillsRoot,
         yamlText: options.yamlText,
         language: options.language,
-        beamVersion: options.beamVersion,
+        sparkVersion: options.sparkVersion ?? options.beamVersion,
         caller: SKILL_CALLERS.reviewer,
     });
     const checkRunner = options.checkRunner ?? new ReadOnlyCheckRunner();

@@ -195,8 +195,8 @@ describe('parsers and prompt builders', () => {
     });
 
     it('builds the review prompt in order (simple)', () => {
-        const prompt = buildReviewPrompt(REQUEST, FILES, [{ check: 'java_braces', status: 'passed', output: '' }]);
-        const order = ['REVIEWER TEMPLATE', 'REVIEWER SKILLS AND YAML', '## Generated files', '### File: `src/orders.py`', '## Read-only check results', '### Check: java_braces (PASSED)', '(no output)'];
+        const prompt = buildReviewPrompt(REQUEST, FILES, [{ check: 'pipeline_contract', status: 'passed', output: '' }]);
+        const order = ['REVIEWER TEMPLATE', 'REVIEWER SKILLS AND YAML', '## Generated files', '### File: `src/orders.py`', '## Read-only check results', '### Check: pipeline_contract (PASSED)', '(no output)'];
         const positions = order.map((m) => prompt.indexOf(m));
         expect(positions.every((p) => p >= 0)).toBe(true);
         expect([...positions].sort((a, b) => a - b)).toEqual(positions);

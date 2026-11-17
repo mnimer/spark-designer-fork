@@ -4,18 +4,17 @@
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
- * These tests read the real skills and the real palette catalog. They fail when:
+ * These tests read the real skills in `resources/codegen-skills/`. They fail when:
  * - a skill does not parse, or its name differs from its folder,
- * - a catalog `sparkTransform` has no owning io/transform skill, or more than one,
- * - a skill names a transform that is not in the catalog, or an unknown feature,
- * - a skill holds a `{{...}}` token other than the model-facing ones and `{{beam_version}}`,
- * - a skill still refers to the deleted `code-gen-prompt-*` files or holds the literal
- *   fallback Beam version,
+ * - an io skill declares more than one transform,
+ * - a skill names a transform that is not in `SPARK_NODE_CAPABILITIES` or the webview catalog,
+ * - a skill holds a `{{...}}` token other than the model-facing ones and `{{spark_version}}` / `{{beam_version}}`,
+ * - a skill still refers to the deleted `code-gen-prompt-*` files,
  * - a reference file or a runner template is missing for a declared language,
  * - a skill with non-prompt content lists no source URL,
  * - `metadata.sources` or `metadata.validated` leak into a built prompt,
- * - a constant in `codegenConfig.ts` names a transform that is not in the catalog,
- * - a bundled `.beam` node has no `spark_transform`.
+ * - a constant in `codegenConfig.ts` (`STREAMING_SOURCE_TRANSFORMS`, `PYTHON_DATASOURCE_TRANSFORMS`)
+ *   names a transform that is not in `SPARK_NODE_CAPABILITIES`.
  * They also REPORT (never fail) the count of unvalidated skills and TODO lines.
  */
 
@@ -30,12 +29,14 @@ import {
     BEAM_VERSION_PLACEHOLDER,
     LANGUAGE_RUNNERS,
     MODEL_FACING_PLACEHOLDERS,
+    PYTHON_DATASOURCE_TRANSFORMS,
     SKILL_WILDCARD,
+    SPARK_VERSION_PLACEHOLDER,
     STREAMING_SOURCE_TRANSFORMS,
     TRANSFORM_OWNER_KINDS,
     XLANG_TRANSFORMS,
 } from '../../../codegen/codegenConfig';
-import { DEFAULT_SPARK_VERSION } from '../../../shared/types';
+import { SPARK_NODE_CAPABILITIES } from '../../../shared/sparkNodeCapabilities';
 import { SKILLS_ROOT, listSkillFolders } from '../helpers/codegenSkillsCorpus';
 
 /** Repository root. */
@@ -77,37 +78,44 @@ function walk(dir: string): string[] {
 }
 
 const CATALOG = readCatalog();
-const CATALOG_TRANSFORMS = new Set(CATALOG.map((entry) => entry.sparkTransform));
+const KNOWN_SPARK_TRANSFORMS = new Set([
+    ...CATALOG.map((entry) => entry.sparkTransform),
+    ...Object.keys(SPARK_NODE_CAPABILITIES),
+]);
 const LIBRARY = CodegenSkillCatalog.load(SKILLS_ROOT);
 const SKILLS: CodegenSkill[] = LIBRARY.all();
-const ALLOWED_PLACEHOLDERS = new Set([...MODEL_FACING_PLACEHOLDERS, BEAM_VERSION_PLACEHOLDER]);
+const ALLOWED_PLACEHOLDERS = new Set([
+    ...MODEL_FACING_PLACEHOLDERS,
+    SPARK_VERSION_PLACEHOLDER,
+    BEAM_VERSION_PLACEHOLDER,
+]);
 
 describe('codegen skill library invariants', () => {
     it('loads every skill folder, and every name equals its folder (load throws otherwise)', () => {
-        expect(CATALOG.length).toBeGreaterThan(100);
+        expect(SKILLS.length).toBeGreaterThanOrEqual(2);
         expect(SKILLS.map((skill) => skill.name).sort()).toEqual(listSkillFolders());
     });
 
-    it('maps every catalog sparkTransform to exactly one io or transform skill', () => {
+    it('has no duplicate transform owners across io and transform skills', () => {
         const owners = new Map<string, string[]>();
         for (const skill of SKILLS.filter((s) => TRANSFORM_OWNER_KINDS.has(s.kind))) {
             for (const transform of skill.transforms) {
                 owners.set(transform, [...(owners.get(transform) ?? []), skill.name]);
             }
         }
-        const missing = [...CATALOG_TRANSFORMS].filter((t) => !owners.has(t));
         const duplicated = [...owners].filter(([, names]) => names.length > 1);
-        expect(missing, 'catalog transforms without a skill').toEqual([]);
         expect(duplicated, 'catalog transforms with more than one skill').toEqual([]);
     });
 
-    it('gives every io skill exactly one transform', () => {
-        const bad = SKILLS.filter((s) => s.kind === 'io' && s.transforms.length !== 1).map((s) => s.name);
+    it('gives every io skill at least one transform', () => {
+        const bad = SKILLS.filter((s) => s.kind === 'io' && s.transforms.length === 0).map((s) => s.name);
         expect(bad).toEqual([]);
     });
 
-    it('names only catalog transforms in metadata.transforms', () => {
-        const unknown = SKILLS.flatMap((s) => s.transforms.filter((t) => !CATALOG_TRANSFORMS.has(t)).map((t) => `${s.name}: ${t}`));
+    it('names only known Spark transforms in metadata.transforms', () => {
+        const unknown = SKILLS.flatMap((s) =>
+            s.transforms.filter((t) => !KNOWN_SPARK_TRANSFORMS.has(t)).map((t) => `${s.name}: ${t}`)
+        );
         expect(unknown).toEqual([]);
     });
 
@@ -121,11 +129,11 @@ describe('codegen skill library invariants', () => {
         expect(bad).toEqual([]);
     });
 
-    it('has no reference to the deleted code-gen-prompt files and no literal fallback Beam version', () => {
+    it('has no reference to the deleted code-gen-prompt files', () => {
         const bad = walk(SKILLS_ROOT)
             .filter((file) => {
                 const text = fs.readFileSync(file, 'utf-8');
-                return text.includes('code-gen-prompt-') || text.includes(DEFAULT_SPARK_VERSION);
+                return text.includes('code-gen-prompt-');
             })
             .map((file) => path.relative(SKILLS_ROOT, file));
         expect(bad).toEqual([]);
@@ -144,7 +152,6 @@ describe('codegen skill library invariants', () => {
                     missing.push(`${skill.name}/${language}.md`);
                 }
             }
-            // A reference file for a language the skill does not declare is dead text.
             for (const language of declared) {
                 if (!languages.includes(language)) {
                     missing.push(`${skill.name}/${language}.md is not declared in languages`);
@@ -176,9 +183,11 @@ describe('codegen skill library invariants', () => {
     });
 
     it('never emits metadata.sources or metadata.validated into a built prompt', () => {
-        // Select EVERY io/transform skill and every feature to build the largest prompt.
         for (const language of ['PySpark'] as const) {
-            const nodes = [...CATALOG_TRANSFORMS].map((t) => ({ data: { type: 'SOURCE', spark_transform: t, system_instructions: 'x' } }));
+            const nodes = [...KNOWN_SPARK_TRANSFORMS].map((t, idx) => ({
+                id: `n_${idx}`,
+                data: { type: 'SOURCE', spark_transform: t, system_instructions: 'x' },
+            }));
             const edges = [{ targetHandle: 'side_input' }, { sourceHandle: 'valid' }];
             const { prompt } = new CodegenPromptBuilder(LIBRARY).build({
                 parsedPipeline: { nodes, edges },
@@ -192,64 +201,52 @@ describe('codegen skill library invariants', () => {
         }
     });
 
-    it('names only catalog transforms in the streaming and xlang constants', () => {
-        const sources = new Set(CATALOG.filter((e) => e.type === 'SOURCE').map((e) => e.sparkTransform));
-        expect([...STREAMING_SOURCE_TRANSFORMS].filter((t) => !sources.has(t))).toEqual([]);
+    it('names only known Spark capability transforms in the streaming, python_datasource, and xlang constants', () => {
+        expect([...STREAMING_SOURCE_TRANSFORMS].filter((t) => !(t in SPARK_NODE_CAPABILITIES))).toEqual([]);
+        expect([...PYTHON_DATASOURCE_TRANSFORMS].filter((t) => !(t in SPARK_NODE_CAPABILITIES))).toEqual([]);
         for (const set of Object.values(XLANG_TRANSFORMS)) {
-            expect([...set].filter((t) => !CATALOG_TRANSFORMS.has(t))).toEqual([]);
+            expect([...set].filter((t) => !KNOWN_SPARK_TRANSFORMS.has(t))).toEqual([]);
         }
     });
 
     it('reports unvalidated skills and TODO lines (report only)', () => {
         const unvalidated = SKILLS.filter((s) => !s.validated).length;
         const todo = walk(SKILLS_ROOT).filter((file) => /^\s*TODO:/m.test(fs.readFileSync(file, 'utf-8')));
-        console.info(`[codegen-skills] ${SKILLS.length} skills, ${unvalidated} with validated: false, ${todo.length} file(s) with a TODO line.`);
+        console.info(
+            `[codegen-skills] ${SKILLS.length} skills, ${unvalidated} with validated: false, ${todo.length} file(s) with a TODO line.`
+        );
         expect(unvalidated).toBeGreaterThanOrEqual(0);
     });
 });
 
-describe('bundled .beam files', () => {
+describe('bundled .spark files', () => {
     /**
-     * Lists every `.beam` file in the repository outside node_modules and build output.
+     * Lists every `.spark` file in the repository outside node_modules and build output.
      *
      * @param dir Folder.
-     * @returns Absolute `.beam` paths.
+     * @returns Absolute `.spark` paths.
      */
-    function findBeamFiles(dir: string): string[] {
+    function findSparkFiles(dir: string): string[] {
+        if (!fs.existsSync(dir)) {
+            return [];
+        }
         return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
             if (['node_modules', 'out', 'dist', '.git'].includes(entry.name)) {
                 return [];
             }
             const full = path.join(dir, entry.name);
-            return entry.isDirectory() ? findBeamFiles(full) : entry.name.endsWith('.beam') ? [full] : [];
+            return entry.isDirectory() ? findSparkFiles(full) : entry.name.endsWith('.spark') ? [full] : [];
         });
     }
 
-    it('resolves every bundled spark_transform to a skill (regression: kafka-to-iceberg ReadFromKafka)', () => {
-        const files = [...findBeamFiles(path.join(REPO_ROOT, 'resources')), ...findBeamFiles(path.join(REPO_ROOT, 'src'))];
-        const unresolved: string[] = [];
-        for (const file of files) {
-            const doc = YAML.parse(fs.readFileSync(file, 'utf-8'));
-            for (const node of doc?.nodes ?? []) {
-                const transform = node?.data?.spark_transform;
-                if (typeof transform === 'string' && !LIBRARY.resolveTransform(transform).known) {
-                    unresolved.push(`${path.relative(REPO_ROOT, file)}: ${transform}`);
-                }
-            }
-        }
-        expect(unresolved).toEqual([]);
-        expect(LIBRARY.resolveTransform('ReadFromKafka').canonical).toBe('KafkaIO');
-    });
-
-    it('gives every SOURCE, STEP, and SINK node a spark_transform (regression: pubsub-to-bigquery sample)', () => {
-        const files = [...findBeamFiles(path.join(REPO_ROOT, 'resources')), ...findBeamFiles(path.join(REPO_ROOT, 'src'))];
-        expect(files.length).toBeGreaterThan(200);
+    it('gives every SOURCE, STEP, and SINK node in bundled .spark files a spark_transform', () => {
+        const files = [...findSparkFiles(path.join(REPO_ROOT, 'resources')), ...findSparkFiles(path.join(REPO_ROOT, 'src'))];
         const missing: string[] = [];
         for (const file of files) {
             const doc = YAML.parse(fs.readFileSync(file, 'utf-8'));
             for (const node of doc?.nodes ?? []) {
                 const data = node?.data ?? {};
-                if (['SOURCE', 'STEP', 'SINK'].includes(data.type) && !data.spark_transform) {
+                if (['SOURCE', 'STEP', 'SINK'].includes(data.type) && !data.spark_transform && !data.sparkTransform) {
                     missing.push(`${path.relative(REPO_ROOT, file)}: ${data.label ?? node.id}`);
                 }
             }

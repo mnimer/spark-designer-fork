@@ -17,7 +17,7 @@
  *
  * Architectural decisions / notes for future sessions:
  * - OFF by default (`CODEGEN_REVIEWER_ENABLED_BY_DEFAULT`). The user turns it on with the
- *   `dataflowDesigner.codegen.enableReviewer` setting.
+ *   `sparkDesigner.codegen.enableReviewer` setting or the UI toggle.
  * - Files change only through the model, never through scripts (project rule).
  * - Model calls are injected (`reviewFn`, `fixFn`), so this module has no SDK dependency
  *   and is unit-tested with a fake model client.

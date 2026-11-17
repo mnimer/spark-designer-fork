@@ -1,14 +1,41 @@
 /**
- * @fileoverview Generator settings panel for configuring code generation target language, output folder, and execution controls.
+ * @fileoverview Generator settings panel for configuring PySpark 4.x runtime badge, output folder, AI reviewer pass toggle, and execution controls.
  *
  * Author: Mike Nimer <mikenimer@google.com>
+ *
+ * Architectural Decisions:
+ * - PySpark-only in v1 (S6, G12): replaces the legacy Python/Java radio selector with a read-only
+ *   `PySpark (Spark 4.x)` runtime badge (`data-testid="pyspark-runtime-badge"`).
+ * - Exposes the opt-in AI Code Reviewer Pass toggle (`data-testid="ai-reviewer-toggle"`),
+ *   defaulting to false (`CODEGEN_REVIEWER_ENABLED_BY_DEFAULT = false`) and forwarding the
+ *   selected boolean state when invoking `onRegenerate({ enableReviewer })`.
+ * - Follows the 8pt grid spacing and semantic VS Code CSS variable theming from DESIGN.md.
  */
 
 import React from 'react';
-import { Sliders, Folder, CheckCircle2, AlertCircle, RefreshCw, Play, Square } from 'lucide-react';
+import {
+  Sliders,
+  Folder,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Play,
+  Square,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 
 import type { TokenUsage } from '../../../utils/sharedTypes';
 
+/** Default state for the optional AI code reviewer pass (matches `CODEGEN_REVIEWER_ENABLED_BY_DEFAULT`). */
+export const CODEGEN_REVIEWER_ENABLED_BY_DEFAULT = false;
+
+/** Display label for the read-only PySpark 4.x runtime badge. */
+export const PYSPARK_RUNTIME_BADGE_LABEL = 'PySpark (Spark 4.x)';
+
+/**
+ * Metadata for a diagram node lacking a built-in native connector in the target language.
+ */
 export interface UnsupportedDiagramNode {
   id: string;
   label: string;
@@ -21,10 +48,10 @@ export type { TokenUsage };
  * Props for the GeneratorSettings component.
  */
 export interface GeneratorSettingsProps {
-  /** Target programming language for Apache Beam pipeline generation. */
-  language: 'Python' | 'Java';
-  /** Callback invoked when the user selects a target language. */
-  setLanguage: (lang: 'Python' | 'Java') => void;
+  /** Target programming language for pipeline generation (retained for backward compatibility). */
+  language?: 'Python' | 'Java';
+  /** Optional callback invoked when the target language changes. */
+  setLanguage?: (lang: 'Python' | 'Java') => void;
   /** Current output folder path string. */
   outputFolder: string;
   /** Callback invoked when the user edits the output folder path. */
@@ -32,7 +59,7 @@ export interface GeneratorSettingsProps {
   /** Callback invoked when browsing for a folder. */
   onPickFolder: () => void;
   /** Callback invoked when requesting pipeline code generation. */
-  onRegenerate: () => void;
+  onRegenerate: (options?: { enableReviewer?: boolean }) => void;
   /** Optional callback invoked to abort active generation. */
   onStopGeneration?: () => void;
   /** Whether code generation is currently in progress. */
@@ -47,6 +74,10 @@ export interface GeneratorSettingsProps {
   useSdkForUnsupportedNodes?: boolean;
   /** Callback invoked when the user toggles the SDK workaround checkbox. */
   onUseSdkForUnsupportedNodesChange?: (value: boolean) => void;
+  /** Whether the optional post-generation AI code reviewer pass is enabled. */
+  enableReviewer?: boolean;
+  /** Callback invoked when the user toggles the AI code reviewer pass. */
+  onEnableReviewerChange?: (enabled: boolean) => void;
   /** Sanitized package or directory name displayed for validation. */
   packageDisplayName: string;
   /** Optional token usage details from the generation model. */
@@ -60,8 +91,7 @@ export interface GeneratorSettingsProps {
  * @returns React component.
  */
 export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
-  language,
-  setLanguage,
+  language = 'Python',
   outputFolder,
   setOutputFolder,
   onPickFolder,
@@ -73,16 +103,36 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
   unsupportedNodes = [],
   useSdkForUnsupportedNodes = false,
   onUseSdkForUnsupportedNodesChange,
+  enableReviewer = CODEGEN_REVIEWER_ENABLED_BY_DEFAULT,
+  onEnableReviewerChange,
   packageDisplayName,
   tokenUsage,
 }) => {
+  const handleOutputFolderChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    setOutputFolder(e.target.value);
+  };
+
+  const handleReviewerToggle = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    onEnableReviewerChange?.(e.target.checked);
+  };
+
+  const handleUseSdkChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    onUseSdkForUnsupportedNodesChange?.(e.target.checked);
+  };
+
+  const handleGenerateClick = (): void => {
+    if (!isGenerating && effectiveIsGraphValid) {
+      onRegenerate({ enableReviewer });
+    }
+  };
+
   return (
-    <div className="w-76 shrink-0 flex flex-col bg-[#161922] rounded-xl border border-slate-700/80 overflow-hidden shadow-lg">
+    <div className="w-76 shrink-0 flex flex-col bg-[var(--vscode-card-bg,#161b22)] rounded-xl border border-[var(--vscode-border,#30363d)] overflow-hidden shadow-lg">
       {/* Panel Header */}
-      <div className="border-b border-slate-700/80 bg-[#11141c] py-2.5 px-4 flex items-center">
+      <div className="border-b border-[var(--vscode-border,#30363d)] bg-[var(--vscode-subcard-bg,#0d1117)] py-2 px-4 flex items-center">
         <div className="flex items-center gap-2">
           <Sliders className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-          <span className="text-xs font-bold tracking-wider text-slate-200 uppercase">
+          <span className="text-xs font-bold tracking-wider text-[var(--vscode-text-primary,#f0f6fc)] uppercase">
             GENERATOR SETTINGS
           </span>
         </div>
@@ -90,65 +140,41 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
 
       {/* Panel Content */}
       <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-        {/* Language Selection */}
+        {/* Target Runtime Badge (Read-only PySpark Spark 4.x) */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              LANGUAGE
-            </label>
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">
-              {language}
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted,#8b949e)]">
+              TARGET RUNTIME
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 font-mono">
+              ACTIVE
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-2 p-1 bg-[#0d1017] rounded-lg border border-slate-800">
-            <label
-              className={`py-2 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition ${
-                language === 'Python'
-                  ? 'bg-[#1c2333] text-white border border-slate-600/80 shadow-sm'
-                  : 'bg-transparent text-slate-500 hover:text-slate-300 border border-transparent hover:bg-slate-800/40'
-              }`}
-            >
-              <input
-                type="radio"
-                name="language"
-                value="Python"
-                aria-label="Python"
-                checked={language === 'Python'}
-                onChange={() => setLanguage('Python')}
-                className="sr-only"
-              />
-              <span className="text-sm leading-none">🐍</span>
-              <span>Python</span>
-            </label>
-
-            <label
-              className={`py-2 px-3 rounded-md text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition ${
-                language === 'Java'
-                  ? 'bg-[#1c2333] text-white border border-slate-600/80 shadow-sm'
-                  : 'bg-transparent text-slate-500 hover:text-slate-300 border border-transparent hover:bg-slate-800/40'
-              }`}
-            >
-              <input
-                type="radio"
-                name="language"
-                value="Java"
-                aria-label="Java"
-                checked={language === 'Java'}
-                onChange={() => setLanguage('Java')}
-                className="sr-only"
-              />
-              <span className="text-sm leading-none">☕</span>
-              <span>Java</span>
-            </label>
+          <div
+            data-testid="pyspark-runtime-badge"
+            className="flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--vscode-subcard-bg,#0d1117)] border border-[var(--vscode-border,#30363d)]"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="text-xs font-bold text-[var(--vscode-text-primary,#f0f6fc)] font-mono">
+                {PYSPARK_RUNTIME_BADGE_LABEL}
+              </span>
+            </div>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-500/10 border border-blue-500/30 text-blue-400 font-mono">
+              Python 3.12+
+            </span>
           </div>
         </div>
 
         {/* Target Folder Picker */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              <label
+                htmlFor="generator-target-folder-input"
+                className="text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted,#8b949e)]"
+              >
                 TARGET FOLDER
               </label>
             </div>
@@ -163,44 +189,74 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
 
           <div className="flex gap-2 items-center">
             <input
+              id="generator-target-folder-input"
               type="text"
               value={outputFolder}
-              onChange={(e) => setOutputFolder(e.target.value)}
+              onChange={handleOutputFolderChange}
               placeholder="./scratch_flow/"
-              className="bg-[#0d1017] text-white px-3 py-2 rounded-lg border border-slate-800 focus:outline-none focus:border-blue-500 text-xs flex-1 min-w-0 font-mono shadow-inner transition"
+              className="bg-[var(--vscode-input-bg,#0d1117)] text-[var(--vscode-text-primary,#f0f6fc)] px-3 py-2 rounded-lg border border-[var(--vscode-border,#30363d)] focus:outline-none focus:border-[var(--vscode-highlight,#58a6ff)] text-xs flex-1 min-w-0 font-mono shadow-inner transition"
             />
             <button
               type="button"
               onClick={onPickFolder}
-              className="bg-[#1c2333] hover:bg-[#252f42] text-slate-300 hover:text-white p-2 rounded-lg border border-slate-700/80 flex items-center justify-center shrink-0 cursor-pointer transition shadow-sm"
+              className="bg-[var(--vscode-button-secondary,#21262d)] hover:bg-[var(--vscode-hover,#30363d)] text-[var(--vscode-text-secondary,#c9d1d9)] hover:text-[var(--vscode-text-primary,#f0f6fc)] p-2 rounded-lg border border-[var(--vscode-border,#30363d)] flex items-center justify-center shrink-0 cursor-pointer transition shadow-sm"
               title="Browse Folder"
             >
-              <Folder className="w-4 h-4 text-slate-300" />
+              <Folder className="w-4 h-4 text-[var(--vscode-text-secondary,#c9d1d9)]" />
             </button>
           </div>
 
-          {/* Validation subtitle matching screenshot */}
-          <div className="flex items-center gap-1.5 text-emerald-400 text-[11px] font-mono mt-0.5">
+          {/* Validation subtitle */}
+          <div className="flex items-center gap-1.5 text-emerald-400 text-[11px] font-mono">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span className="truncate">Valid {language} package name: {packageDisplayName}</span>
+            <span className="truncate">Valid PySpark package name: {packageDisplayName}</span>
           </div>
+        </div>
+
+        {/* AI Code Reviewer Pass Toggle */}
+        <div
+          data-testid="ai-reviewer-pass-section"
+          className="flex flex-col gap-1.5 p-3 rounded-lg bg-[var(--vscode-subcard-bg,#0d1117)] border border-[var(--vscode-border,#30363d)]"
+        >
+          <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="text-xs font-bold text-[var(--vscode-text-primary,#f0f6fc)] truncate">
+                AI Code Reviewer Pass
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-checked={enableReviewer}
+              aria-label="AI Code Reviewer Pass"
+              data-testid="ai-reviewer-toggle"
+              checked={enableReviewer}
+              onChange={handleReviewerToggle}
+              disabled={isGenerating}
+              className="accent-emerald-500 w-4 h-4 cursor-pointer shrink-0 disabled:cursor-not-allowed"
+            />
+          </label>
+          <p className="text-[11px] text-[var(--vscode-text-muted,#8b949e)] leading-relaxed">
+            Runs read-only syntax and pytest checks after generation and asks Gemini to fix blocking defects.
+          </p>
         </div>
 
         {/* Topological DAG & SDK Language Compatibility Validation Error Callout */}
         {!effectiveIsGraphValid && effectiveValidationErrors.length > 0 && (
           <div
-            className="mt-3 p-2.5 bg-rose-950/60 border border-rose-800/80 rounded-lg flex items-start gap-2 text-xs text-rose-200"
+            className="p-3 bg-rose-950/60 border border-rose-800/80 rounded-lg flex items-start gap-2 text-xs text-rose-200"
             data-testid="codegen-validation-error"
           >
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
               <span className="font-semibold block text-rose-300">Cannot Generate Code</span>
               {effectiveValidationErrors.length === 1 ? (
-                <span className="text-[11px] text-rose-200/90 leading-relaxed block break-words mt-0.5">
+                <span className="text-[11px] text-rose-200/90 leading-relaxed block break-words mt-1">
                   {effectiveValidationErrors[0]}
                 </span>
               ) : (
-                <ul className="text-[11px] text-rose-200/90 leading-relaxed mt-1 list-disc list-inside space-y-0.5">
+                <ul className="text-[11px] text-rose-200/90 leading-relaxed mt-1 list-disc list-inside space-y-1">
                   {effectiveValidationErrors.map((err, idx) => (
                     <li key={idx} className="break-words">{err}</li>
                   ))}
@@ -214,13 +270,13 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
             target language. Checking it removes the language errors above and lets the
             codegen skills generate an SDK-based implementation for those nodes. */}
         {unsupportedNodes.length > 0 && onUseSdkForUnsupportedNodesChange && (
-          <div className="mt-2" data-testid="use-sdk-for-unsupported">
-            <label className="flex items-start gap-2 text-[11px] text-slate-300 cursor-pointer select-none">
+          <div data-testid="use-sdk-for-unsupported">
+            <label className="flex items-start gap-2 text-[11px] text-[var(--vscode-text-secondary,#c9d1d9)] cursor-pointer select-none">
               <input
                 type="checkbox"
                 className="mt-0.5 accent-amber-500 cursor-pointer"
                 checked={useSdkForUnsupportedNodes}
-                onChange={(e) => onUseSdkForUnsupportedNodesChange(e.target.checked)}
+                onChange={handleUseSdkChange}
               />
               <span>
                 Generate {unsupportedNodes.length === 1 ? 'this node' : 'these nodes'} with the {language} SDK instead of a built-in connector
@@ -229,29 +285,25 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
             {useSdkForUnsupportedNodes && (
               <p className="mt-1 ml-5 text-[11px] text-amber-300/90 leading-relaxed" data-testid="use-sdk-notice">
                 No built-in {language} connector for {unsupportedNodes.map((n) => n.label).join(', ')}. Gemini will write custom
-                SDK code (for example a DoFn with the vendor client library). Review it before you deploy.
+                SDK code (for example a Python DataSource or foreachBatch sink). Review it before you deploy.
               </p>
             )}
           </div>
         )}
 
         {/* Action Buttons: Generate Code & Stop */}
-        <div className="mt-auto pt-3 border-t border-slate-800/80 flex flex-col gap-1.5">
-          <div className="flex gap-2.5">
+        <div className="mt-auto pt-3 border-t border-[var(--vscode-border,#30363d)] flex flex-col gap-2">
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => {
-                if (!isGenerating && effectiveIsGraphValid) {
-                  onRegenerate();
-                }
-              }}
+              onClick={handleGenerateClick}
               disabled={isGenerating || !effectiveIsGraphValid}
               title={
                 !effectiveIsGraphValid && effectiveValidationErrors.length > 0
                   ? `Cannot Generate Code:\n${effectiveValidationErrors.join('\n')}`
                   : undefined
               }
-              className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-xs font-bold flex-1 transition shadow-lg shadow-emerald-950/40 ${
+              className={`flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-xs font-bold flex-1 transition shadow-lg shadow-emerald-950/40 ${
                 isGenerating || !effectiveIsGraphValid
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed shadow-none opacity-80'
                   : 'bg-[#059669] hover:bg-[#10b981] active:bg-[#047857] text-white active:scale-[0.98] cursor-pointer'
@@ -268,7 +320,7 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
               type="button"
               onClick={onStopGeneration}
               disabled={!isGenerating && !onStopGeneration}
-              className={`flex items-center justify-center gap-1.5 py-2.5 px-3.5 rounded-lg text-xs font-bold transition shadow-sm ${
+              className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-bold transition shadow-sm ${
                 isGenerating
                   ? 'bg-[#881337] hover:bg-[#9f1239] active:bg-[#4c0519] border border-rose-800/80 text-rose-200 hover:text-white cursor-pointer active:scale-[0.98]'
                   : 'bg-[#881337]/70 text-rose-300/80 border border-rose-900/40 cursor-pointer hover:bg-[#881337] hover:text-rose-100'
@@ -281,18 +333,18 @@ export const GeneratorSettings: React.FC<GeneratorSettingsProps> = ({
           </div>
 
           {!effectiveIsGraphValid && (
-            <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1.5 font-medium">
+            <p className="text-[11px] text-rose-400 flex items-center gap-1.5 font-medium">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
               <span>Generation disabled: resolve diagram errors to continue</span>
             </p>
           )}
           {/* Token Usage Stats */}
           {tokenUsage && (
-            <div 
+            <div
               data-testid="token-usage"
-              className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-900/60 border border-slate-800/70 rounded-md px-2.5 py-1.5 font-mono"
+              className="flex items-center justify-between text-[11px] text-[var(--vscode-text-muted,#8b949e)] bg-[var(--vscode-subcard-bg,#0d1117)] border border-[var(--vscode-border,#30363d)] rounded-md px-2 py-1.5 font-mono"
             >
-              <span className="text-slate-400 font-sans font-medium">Tokens:</span>
+              <span className="text-[var(--vscode-text-muted,#8b949e)] font-sans font-medium">Tokens:</span>
               <div className="flex items-center gap-2">
                 <span>Input: <strong className="text-emerald-400 font-semibold">{tokenUsage.inputTokens.toLocaleString()}</strong></span>
                 <span className="text-slate-600">•</span>

@@ -407,6 +407,7 @@ function App() {
   }, []);
 
   const [useSdkForUnsupportedNodes, setUseSdkForUnsupportedNodes] = useState(false);
+  const [enableReviewer, setEnableReviewer] = useState(false);
 
   const isCodegenValid = dagValidation.isValid;
   const combinedValidationErrors = useMemo(
@@ -414,7 +415,7 @@ function App() {
     [dagValidation.errors]
   );
 
-  const handleRegenerate = useCallback(() => {
+  const handleRegenerate = useCallback((options?: { enableReviewer?: boolean }) => {
     if (!isCodegenValid) {
       console.warn('Blocked regenerateCode: validation failed', combinedValidationErrors);
       return;
@@ -426,8 +427,16 @@ function App() {
       jobConfig,
       pipelineConfig,
     });
-    ipcRegenerate({ nodes, edges, runtimeVariables, jobConfig });
-  }, [ipcRegenerate, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, isCodegenValid, combinedValidationErrors, lastSavedYamlRef, serializePipeline]);
+    const resolvedEnableReviewer =
+      typeof options?.enableReviewer === 'boolean' ? options.enableReviewer : enableReviewer;
+    ipcRegenerate({
+      nodes,
+      edges,
+      runtimeVariables,
+      jobConfig,
+      enableReviewer: resolvedEnableReviewer,
+    });
+  }, [ipcRegenerate, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, isCodegenValid, combinedValidationErrors, lastSavedYamlRef, serializePipeline, enableReviewer]);
 
   // Resize state for Bottom Panel (minimized to 40px tab header by default; expands to 80% on tab click or toggle)
   const [isBottomPanelExpanded, setIsBottomPanelExpanded] = useState(false);
@@ -603,6 +612,8 @@ function App() {
         tokenUsage,
         useSdkForUnsupportedNodes,
         setUseSdkForUnsupportedNodes,
+        enableReviewer,
+        setEnableReviewer,
       },
     }),
     [
@@ -638,6 +649,7 @@ function App() {
       nodes,
       tokenUsage,
       useSdkForUnsupportedNodes,
+      enableReviewer,
     ]
   );
 

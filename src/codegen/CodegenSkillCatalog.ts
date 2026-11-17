@@ -95,7 +95,7 @@ export interface SkillAttachments {
     templates?: Partial<Record<SkillLanguage, SkillTemplate[]>>;
 }
 
-/** Input of `select`. Produced from the redacted, parsed `.beam` YAML. */
+/** Input of `select`. Produced from the redacted, parsed `.spark` YAML. */
 export interface SelectionRequest {
     /** Which call loads the skills. */
     caller: SkillCaller;
@@ -131,13 +131,17 @@ export interface TransformResolution {
 
 /**
  * Reduces a transform name to a comparison key: lowercase, letters and digits only, and
- * without a trailing `io` (so `KafkaIO`, `kafka`, and `Kafka_IO` share one key).
+ * without a trailing `io`, `source`, or `sink` (so `KafkaSource`, `KafkaIO`, `kafka`, and
+ * `Kafka_Source` share a comparison key).
  *
  * @param value Transform name.
  * @returns The comparison key.
  */
 export function transformKey(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/io$/, '');
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .replace(/(io|source|sink)$/, '');
 }
 
 /** Allowed `usedBy` values. */
@@ -352,11 +356,11 @@ export class CodegenSkillCatalog {
     }
 
     /**
-     * Resolves a `spark_transform` value from a `.beam` file to the catalog value that a
+     * Resolves a `spark_transform` value from a `.spark` file to the catalog value that a
      * skill owns. Legacy files can hold other spellings (`ReadFromKafka`, `kafka`,
-     * `Kafka IO`). Resolution order:
+     * `KafkaIO`, `Kafka Source`). Resolution order:
      * 1. Exact catalog value.
-     * 2. Same comparison key (case, punctuation, and a trailing `IO` ignored).
+     * 2. Same comparison key (case, punctuation, and a trailing `IO`/`Source`/`Sink` ignored).
      * 3. Same key after removing one SDK prefix (`ReadFrom`, `WriteTo`, `Read`, `Write`).
      * A step matches only when exactly one catalog value fits, so the resolver never guesses.
      *

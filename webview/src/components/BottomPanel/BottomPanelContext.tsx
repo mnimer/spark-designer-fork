@@ -67,7 +67,7 @@ export interface BottomPanelPipelineConfigSlice {
  */
 export interface BottomPanelCodegenSlice {
   generatedCode: string;
-  regenerate: () => void;
+  regenerate: (options?: { enableReviewer?: boolean }) => void;
   stopGeneration?: () => void;
   isGenerating?: boolean;
   /** Latest progress text of a long generation run (for example the optional reviewer). */
@@ -89,6 +89,10 @@ export interface BottomPanelCodegenSlice {
   useSdkForUnsupportedNodes?: boolean;
   /** Toggles `useSdkForUnsupportedNodes`. */
   setUseSdkForUnsupportedNodes?: (value: boolean) => void;
+  /** Whether the optional post-generation AI code reviewer pass is enabled. */
+  enableReviewer?: boolean;
+  /** Toggles `enableReviewer`. */
+  setEnableReviewer?: (value: boolean) => void;
 }
 
 /**

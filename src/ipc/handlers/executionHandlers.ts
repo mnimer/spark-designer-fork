@@ -42,7 +42,7 @@ function sessionOf(ctx: MessageContext): EditorSession {
 /**
  * Whether VS Code reports the workspace as explicitly untrusted (finding S2).
  * Running runner scripts or writing generated code from an untrusted folder
- * would let a malicious `.beam` file or checked-in script execute locally.
+ * would let a malicious `.spark` file or checked-in script execute locally.
  *
  * @returns True only when `workspace.isTrusted` is exactly false.
  */
@@ -234,7 +234,7 @@ export async function handleStopCodeGeneration(ctx: MessageContext, _message: an
 
 /**
  * Handler for 'regenerateCode' command.
- * Automatically saves the `.beam` pipeline file to disk and invokes the AI code generation pipeline.
+ * Automatically saves the `.spark` pipeline file to disk and invokes the AI code generation pipeline.
  *
  * @param ctx Message context
  * @param message Incoming IPC message with code generation parameters
@@ -246,7 +246,7 @@ export async function handleRegenerateCodeCommand(ctx: MessageContext, message: 
         return;
     }
 
-    // Automatically persist the latest .beam YAML and flush the open TextDocument to disk
+    // Automatically persist the latest .spark YAML and flush the open TextDocument to disk
     const targetUri = ctx.document ? ctx.document.uri : ctx.uri;
     if (targetUri && targetUri.scheme !== 'untitled' && typeof message?.data === 'string') {
         await savePipelineFiles(

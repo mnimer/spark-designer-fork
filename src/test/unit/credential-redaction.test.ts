@@ -505,7 +505,7 @@ describe('code generation prompt templates', () => {
   // that never fetched the secret. These tests pin the guidance in place.
   // NOTE: the prompt text now lives in the skill library (resources/codegen-skills/**).
   // The assertions read the per-language skill corpus instead of one monolithic file.
-  const languages = ['python', 'java'] as const;
+  const languages = ['python'] as const;
 
   for (const language of languages) {
     describe(language, () => {

@@ -20,6 +20,7 @@ import {
     clearCodegenSkillCatalogCache,
     compareSkills,
     getCodegenSkillCatalog,
+    transformKey,
 } from '../../../codegen/CodegenSkillCatalog';
 import { SkillRunner } from '../../../codegen/codegenConfig';
 
@@ -63,16 +64,21 @@ function skillMd(s: FixtureSkill): string {
 /** The fixture library used by the selection tests. */
 const FIXTURES: FixtureSkill[] = [
     { name: 'codegen-common', kind: 'common' },
-    { name: 'lang-python', kind: 'language', languages: '[python]' },
-    { name: 'lang-java', kind: 'language', languages: '[java]' },
-    { name: 'runner-direct', kind: 'runner', runners: '[direct]' },
-    { name: 'runner-spark', kind: 'runner', languages: '[java]', runners: '[spark]' },
-    { name: 'io-kafka', kind: 'io', transforms: '[KafkaIO]' },
-    { name: 'io-xml', kind: 'io', languages: '[java]', transforms: '[XmlIO]' },
-    { name: 'transforms-pardo', kind: 'transform', transforms: '[ParDo]' },
-    { name: 'graph-wiring', kind: 'crosscutting' },
-    { name: 'side-inputs', kind: 'crosscutting', preloadWhen: '[side_inputs]' },
-    { name: 'gated-by-transform', kind: 'crosscutting', transforms: '[WindowInto]' },
+    { name: 'core-pyspark', kind: 'language', languages: '[python]' },
+    { name: 'runner-local', kind: 'runner', runners: '[local]' },
+    { name: 'runner-dataproc-cluster', kind: 'runner', languages: '[python]', runners: '[dataproc-cluster]' },
+    { name: 'runner-serverless-spark', kind: 'runner', languages: '[python]', runners: '[serverless-spark]' },
+    { name: 'io-kafka', kind: 'io', transforms: '[KafkaSource]' },
+    { name: 'io-bigquery', kind: 'io', languages: '[python]', transforms: '[BigQuerySource]' },
+    { name: 'transforms-select', kind: 'transform', transforms: '[Select]' },
+    { name: 'core-catalyst-optimization', kind: 'crosscutting' },
+    { name: 'core-streaming', kind: 'crosscutting', transforms: '[Watermark, StatefulTransform]', preloadWhen: '[streaming]' },
+    {
+        name: 'core-python-datasource',
+        kind: 'crosscutting',
+        transforms: '[PubSubSource, PubSubSink, KinesisSource, KinesisSink, MqttSource, MqttSink, FirestoreSource, FirestoreSink, CassandraSource, RedisSource, RedisSink]',
+        preloadWhen: '[python_datasource]',
+    },
     { name: 'codegen-review', kind: 'review', usedBy: '[reviewer]' },
     { name: 'verification-gate', kind: 'gate' },
 ];
@@ -124,52 +130,92 @@ describe('CodegenSkillCatalog.select', () => {
     it('selects only always-on skills for an empty Python graph (simple)', () => {
         const catalog = CodegenSkillCatalog.load(writeFixtures(FIXTURES));
         const names = catalog.select(request()).map((s) => s.skill.name);
-        expect(names).toEqual(['codegen-common', 'lang-python', 'runner-direct', 'graph-wiring', 'verification-gate']);
+        expect(names).toEqual([
+            'codegen-common',
+            'core-pyspark',
+            'runner-dataproc-cluster',
+            'runner-local',
+            'runner-serverless-spark',
+            'core-catalyst-optimization',
+            'verification-gate',
+        ]);
     });
 
     it('selects language-only skills and the Spark runners for Python (simple)', () => {
         const catalog = CodegenSkillCatalog.load(writeFixtures(FIXTURES));
         const names = catalog
-            .select(request({ language: 'python', runners: new Set<SkillRunner>(['local', 'dataproc-cluster', 'serverless-spark']), transforms: new Set(['XmlIO']) }))
+            .select(
+                request({
+                    language: 'python',
+                    runners: new Set<SkillRunner>(['local']),
+                    transforms: new Set(['BigQuerySource']),
+                })
+            )
             .map((s) => s.skill.name);
-        expect(names).toEqual(['codegen-common', 'lang-python', 'io-xml', 'graph-wiring', 'verification-gate']);
+        expect(names).toEqual([
+            'codegen-common',
+            'core-pyspark',
+            'runner-local',
+            'io-bigquery',
+            'core-catalyst-optimization',
+            'verification-gate',
+        ]);
     });
 
     it('selects io, transform, and crosscutting skills by transform (simple)', () => {
         const catalog = CodegenSkillCatalog.load(writeFixtures(FIXTURES));
         const names = catalog
-            .select(request({ transforms: new Set(['KafkaIO', 'ParDo', 'WindowInto', 'XmlIO']) }))
+            .select(request({ transforms: new Set(['KafkaSource', 'Select', 'Watermark', 'PubSubSource']) }))
             .map((s) => s.skill.name);
-        // io-xml is Java-only, so it is not selected for Python.
         expect(names).toEqual([
             'codegen-common',
-            'lang-python',
-            'runner-direct',
+            'core-pyspark',
+            'runner-dataproc-cluster',
+            'runner-local',
+            'runner-serverless-spark',
             'io-kafka',
-            'transforms-pardo',
-            'gated-by-transform',
-            'graph-wiring',
+            'transforms-select',
+            'core-catalyst-optimization',
+            'core-python-datasource',
+            'core-streaming',
             'verification-gate',
         ]);
     });
 
-    it('selects preloadWhen skills only when the feature is present (simple)', () => {
+    it('selects preloadWhen skills when streaming or python_datasource feature is present (simple)', () => {
         const catalog = CodegenSkillCatalog.load(writeFixtures(FIXTURES));
-        expect(catalog.select(request()).map((s) => s.skill.name)).not.toContain('side-inputs');
-        expect(catalog.select(request({ features: new Set(['side_inputs']) })).map((s) => s.skill.name)).toContain('side-inputs');
+        expect(catalog.select(request()).map((s) => s.skill.name)).not.toContain('core-streaming');
+        expect(catalog.select(request()).map((s) => s.skill.name)).not.toContain('core-python-datasource');
+        expect(catalog.select(request({ features: new Set(['streaming']) })).map((s) => s.skill.name)).toContain(
+            'core-streaming'
+        );
+        expect(
+            catalog.select(request({ features: new Set(['python_datasource']) })).map((s) => s.skill.name)
+        ).toContain('core-python-datasource');
     });
 
     it('selects reviewer-only skills only for the reviewer caller (simple)', () => {
         const catalog = CodegenSkillCatalog.load(writeFixtures(FIXTURES));
         expect(catalog.select(request()).map((s) => s.skill.name)).not.toContain('codegen-review');
         const reviewer = catalog.select(request({ caller: 'reviewer' })).map((s) => s.skill.name);
-        expect(reviewer).toEqual(['codegen-common', 'lang-python', 'runner-direct', 'graph-wiring', 'codegen-review', 'verification-gate']);
+        expect(reviewer).toEqual([
+            'codegen-common',
+            'core-pyspark',
+            'runner-dataproc-cluster',
+            'runner-local',
+            'runner-serverless-spark',
+            'core-catalyst-optimization',
+            'codegen-review',
+            'verification-gate',
+        ]);
     });
 
     it('drops a runner skill when the project supports none of its runners (extreme)', () => {
         const catalog = CodegenSkillCatalog.load(writeFixtures(FIXTURES));
         const names = catalog.select(request({ runners: new Set<SkillRunner>() })).map((s) => s.skill.name);
-        expect(names).not.toContain('runner-direct');
+        expect(names).not.toContain('runner-local');
+        expect(names).not.toContain('runner-dataproc-cluster');
+        expect(names).not.toContain('runner-serverless-spark');
     });
 
     it('orders by kind then name, independent of folder order (extreme)', () => {
@@ -178,28 +224,33 @@ describe('CodegenSkillCatalog.select', () => {
         const all = catalog.all().map((s) => s.name);
         expect(all[0]).toBe('codegen-common');
         expect(all[all.length - 1]).toBe('verification-gate');
-        expect(all.indexOf('io-kafka')).toBeLessThan(all.indexOf('io-xml'));
-        expect(all.indexOf('io-xml')).toBeLessThan(all.indexOf('transforms-pardo'));
+        expect(all.indexOf('io-bigquery')).toBeLessThan(all.indexOf('io-kafka'));
+        expect(all.indexOf('io-kafka')).toBeLessThan(all.indexOf('transforms-select'));
         expect(compareSkills(reversed[0], reversed[0])).toBe(0);
     });
 
-    it('attaches the language file and templates of the pipeline language only (simple)', () => {
-        const root = writeFixtures([{ name: 'codegen-common', kind: 'common' }, { name: 'runner-dataflow', kind: 'runner', runners: '[dataflow]' }]);
-        fs.writeFileSync(path.join(root, 'runner-dataflow', 'python.md'), '#### Imports\npy rule\n');
-        fs.writeFileSync(path.join(root, 'runner-dataflow', 'java.md'), 'java rule');
-        fs.mkdirSync(path.join(root, 'runner-dataflow', 'templates', 'python'), { recursive: true });
-        fs.writeFileSync(path.join(root, 'runner-dataflow', 'templates', 'python', 'run_dataflowrunner.sh'), 'run');
-        fs.writeFileSync(path.join(root, 'runner-dataflow', 'templates', 'python', 'Dockerfile'), 'FROM x');
+    it('attaches the language file and templates of the pipeline language (simple)', () => {
+        const root = writeFixtures([
+            { name: 'codegen-common', kind: 'common' },
+            { name: 'runner-serverless-spark', kind: 'runner', runners: '[serverless-spark]' },
+        ]);
+        fs.writeFileSync(path.join(root, 'runner-serverless-spark', 'python.md'), '#### Imports\npy rule\n');
+        fs.mkdirSync(path.join(root, 'runner-serverless-spark', 'templates', 'python'), { recursive: true });
+        fs.writeFileSync(
+            path.join(root, 'runner-serverless-spark', 'templates', 'python', 'run_serverless_spark.sh'),
+            'run'
+        );
+        fs.writeFileSync(path.join(root, 'runner-serverless-spark', 'templates', 'python', 'Dockerfile'), 'FROM x');
         const catalog = CodegenSkillCatalog.load(root);
 
-        const python = catalog.select(request()).find((s) => s.skill.name === 'runner-dataflow');
+        const python = catalog.select(request()).find((s) => s.skill.name === 'runner-serverless-spark');
         expect(python?.languageFile).toBe('#### Imports\npy rule');
-        expect(python?.templates.map((t) => t.fileName)).toEqual(['Dockerfile', 'run_dataflowrunner.sh']);
+        expect(python?.templates.map((t) => t.fileName)).toEqual(['Dockerfile', 'run_serverless_spark.sh']);
 
-        const python2 = catalog
+        const localOnly = catalog
             .select(request({ language: 'python', runners: new Set<SkillRunner>(['local']) }))
-            .find((s) => s.skill.name === 'runner-dataflow');
-        expect(python2).toBeUndefined();
+            .find((s) => s.skill.name === 'runner-serverless-spark');
+        expect(localOnly).toBeUndefined();
     });
 
     it('ignores files at the skills root such as README.md (extreme)', () => {
@@ -212,7 +263,10 @@ describe('CodegenSkillCatalog.select', () => {
 describe('buildSkill metadata', () => {
     it('reads sources and validated, and defaults optional lists (simple)', () => {
         const skill = buildSkill(
-            skillMd({ name: 'io-kafka', kind: 'io', extra: '  sources:\n    - prompt\n  validated: true' }).replace(/ {2}transforms: \[\]\n {2}preloadWhen: \[\]\n/, ''),
+            skillMd({ name: 'io-kafka', kind: 'io', extra: '  sources:\n    - prompt\n  validated: true' }).replace(
+                / {2}transforms: \[\]\n {2}preloadWhen: \[\]\n/,
+                ''
+            ),
             'io-kafka'
         );
         expect(skill.sources).toEqual(['prompt']);
@@ -234,7 +288,7 @@ describe('buildSkill metadata', () => {
         ['an unknown language', { name: 'a', kind: 'io', languages: '[go]' }, /languages has unknown value/],
         ['an unknown runner', { name: 'a', kind: 'io', runners: '[flink]' }, /runners has unknown value/],
         ['an unknown feature', { name: 'a', kind: 'io', preloadWhen: '[mcp]' }, /preloadWhen has unknown value/],
-        ['a scalar list field', { name: 'a', kind: 'io', transforms: 'KafkaIO' }, /must be a list/],
+        ['a scalar list field', { name: 'a', kind: 'io', transforms: 'KafkaSource' }, /must be a list/],
         ['a bad validated value', { name: 'a', kind: 'io', extra: '  validated: yes' }, /validated must be true or false/],
         ['a list validated value', { name: 'a', kind: 'io', extra: '  validated: [true]' }, /validated must be true or false/],
     ])('throws on %s (failure)', (_label, fixture, message) => {
@@ -242,7 +296,9 @@ describe('buildSkill metadata', () => {
     });
 
     it('throws when kind is missing (failure)', () => {
-        expect(() => buildSkill('---\nname: a\ndescription: d\nmetadata:\n  usedBy: [generator]\n---\n', 'a')).toThrow(/metadata.kind/);
+        expect(() => buildSkill('---\nname: a\ndescription: d\nmetadata:\n  usedBy: [generator]\n---\n', 'a')).toThrow(
+            /metadata.kind/
+        );
     });
 });
 
@@ -276,15 +332,15 @@ describe('CodegenSkillCatalog.load failures', () => {
     });
 
     it('throws on an unknown language folder under templates (failure)', () => {
-        const root = writeFixtures([{ name: 'runner-direct', kind: 'runner' }]);
-        fs.mkdirSync(path.join(root, 'runner-direct', 'templates', 'go'), { recursive: true });
+        const root = writeFixtures([{ name: 'runner-local', kind: 'runner' }]);
+        fs.mkdirSync(path.join(root, 'runner-local', 'templates', 'go'), { recursive: true });
         expect(() => CodegenSkillCatalog.load(root)).toThrow(/unknown entry 'go'/);
     });
 
     it('throws on a file directly under templates (failure)', () => {
-        const root = writeFixtures([{ name: 'runner-direct', kind: 'runner' }]);
-        fs.mkdirSync(path.join(root, 'runner-direct', 'templates'));
-        fs.writeFileSync(path.join(root, 'runner-direct', 'templates', 'Dockerfile'), 'x');
+        const root = writeFixtures([{ name: 'runner-local', kind: 'runner' }]);
+        fs.mkdirSync(path.join(root, 'runner-local', 'templates'));
+        fs.writeFileSync(path.join(root, 'runner-local', 'templates', 'Dockerfile'), 'x');
         expect(() => CodegenSkillCatalog.load(root)).toThrow(/unknown entry 'Dockerfile'/);
     });
 
@@ -298,25 +354,36 @@ describe('CodegenSkillCatalog.resolveTransform', () => {
     /** Catalog with the transform values the resolver must distinguish. */
     const catalog = () =>
         CodegenSkillCatalog.fromSkills([
-            buildSkill(skillMd({ name: 'io-kafka', kind: 'io', transforms: '[KafkaIO]' }), 'a'),
-            buildSkill(skillMd({ name: 'io-bigquery', kind: 'io', transforms: '[BigQueryIO]' }), 'b'),
-            buildSkill(skillMd({ name: 'io-text', kind: 'io', transforms: '[TextIO]' }), 'c'),
-            buildSkill(skillMd({ name: 'io-create', kind: 'io', transforms: '[Create]' }), 'd'),
-            buildSkill(skillMd({ name: 'dup-a', kind: 'io', transforms: '[FooIO]' }), 'e'),
-            buildSkill(skillMd({ name: 'dup-b', kind: 'transform', transforms: '[Foo]' }), 'f'),
+            buildSkill(skillMd({ name: 'io-kafka', kind: 'io', transforms: '[KafkaSource]' }), 'a'),
+            buildSkill(skillMd({ name: 'io-bigquery', kind: 'io', transforms: '[BigQuerySink]' }), 'b'),
+            buildSkill(skillMd({ name: 'io-text', kind: 'io', transforms: '[TextSource]' }), 'c'),
+            buildSkill(skillMd({ name: 'io-create', kind: 'io', transforms: '[CreateDataFrameSource]' }), 'd'),
+            buildSkill(skillMd({ name: 'dup-a', kind: 'io', transforms: '[FooSource]' }), 'e'),
+            buildSkill(skillMd({ name: 'dup-b', kind: 'transform', transforms: '[FooSink]' }), 'f'),
         ]);
 
+    it('normalizes comparison keys across IO, Source, and Sink suffixes', () => {
+        expect(transformKey('KafkaSource')).toBe('kafka');
+        expect(transformKey('KafkaSink')).toBe('kafka');
+        expect(transformKey('KafkaIO')).toBe('kafka');
+    });
+
     it('keeps an exact catalog value (simple)', () => {
-        expect(catalog().resolveTransform(' KafkaIO ')).toEqual({ canonical: 'KafkaIO', aliased: false, known: true });
+        expect(catalog().resolveTransform(' KafkaSource ')).toEqual({
+            canonical: 'KafkaSource',
+            aliased: false,
+            known: true,
+        });
     });
 
     it.each([
-        ['ReadFromKafka', 'KafkaIO'],
-        ['WriteToBigQuery', 'BigQueryIO'],
-        ['kafka', 'KafkaIO'],
-        ['Kafka_IO', 'KafkaIO'],
-        ['ReadFromText', 'TextIO'],
-        ['create', 'Create'],
+        ['ReadFromKafka', 'KafkaSource'],
+        ['KafkaIO', 'KafkaSource'],
+        ['WriteToBigQuery', 'BigQuerySink'],
+        ['kafka', 'KafkaSource'],
+        ['Kafka_IO', 'KafkaSource'],
+        ['ReadFromText', 'TextSource'],
+        ['createdataframe', 'CreateDataFrameSource'],
     ])('resolves the legacy spelling %s to %s (simple)', (raw, canonical) => {
         expect(catalog().resolveTransform(raw)).toEqual({ canonical, aliased: true, known: true });
     });
@@ -326,7 +393,11 @@ describe('CodegenSkillCatalog.resolveTransform', () => {
     });
 
     it('reports an unknown value unchanged (failure)', () => {
-        expect(catalog().resolveTransform('MadeUpIO')).toEqual({ canonical: 'MadeUpIO', aliased: false, known: false });
+        expect(catalog().resolveTransform('MadeUpSource')).toEqual({
+            canonical: 'MadeUpSource',
+            aliased: false,
+            known: false,
+        });
         expect(catalog().resolveTransform('Read')).toEqual({ canonical: 'Read', aliased: false, known: false });
     });
 });
@@ -339,5 +410,29 @@ describe('getCodegenSkillCatalog', () => {
         expect(getCodegenSkillCatalog(root)).toBe(first);
         clearCodegenSkillCatalogCache();
         expect(() => getCodegenSkillCatalog(root)).toThrow(/No code generation skills found/);
+    });
+
+    it('loads all bundled Phase 2 skills in resources/codegen-skills cleanly (G1-G10)', () => {
+        const bundledRoot = path.join(__dirname, '..', '..', '..', '..', 'resources', 'codegen-skills');
+        clearCodegenSkillCatalogCache();
+        const catalog = getCodegenSkillCatalog(bundledRoot);
+        const names = catalog.all().map((s) => s.name);
+        expect(names).toEqual([
+            'codegen-common',
+            'core-pyspark',
+            'runner-dataproc-cluster',
+            'runner-local',
+            'runner-serverless-spark',
+            'core-catalyst-optimization',
+            'core-python-datasource',
+            'core-streaming',
+            'verification-gate',
+        ]);
+        const common = catalog.all().find((s) => s.name === 'codegen-common')!;
+        expect(common.kind).toBe('common');
+        expect(common.body).toContain('def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataFrame]:');
+        expect(common.body).toContain('def transform(dfs: dict[str, DataFrame], config: dict[str, Any]) -> dict[str, DataFrame]:');
+        expect(common.body).toContain('def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:');
+        expect(common.body).toContain('tests/test_pipeline.py');
     });
 });

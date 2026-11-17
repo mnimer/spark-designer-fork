@@ -148,6 +148,7 @@ sequenceDiagram
     actor User
     participant Webview as Webview (React)
     participant Ext as Extension Host (Node.js)
+    participant Planner as Execution Planner (src/shared/executionPlanner)
     participant Builder as Prompt Builder (src/codegen)
     participant Gemini as Gemini API (gemini-3.7-flash)
     participant Disk as Filesystem
@@ -155,41 +156,46 @@ sequenceDiagram
     User->>Webview: Edit Pipeline Canvas (add/move/rename/configure node)
     Note over Webview: State updates, marks needsRebuild = true
     Webview->>Ext: savePipeline (YAML Config)
-    Ext->>Disk: Write pipeline.beam configuration file
+    Ext->>Disk: Write pipeline.spark configuration file
 
-    User->>Webview: Click "GENERATE CODE"
-    Webview->>Ext: regenerateCode (YAML Config, Language, Path)
-    Note over Ext: Validates the DAG, gates the output folder
-    Ext->>Builder: buildPromptFromPipelineYaml (YAML, language, Beam version)
-    Note over Builder: 1. Redact credentials<br/>2. Detect transforms and features<br/>3. Select skills<br/>4. Assemble one prompt
-    Builder-->>Ext: prompt + selected skill names
+    User->>Webview: Click "GENERATE CODE" (PySpark 4.x badge + optional AI Reviewer toggle)
+    Webview->>Ext: regenerateCode (YAML Config, Output Folder, enableReviewer)
+    Note over Ext: Validates the DAG, gates the output folder (.sparkgen.json)
+    Ext->>Builder: buildPromptFromPipelineYaml (YAML, PySpark, Spark version)
+    Builder->>Planner: buildExecutionPlan (nodes, edges, jobConfig)
+    Planner-->>Builder: Deterministic ExecutionPlan (caching, foreachBatch, DLQ splits, JARs)
+    Note over Builder: 1. Redact credentials<br/>2. Detect spark_transform & features<br/>3. Select Phase 2 Spark skills<br/>4. Inject ## Execution Plan + skills
+    Builder-->>Ext: prompt + selected skill names + ExecutionPlan
     Ext->>Gemini: ONE generateContent call (prompt + JSON schema)
     Gemini-->>Ext: Structured JSON (files array)
-    opt Reviewer setting is on (default off)
-        Ext->>Ext: Read-only checks (no model call)
+    opt Reviewer toggle or setting is on (default off)
+        Ext->>Ext: ReadOnlyCheckRunner (py_compile, 3-phase structure, pytest --collect-only)
         Ext->>Gemini: Review call (findings JSON)
         Ext->>Gemini: Fix call for blocking findings (max 2 rounds)
         Ext-->>Webview: codeGenerationProgress (one message per step)
     end
-    Ext->>Disk: Stage, scoped cleanup, commit files, gemini.log, manifest
+    Ext->>Disk: Stage, scoped cleanup, commit files, gemini.log, .sparkgen.json manifest
     Ext-->>Webview: codeRegenerated (Success + main pipeline code)
     Note over Webview: Sets needsRebuild = false, updates preview
     Webview->>Ext: readFolderFiles
     Ext-->>Webview: folderFilesLoaded (Refreshes file tabs)
 ```
 
-### Prompt Assembly from Skills & Response Schema
-Code generation makes ONE model call. The prompt is assembled from small topic skills. No prompt text lives in TypeScript.
+### Prompt Assembly from Skills, Deterministic ExecutionPlan & Response Schema
+Code generation makes ONE model call. The prompt is assembled from modular topic skills and the deterministic `ExecutionPlan`. No prompt text lives in TypeScript.
 
-- **Skills**: `resources/codegen-skills/<name>/SKILL.md` (language-neutral rules) plus optional `python.md` / `java.md` (SDK specifics) and `templates/<language>/<file>` (runner templates). See `resources/codegen-skills/README.md`.
-  - One skill per IO connector (`io-*`, one per catalog `beamTransform`), one per transform group (`transforms-*`), one per runner (`runner-direct`, `runner-dataflow`, `runner-spark`), language skills (`lang-*`, `packaging-*`, `testing-*`), cross-cutting skills (`credentials-and-options`, `graph-wiring`), feature-gated skills (`side-inputs`, `multi-output`, `streaming-windowing`, `custom-instructions`, `cross-language-transforms`), and `verification-gate` (always last).
+- **Skills** (`resources/codegen-skills/<name>/SKILL.md` plus runner `templates/python/<file>` and `resources/templates/pyspark/<file>`):
+  - **Global contract & gate**: `codegen-common` (`kind: common`, always first; enforces the 8 repository deliverables and the testable 3-phase separation `read_sources(spark, config)`, pure `transform(dfs, config)`, and `write_sinks(dfs, config)` tested offline in `tests/test_pipeline.py`) and `verification-gate` (`kind: gate`, always last).
+  - **Core PySpark 4.x & Catalyst skills**: `core-pyspark` (`kind: language`, session initialization via `SparkSession.builder` vs. `ManagedSparkSession`, production `logging`, zero-dependency Secret Manager helper, and DLQ `_corrupt_record` / `_error` splits) and `core-catalyst-optimization` (`kind: crosscutting`, `F.broadcast()` lookup joins, no unbounded driver collection, single-pass `.withColumns({...})`, flat `functools.reduce(DataFrame.unionByName, dfs)`, vectorized Arrow `@pandas_udf` / `mapInPandas`, `.coalesce()` vs. `.repartition()`, zero `spark._jsc` / `spark.sparkContext` calls, and deterministic fan-out `.cache()` / `.unpersist()`).
+  - **Feature-gated & transform-matched Spark skills**: `core-streaming` (`preloadWhen: [streaming]`, `transforms: [Watermark, StatefulTransform]`; `spark.readStream`, `.withWatermark()`, `availableNow` / `processingTime` / `continuous` triggers, checkpoints, multi-sink `foreachBatch` with `batch_df.cache()` / `unpersist()` and `txnVersion`, and Spark 4.0 `transformWithState`) and `core-python-datasource` (`preloadWhen: [python_datasource]`, `transforms: [PubSubSource, PubSubSink, KinesisSource, KinesisSink, MqttSource, MqttSink, FirestoreSource, FirestoreSink, CassandraSource, RedisSource, RedisSink]`; Spark 4.0 `pyspark.sql.datasource.DataSource` reader/writer/stream templates).
+  - **Runner skills & templates**: `runner-local` (`run_local.sh` with `--test` `pytest` mode, `spark-submit`, and optional `ManagedSparkSession` Spark Connect), `runner-dataproc-cluster` (`run_dataproc_cluster.sh` with `gcloud dataproc jobs submit pyspark`), and `runner-serverless-spark` (`run_serverless_spark.sh` with `gcloud dataproc batches submit pyspark`, `--version=4.0`, normalized root `--deps-bucket=gs://<bucket>`, `standard` tier default, and non-root `USER 1099:1099` `Dockerfile`).
 - **Pipeline** (`src/codegen/`):
-  1. `credentialRedaction.redactPipelineDocument()` strips credentials. It runs first because `gemini.log` stores the prompt.
-  2. `PipelineFeatureDetector` reads the parsed YAML: `beam_transform` set, runners of the language, features (`side_inputs`, `multi_output`, `streaming`, `custom_instructions`, `xlang`).
-  3. `CodegenSkillCatalog.select()` filters by caller, language, runner, kind, transforms, and features. The order is deterministic (kind, then name).
-  4. `CodegenPromptBuilder.build()` emits `codegen-common`, then `## Pipeline YAML` (verbatim), then the redaction notice, then each `## Skill: <name>`. It resolves `{{beam_version}}` in skill text only (fix F7).
-- **Shared entry point**: `buildPromptFromPipelineYaml()`. The extension (`codeGeneration.ts`) and the integration runner (`codegen-runner.ts`) both call it, so the tests send the same prompt as users. The selected skill names go to the output channel and to `gemini.log`.
-- **Optional reviewer**: setting `dataflowDesigner.codegen.enableReviewer` (default `false`). `ReadOnlyCheckRunner` runs fast checks, `CodeReviewer` makes one review call and up to two fix calls. Templates: `resources/codegen-prompts/{reviewer,fix}.md`. Reviewer skills use `usedBy: [reviewer]`.
+  1. `credentialRedaction.redactPipelineDocument()` strips credentials first so `gemini.log` never records plaintext secrets.
+  2. `PipelineFeatureDetector` reads the parsed `.spark` YAML: `spark_transform` / `sparkTransform` set, supported runners (`local`, `dataproc-cluster`, `serverless-spark`), and features (`streaming`, `python_datasource`, `multi_output`, `custom_instructions`).
+  3. `CodegenSkillCatalog.select()` filters by caller, language (`python`), runner, kind, transforms, and `preloadWhen` features in deterministic `(kind, name)` order.
+  4. `CodegenPromptBuilder.build()` calls `buildExecutionPlan()` from `src/shared/executionPlanner.ts` and emits `codegen-common`, `## Pipeline YAML` (verbatim), `## Execution Plan` (markdown summary + serialized JSON covering topological node order, `isStreaming`, `cacheNodes`, `streamingSinkGroups`, `dlqRoutes`, and `runtimeJars` / `runtimePackages` / `sparkProperties` from `versionMatrix.ts`), the redaction notice (when applicable), and each `## Skill: <name>`, resolving `{{spark_version}}` in skill text and templates only.
+- **Shared entry point**: `buildPromptFromPipelineYaml()`. Both the extension (`codeGeneration.ts`) and integration runner (`codegen-runner.ts`) call it.
+- **Optional AI Code Reviewer Pass**: Controlled by the `AI Code Reviewer Pass` toggle in `GeneratorSettings.tsx` (`SourceCodeTab.tsx`) or setting `sparkDesigner.codegen.enableReviewer` (default `false`). `ReadOnlyCheckRunner` runs `python3 -m py_compile` on all generated `.py` files, verifies `src/pipeline.py` defines `read_sources`, `transform`, and `write_sinks`, and runs `python3 -m pytest --collect-only -q` when `pytest` is installed. `CodeReviewer` then runs up to two review/fix rounds using `resources/codegen-prompts/{reviewer,fix}.md`.
 - **Response JSON Schema**: `resources/code-gen-schema.json`
   - Enforces structured JSON output with an array of files containing `filename`, `content`, and `executable` boolean flags.
 

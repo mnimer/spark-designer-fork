@@ -4,23 +4,22 @@
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Single source of truth for skill-assembled code generation (`src/codegen/*`). The skill
- * loader, the skill catalog, the pipeline feature detector, the prompt builder, and the
- * optional reviewer read every shared literal from this file (project rule: strict DRY,
- * no magic constants).
+ * Single source of truth for skill-assembled PySpark 4.x code generation (`src/codegen/*`).
+ * The skill loader, the skill catalog, the pipeline feature detector, the prompt builder,
+ * and the optional reviewer read every shared literal from this file (project rule: strict
+ * DRY, no magic constants).
  *
  * Architectural decisions / notes for future sessions:
  * - Code generation is ONE model call. The prompt is assembled from the topic skills in
  *   `resources/codegen-skills/<name>/SKILL.md`. A multi-agent workflow was measured 2.3-2.5x
  *   slower in the sister project (Visual Agent Designer) and was rejected.
  * - Skill language ids derive from `SupportedLanguage` in ONE place
- *   (`toSkillLanguage`). To add Go or TypeScript, extend `SupportedLanguage`, then add the
- *   language to `SKILL_LANGUAGE_IDS` and `LANGUAGE_RUNNERS`.
+ *   (`toSkillLanguage`).
  * - Parity rule: every project receives every runner script that its language supports
  *   (`LANGUAGE_RUNNERS`). The runner chosen in the Deployment tab does NOT filter skills.
  * - The extension cannot import the webview palette catalog (`tsconfig` rootDir is `src`).
- *   So `STREAMING_SOURCE_TRANSFORMS` and `XLANG_TRANSFORMS` are kept here once, and the
- *   invariant unit test checks every entry against the catalog.
+ *   So `STREAMING_SOURCE_TRANSFORMS` and `PYTHON_DATASOURCE_TRANSFORMS` are kept here once,
+ *   and the invariant unit test checks every entry against the catalog.
  * - The reviewer pass is opt-in (`CODEGEN_REVIEWER_ENABLED_BY_DEFAULT = false`).
  */
 
@@ -104,6 +103,7 @@ export const PIPELINE_FEATURES = {
     multiOutput: 'multi_output',
     streaming: 'streaming',
     customInstructions: 'custom_instructions',
+    pythonDatasource: 'python_datasource',
     xlang: 'xlang',
 } as const;
 
@@ -115,7 +115,7 @@ export const KNOWN_PIPELINE_FEATURES: ReadonlySet<string> = new Set<string>(Obje
 
 /** Edge handle ids that the detector inspects. */
 export const EDGE_HANDLES = {
-    /** `targetHandle` of an edge that feeds a ParDo side input. */
+    /** `targetHandle` of an edge that feeds a side input. */
     sideInput: 'side_input',
     /** `sourceHandle` values of a multi-output (valid / error) step. */
     multiOutput: ['valid', 'error'] as readonly string[],
@@ -130,40 +130,65 @@ export const CUSTOM_INSTRUCTION_KEYS = {
 } as const;
 
 /**
- * SDK-style prefixes that a legacy `.beam` file can put in front of a connector name
+ * SDK-style prefixes that a legacy `.spark` or `.beam` file can put in front of a connector name
  * (for example `ReadFromKafka`, `WriteToBigQuery`). The transform resolver strips them,
  * longest first, before it matches the name against the skill catalog.
  */
 export const TRANSFORM_ALIAS_PREFIXES: readonly string[] = ['readfrom', 'writeto', 'read', 'write'];
 
-/** `sparkTransform` of the windowing step. A WindowInto node marks the pipeline as streaming. */
+/** `sparkTransform` of the explicit event-time watermark step (`df.withWatermark(...)`). */
+export const WATERMARK_TRANSFORM = 'Watermark';
+
+/** `sparkTransform` of the Spark 4.0 stateful streaming step (`transformWithState`). */
+export const STATEFUL_STREAMING_TRANSFORM = 'StatefulTransform';
+
+/** Legacy `sparkTransform` of the windowing step. Kept as an alias for backwards compatibility. */
 export const WINDOW_INTO_TRANSFORM = 'WindowInto';
 
-/**
- * Unbounded source transforms. A SOURCE node with one of these values marks the pipeline
- * as streaming. Every entry must exist in the palette catalog (invariant test).
- */
-export const STREAMING_SOURCE_TRANSFORMS: ReadonlySet<string> = new Set<string>([
-    'PubSubIO',
-    'KafkaIO',
-    'MqttIO',
-    'PeriodicImpulse',
-    'KinesisIO',
-    'PulsarIO',
-    'JmsIO',
-    'AmqpIO',
-    'RabbitMqIO',
-    'SolaceIO',
-    'SqsIO',
-    'DebeziumIO',
-    'SparkReceiverIO',
-    'FlinkStreamingImpulseSource',
+/** Step transforms that inherently mark a pipeline as streaming. */
+export const STREAMING_STEP_TRANSFORMS: ReadonlySet<string> = new Set<string>([
+    WATERMARK_TRANSFORM,
+    STATEFUL_STREAMING_TRANSFORM,
+    WINDOW_INTO_TRANSFORM,
 ]);
 
 /**
- * Transforms that need a cross-language expansion service, per language. A node with one
- * of these values sets the `xlang` feature. Every entry must exist in the palette catalog
- * (invariant test). Source: the Beam connectors table "via X-language" column.
+ * Streaming source transforms in the Apache Spark 4.x catalog (`SRC1`–`SRC8`).
+ * A SOURCE node with one of these values (unless explicitly configured as `readMode: 'batch'`)
+ * or any SOURCE node with `readMode: 'streaming'` marks the pipeline as streaming.
+ */
+export const STREAMING_SOURCE_TRANSFORMS: ReadonlySet<string> = new Set<string>([
+    'KafkaSource',
+    'PubSubSource',
+    'KinesisSource',
+    'PulsarSource',
+    'EventHubsSource',
+    'MqttSource',
+    'RateSource',
+    'SocketSource',
+]);
+
+/**
+ * Transforms backed by the Spark 4.0 Python `DataSource` API or Python `foreachBatch` SDK
+ * connectors in `src/spark/versionMatrix.ts`. Selecting any of these sets the
+ * `python_datasource` pipeline feature so `core-python-datasource` is preloaded.
+ */
+export const PYTHON_DATASOURCE_TRANSFORMS: ReadonlySet<string> = new Set<string>([
+    'PubSubSource',
+    'PubSubSink',
+    'KinesisSource',
+    'KinesisSink',
+    'MqttSource',
+    'MqttSink',
+    'FirestoreSource',
+    'FirestoreSink',
+    'CassandraSource',
+    'RedisSource',
+    'RedisSink',
+]);
+
+/**
+ * Transforms that need a cross-language expansion service, per language.
  */
 export const XLANG_TRANSFORMS: Readonly<Record<SkillLanguage, ReadonlySet<string>>> = {
     python: new Set<string>(),
@@ -180,7 +205,7 @@ export const CODEGEN_RESOURCE_PATHS = {
     skillFileName: 'SKILL.md',
     /** Folder (inside a runner skill) that holds `<language>/<file>` templates. */
     templatesDir: 'templates',
-    /** Extension of a language reference file (`python.md`, `java.md`). */
+    /** Extension of a language reference file (`python.md`). */
     languageFileExtension: '.md',
     /** Folder that holds the reviewer and fix prompt templates. */
     promptsDir: 'codegen-prompts',
@@ -198,9 +223,14 @@ export const PROMPT_SECTIONS = {
     pipelineYamlHeading: '## Pipeline YAML',
     /** Instruction line above the YAML fence. */
     pipelineYamlIntro: 'Convert this pipeline definition into the complete project deliverables:',
-    /** Prefix of every skill heading (`## Skill: io-kafka`). */
+    /** Heading of the deterministic ExecutionPlan section. */
+    executionPlanHeading: '## Execution Plan',
+    /** Instruction line above the ExecutionPlan summary and JSON fence. */
+    executionPlanIntro:
+        'Follow this deterministic pre-computed execution plan for node topological order, batch vs. streaming execution, fan-out `.cache()` / `.unpersist()` insertion, `foreachBatch` sink grouping, dead-letter queue (`_corrupt_record` / `_error`) splits, and runtime artifacts:',
+    /** Prefix of every skill heading (`## Skill: core-pyspark`). */
     skillHeadingPrefix: '## Skill: ',
-    /** Suffix of the language reference heading (`### Python specifics`). */
+    /** Suffix of the language reference heading (`### PySpark specifics`). */
     languageHeadingSuffix: ' specifics',
     /** Heading level of the language reference heading. */
     languageHeadingPrefix: '### ',
@@ -211,6 +241,9 @@ export const PROMPT_SECTIONS = {
 } as const;
 
 /** Placeholder that the builder resolves in skill text (never in the user YAML). */
+export const SPARK_VERSION_PLACEHOLDER = '{{spark_version}}';
+
+/** Legacy placeholder alias resolved in skill text for backwards compatibility. */
 export const BEAM_VERSION_PLACEHOLDER = '{{beam_version}}';
 
 /**
@@ -241,7 +274,7 @@ export interface CodegenModelTuning {
 
 /**
  * Sampling and thinking settings for every code generation call (generator, reviewer, fix,
- * integration runner). Phase 9 A/B decides the values; an empty object keeps model defaults.
+ * integration runner). An empty object keeps model defaults.
  */
 export const CODEGEN_MODEL_TUNING: CodegenModelTuning = {};
 
@@ -296,7 +329,7 @@ export const READ_ONLY_CHECK_LIMITS = {
     timeoutMs: 60_000,
     /** Maximum characters of check output forwarded to the reviewer per check. */
     maxOutputChars: 8_000,
-    /** Python interpreter used for `py_compile`. */
+    /** Python interpreter used for `py_compile` and `pytest`. */
     pythonCommand: 'python3',
 } as const;
 
@@ -309,9 +342,9 @@ export const REVIEW_SEVERITIES = {
 /**
  * Converts a `SupportedLanguage` into its skill language id.
  *
- * @param language Canonical language (`Python` | `Java`).
- * @returns Skill language id (`python` | `java`).
+ * @param language Canonical language (`PySpark`).
+ * @returns Skill language id (`python`).
  */
 export function toSkillLanguage(language: SupportedLanguage): SkillLanguage {
-    return SKILL_LANGUAGE_IDS[language];
+    return SKILL_LANGUAGE_IDS[language] ?? 'python';
 }

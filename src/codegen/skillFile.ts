@@ -11,19 +11,19 @@
  * Supported frontmatter (the only shape that the skills use; anything else fails fast):
  * ```yaml
  * ---
- * name: io-kafka
- * description: KafkaIO read mode and write mode for every language.
+ * name: core-pyspark
+ * description: Core PySpark 4.x session initialization, Secret Manager, and DLQ split rules.
  * metadata:
- *   kind: io
+ *   kind: language
  *   usedBy: [generator, reviewer]
- *   languages: [all]
+ *   languages: [python]
  *   runners: [all]
- *   transforms: [KafkaIO]
+ *   transforms: []
  *   preloadWhen: []
  *   sources:
  *     - prompt
- *     - https://beam.apache.org/documentation/io/connectors/
- *   validated: false
+ *     - https://spark.apache.org/docs/latest/api/python/
+ *   validated: true
  * ---
  * ```
  *

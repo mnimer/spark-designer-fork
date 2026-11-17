@@ -91,22 +91,30 @@ describe('config updates never clobber sibling fields (regression)', () => {
     expect(next.subnetwork).toBe(jobConfig.subnetwork);
   });
 
-  it('language change sends an updater that preserves the rest of pipelineConfig', () => {
-    const setLanguage = vi.fn();
-    // SourceCodeTab owns the Language radios; BottomPanel is what adapts setLanguage onto
-    // setPipelineConfig, so assert the adapter contract here via BottomPanel below.
+  it('outputFolder change sends an updater that preserves the rest of pipelineConfig', () => {
+    const setPipelineConfig = vi.fn();
+    // SourceCodeTab owns the Target Folder input; BottomPanelContext adapts setOutputFolder
+    // onto setPipelineConfig via pipelineConfigReducer, so assert the adapter contract here.
     renderWithBottomPanel(
       <SourceCodeTab />,
       {
-        language: 'Java',
-        setLanguage,
+        language: 'Python',
         outputFolder: 'out',
+        setPipelineConfig,
       }
     );
 
-    // Selecting Python must report the new value; the Java radio starts checked because
-    // the loaded pipeline is Java.
-    fireEvent.click(screen.getByText('Python'));
-    expect(setLanguage).toHaveBeenCalledWith('Python');
+    const input = screen.getByPlaceholderText('./scratch_flow/');
+    fireEvent.change(input, { target: { value: 'new_out' } });
+
+    expect(setPipelineConfig).toHaveBeenCalledTimes(1);
+    const updater = setPipelineConfig.mock.calls[0][0] as (p: any) => any;
+    expect(typeof updater).toBe('function');
+
+    const fresher = { language: 'Python' as const, outputFolder: 'out', needsRebuild: false };
+    const next = updater(fresher);
+    expect(next.outputFolder).toBe('new_out');
+    expect(next.language).toBe('Python');
+    expect(next.needsRebuild).toBe(true);
   });
 });

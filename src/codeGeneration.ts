@@ -1,5 +1,5 @@
 /**
- * Code generation module for Apache Beam pipelines using Gemini AI.
+ * Code generation module for Apache Spark 4.x pipelines using Gemini AI.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
@@ -8,7 +8,7 @@
  * into a modular, strategy-driven design.
  *
  * Encapsulates:
- * - Language-specific strategies (Python and Java)
+ * - Language-specific strategies (PySpark / Python)
  * - Pure prompt assembly with special-character protection
  * - End-to-end code generation pipeline with security controls (C1, C2, C3)
  */
@@ -112,13 +112,17 @@ export const PYTHON_STRATEGY: LanguageStrategy = {
 
     routeFilename(normalizedFilename: string, fileNameOnly: string, dirNameOnly: string, baseName: string): string {
         const lowerName = fileNameOnly.toLowerCase();
-        if (lowerName === 'pipeline.py' || lowerName === `${baseName.toLowerCase()}.py`) {
+        if (lowerName === 'pipeline.py') {
+            return 'src/pipeline.py';
+        } else if (lowerName === `${baseName.toLowerCase()}.py`) {
             return `src/${baseName}.py`;
+        } else if (lowerName === 'test_pipeline.py') {
+            return 'tests/test_pipeline.py';
         } else if (lowerName === 'pipeline_test.py' || lowerName === `${baseName.toLowerCase()}_test.py`) {
             return `src/${baseName}_test.py`;
         } else if (fileNameOnly.endsWith('.py')) {
             if (dirNameOnly === '.' || dirNameOnly === '') {
-                return `src/${fileNameOnly}`;
+                return lowerName.startsWith('test_') ? `tests/${fileNameOnly}` : `src/${fileNameOnly}`;
             }
         }
         return normalizedFilename;
@@ -248,21 +252,21 @@ export function deduplicateGeneratedFiles<T extends { filename?: string; content
  *
  * @param context Extension context (locates `resources/codegen-skills`).
  * @param yamlData Raw pipeline YAML.
- * @param languageVal Requested language (anything that is not Java becomes Python).
- * @param beamVersion Resolved Beam version.
+ * @param languageVal Requested language (PySpark).
+ * @param sparkVersion Resolved Apache Spark runtime version.
  * @returns The built prompt, the selected skills, the detection facts, and the redacted paths.
  */
 export function buildExtensionPrompt(
     context: vscode.ExtensionContext,
     yamlData: string,
     _languageVal: string,
-    beamVersion?: string
+    sparkVersion?: string
 ): PipelinePrompt {
     return buildPromptFromPipelineYaml({
         skillsRoot: resolveResourcePath(context, CODEGEN_RESOURCE_PATHS.skillsDir),
         yamlText: yamlData,
         language: DEFAULT_LANGUAGE,
-        beamVersion,
+        sparkVersion,
     });
 }
 
@@ -295,6 +299,10 @@ export interface ExecuteCodeGenerationOptions {
      * again immediately before any file in the output folder is deleted or written.
      */
     abortSignal?: AbortSignal;
+    /** Optional explicit override from the webview UI toggle for the post-generation AI reviewer pass. */
+    enableReviewer?: boolean;
+    /** Optional Apache Spark runtime version override. */
+    sparkVersion?: string;
 }
 
 /** Filename of the per-generation request/response log written into the output folder. */
@@ -477,6 +485,8 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         outputChannel,
         getGcloudProjectFn,
         abortSignal,
+        enableReviewer,
+        sparkVersion: requestedSparkVersion,
     } = options;
 
     let promptText = '';
@@ -486,7 +496,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
 
         const resolveProject = getGcloudProjectFn || getGcloudProject;
         const gcloudProjectId = await resolveProject();
-        const beamVersion = DEFAULT_SPARK_VERSION;
+        const sparkVersion = requestedSparkVersion || DEFAULT_SPARK_VERSION;
 
         const aiOptions: any = {};
         if (gcloudProjectId) {
@@ -508,7 +518,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         // The shared builder is also used by the integration runner, so both send the
         // same prompt for the same pipeline.
         const skillsRoot = resolveResourcePath(context, CODEGEN_RESOURCE_PATHS.skillsDir);
-        const built = buildExtensionPrompt(context, yamlData, languageVal, beamVersion);
+        const built = buildExtensionPrompt(context, yamlData, languageVal, sparkVersion);
         promptText = built.prompt;
         selectedSkills = built.selectedSkills;
         if (built.redactedPaths.length > 0) {
@@ -579,7 +589,11 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
 
             // Phase 7: optional reviewer pass (off by default). It changes files only
             // through the model. A reviewer failure keeps the generated files.
-            if (isReviewerEnabled((section) => vscode.workspace.getConfiguration(section))) {
+            const reviewerEnabled =
+                typeof enableReviewer === 'boolean'
+                    ? enableReviewer
+                    : isReviewerEnabled((section) => vscode.workspace.getConfiguration(section));
+            if (reviewerEnabled) {
                 const review = await runReviewerPass({
                     ai,
                     files: responseObj.files,
@@ -587,7 +601,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
                     yamlText: yamlData,
                     language,
                     baseName,
-                    beamVersion,
+                    sparkVersion,
                     skillsRoot,
                     reviewerTemplate: readResourceFile(context, path.join(CODEGEN_RESOURCE_PATHS.promptsDir, CODEGEN_RESOURCE_PATHS.reviewerPrompt)),
                     fixTemplate: readResourceFile(context, path.join(CODEGEN_RESOURCE_PATHS.promptsDir, CODEGEN_RESOURCE_PATHS.fixPrompt)),
@@ -961,6 +975,8 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
                 outputChannel,
                 getGcloudProjectFn,
                 abortSignal: controller.signal,
+                enableReviewer: typeof message.enableReviewer === 'boolean' ? message.enableReviewer : undefined,
+                sparkVersion: typeof message.sparkVersion === 'string' ? message.sparkVersion : undefined,
             });
         } finally {
             abortSignal?.removeEventListener('abort', abort);

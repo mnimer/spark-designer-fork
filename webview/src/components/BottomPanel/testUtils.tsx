@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Test utilities and mock context factory for BottomPanel and its child tabs.
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
 import React from 'react';
 import { render, type RenderResult } from '@testing-library/react';
 import { vi } from 'vitest';
@@ -42,7 +48,7 @@ export interface BottomPanelTestOverrides {
   setOutputFolder?: (folder: string) => void;
   setPipelineConfig?: (update: any) => void;
   onPickFolder?: () => void;
-  onRegenerate?: () => void;
+  onRegenerate?: (options?: { enableReviewer?: boolean }) => void;
   onStopGeneration?: () => void;
   files?: string[];
   folderFiles?: string[];
@@ -51,10 +57,13 @@ export interface BottomPanelTestOverrides {
   onSelectFile?: (fileName: string) => void;
   selectedFileContent?: string | null;
   isGenerating?: boolean;
+  generationProgress?: string | null;
   isGraphValid?: boolean;
   validationErrors?: string[];
   nodes?: any[];
   tokenUsage?: TokenUsage | null;
+  enableReviewer?: boolean;
+  setEnableReviewer?: (value: boolean) => void;
 }
 
 /**
@@ -141,6 +150,7 @@ export function createBottomPanelContextValue(
       regenerate: rawCodegen.regenerate ?? overrides?.onRegenerate ?? vi.fn(),
       stopGeneration: rawCodegen.stopGeneration ?? overrides?.onStopGeneration,
       isGenerating: rawCodegen.isGenerating ?? overrides?.isGenerating ?? false,
+      generationProgress: rawCodegen.generationProgress ?? overrides?.generationProgress ?? null,
       files: rawCodegen.files ?? overrides?.files ?? overrides?.folderFiles ?? [],
       selectedFile: rawCodegen.selectedFile ?? overrides?.selectedFile ?? overrides?.selectedFileName ?? null,
       selectedFileContent: rawCodegen.selectedFileContent ?? overrides?.selectedFileContent ?? null,
@@ -152,6 +162,8 @@ export function createBottomPanelContextValue(
       tokenUsage: rawCodegen.tokenUsage ?? overrides?.tokenUsage ?? null,
       useSdkForUnsupportedNodes: rawCodegen.useSdkForUnsupportedNodes ?? false,
       setUseSdkForUnsupportedNodes: rawCodegen.setUseSdkForUnsupportedNodes ?? vi.fn(),
+      enableReviewer: rawCodegen.enableReviewer ?? overrides?.enableReviewer,
+      setEnableReviewer: rawCodegen.setEnableReviewer ?? overrides?.setEnableReviewer,
     },
   };
 }
