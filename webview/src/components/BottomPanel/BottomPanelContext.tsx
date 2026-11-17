@@ -5,7 +5,7 @@
  *
  * Decomposes ~37 prop-drilled fields into typed, cohesive slices:
  * - `execution`: live logs, pipeline status, runnerCommand, run, stop, clear, openConsole
- * - `jobConfig`: runner configuration object, setter, validation, subnetworks, projectId
+ * - `jobConfig`: runner configuration object, setter, validation, subnetworks, clusters, sessionTemplates, projectId
  * - `runtimeVariables`: pipeline key-value variables and mutation handlers
  * - `pipelineConfig`: language, output directory, dirty state, and updater functions
  * - `codegen`: code generation preview, status, files, selection, and validation
@@ -15,6 +15,7 @@
 import React, { createContext, useContext } from 'react';
 import type { LogEntry } from './DeploymentTab';
 import type { TokenUsage } from './SourceCodeTab';
+import type { DataprocClusterOption, SessionTemplateOption } from './deployment/AdvancedConfig';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -26,7 +27,7 @@ export interface BottomPanelExecutionSlice {
   status: 'idle' | 'running' | 'completed' | 'failed' | 'stopped';
   runnerCommand: string;
   run: () => void;
-  stop?: () => void;
+  stop?: (options?: { cancelRemoteJob?: boolean }) => void;
   clear?: () => void;
   openConsole?: (url: string) => void;
 }
@@ -39,6 +40,8 @@ export interface BottomPanelJobConfigSlice {
   set: (update: React.SetStateAction<any>) => void;
   isJobIdValid: (value: string) => boolean;
   subnetworks: { name: string; region: string; network: string; value: string }[];
+  clusters?: DataprocClusterOption[];
+  sessionTemplates?: SessionTemplateOption[];
   projectId?: string;
 }
 

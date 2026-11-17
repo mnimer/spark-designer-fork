@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ensureSystemCaBundle } from './codeGeneration';
 import { getGcloudProject } from './cli/gcloudClient';
-import { DataFlowTreeProvider } from './tree/dataflowTree';
+import { SparkTreeProvider, type SparkJob } from './tree/sparkTree';
 import { SparkEditorProvider } from './editor/SparkEditorProvider';
 import { promptForSparkSaveLocation } from './editor/sparkSaveDialog';
 
@@ -69,7 +69,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(outputChannel);
     outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] Apache Spark Designer initialized.`);
 
-    const treeDataProvider = new DataFlowTreeProvider();
+    const treeDataProvider = new SparkTreeProvider();
     vscode.window.registerTreeDataProvider('sparkExplorer', treeDataProvider);
 
     context.subscriptions.push(
@@ -166,26 +166,38 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('spark-pipeline-builder.openJobInConsole', async (job: any, project?: string) => {
+        vscode.commands.registerCommand('spark-pipeline-builder.openJobInConsole', async (job?: Partial<SparkJob>, project?: string) => {
             if (!job || !job.id) return;
-            const loc = job.location || 'us-central1';
+            const region = job.region || job.location || 'us-central1';
             let proj = project;
             if (!proj || proj === 'YOUR_PROJECT_ID') {
                 proj = await getGcloudProject();
             }
-            const url = `https://console.cloud.google.com/dataproc/batches/${loc}/${job.id}/monitoring${proj ? `?project=${proj}` : ''}`;
+            const isClusterJob = job.jobType === 'cluster-job' || job.category === 'cluster-job';
+            const url = isClusterJob
+                ? `https://console.cloud.google.com/dataproc/jobs/${job.id}?region=${region}${proj ? `&project=${proj}` : ''}`
+                : `https://console.cloud.google.com/dataproc/batches/${region}/${job.id}/monitoring${proj ? `?project=${proj}` : ''}`;
             vscode.env.openExternal(vscode.Uri.parse(url));
         })
     );
 }
 
-export type { DataflowJob } from './tree/dataflowTree';
+export type {
+    SparkJob,
+    DataflowJob,
+    RawServerlessBatch,
+    RawClusterJob,
+} from './tree/sparkTree';
 export {
     categorizeJobStatus,
     getJobStartTime,
+    normalizeServerlessBatch,
+    normalizeClusterJob,
+    SparkTreeProvider,
     DataFlowTreeProvider,
     DataItem,
-} from './tree/dataflowTree';
+    SparkTreeItem,
+} from './tree/sparkTree';
 
 /**
  * Deactivates the Apache Beam Designer extension and disposes resources.

@@ -13,21 +13,31 @@ import { resolveOutputFolder } from '../../editor/outputFolder';
 import { savePipelineFiles } from '../../editor/pipelineFileWriter';
 import { isSafeFolderPath, isAllowedExecutableScript } from '../../security/scriptGuard';
 import {
+    PLACEHOLDER_PROJECT_ID,
     buildRunnerEnvironment,
+    cancelRemoteSparkJob,
     createJobIdTracker,
     describeRunner,
     findRunnerScript,
     resolveRunTarget,
     runnerScriptCandidates,
     spawnRunnerScript,
+    type DetectedRunnerJob,
 } from '../../execution/PipelineRunner';
-import { MessageContext } from '../messageContext';
+import type { MessageContext } from '../messageContext';
 
 /**
  * Session used when a MessageContext carries no per-panel session (legacy
  * callers and direct handler invocations in tests).
  */
 const fallbackSession = new EditorSession();
+
+/**
+ * Tracks the most recently detected remote job per editor session so Stop/Cancel
+ * can cancel an active Serverless batch or Dataproc cluster job even when the
+ * webview only sends `{ cancelRemoteJob: true }`.
+ */
+const activeRemoteJobBySession = new WeakMap<EditorSession, DetectedRunnerJob>();
 
 /**
  * Returns the session that owns long-running work for the sending panel.
@@ -87,7 +97,7 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
             return;
         }
 
-        const runner = message.jobConfig?.runner || 'DirectRunner';
+        const runner = message.jobConfig?.runner || 'Local';
         const possibleNames = runnerScriptCandidates(runner);
         const scriptName = findRunnerScript(folderPath, possibleNames);
 
@@ -101,11 +111,12 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
                 // If this panel already has a run in progress, terminate it before starting a new one.
                 // Runs owned by other editor panels are left alone.
                 session.stopProcess(false);
+                activeRemoteJobBySession.delete(session);
 
                 const scriptFullPath = path.join(folderPath, scriptName);
                 try {
                     fs.chmodSync(scriptFullPath, '755');
-                } catch (e) {
+                } catch {
                     // Best effort file permission update, continue execution
                 }
 
@@ -122,10 +133,20 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
                 channel.appendLine(`\n[${new Date().toLocaleTimeString()}] Starting pipeline execution with ${runner}:`);
                 channel.appendLine(`Command: cd "${folderPath}" && bash ./${scriptName}`);
 
+                // F6: resolve the project before spawning (explicit projectId wins).
+                const target = await resolveRunTarget(message.jobConfig);
+                const effectiveJobConfig = message.jobConfig
+                    ? {
+                        ...message.jobConfig,
+                        ...(target.project !== PLACEHOLDER_PROJECT_ID ? { projectId: target.project } : {}),
+                        region: message.jobConfig.region || target.region,
+                    }
+                    : undefined;
+
                 const { env, rejectedKeys } = buildRunnerEnvironment({
                     baseEnv: process.env,
                     runtimeVariables: message.runtimeVariables,
-                    jobConfig: message.jobConfig,
+                    jobConfig: effectiveJobConfig,
                 });
                 if (rejectedKeys.length > 0) {
                     const warning = `Ignored unsafe runtime variable name(s): ${rejectedKeys.join(', ')}`;
@@ -133,8 +154,6 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
                     ctx.postToWebview({ command: 'pipelineLog', text: `[Warning]: ${warning}\n`, stream: 'stderr' });
                 }
 
-                // F6: resolve the project before spawning (explicit projectId wins).
-                const target = await resolveRunTarget(message.jobConfig);
                 const trackJobId = createJobIdTracker(target);
 
                 const child = spawnRunnerScript(folderPath, scriptFullPath, env, {
@@ -143,7 +162,12 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
                         ctx.postToWebview({ command: 'pipelineLog', text, stream });
                         const job = trackJobId(text);
                         if (job) {
-                            const label = job.runner === 'Dataflow' ? 'Dataflow Job ID' : 'Spark Batch ID';
+                            activeRemoteJobBySession.set(session, job);
+                            const label = job.runner === 'Dataflow'
+                                ? 'Dataflow Job ID'
+                                : job.runner === 'DataprocCluster'
+                                    ? 'Dataproc Cluster Job ID'
+                                    : 'Serverless Spark Batch ID';
                             channel.appendLine(`[${new Date().toLocaleTimeString()}] Detected ${label}: ${job.jobId}`);
                             ctx.postToWebview({ command: 'pipelineJobIdDetected', ...job });
                         }
@@ -201,17 +225,61 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
 }
 
 /**
- * Terminates an active background pipeline execution process.
+ * Terminates an active background pipeline execution process and optionally
+ * cancels an active remote Serverless Spark batch or Dataproc Cluster job.
  *
  * @param ctx Message context
- * @param _message Incoming IPC message
+ * @param message Incoming IPC message with optional remote cancellation target
  */
-export async function handleStopPipeline(ctx: MessageContext, _message: any): Promise<void> {
+export async function handleStopPipeline(ctx: MessageContext, message: any): Promise<void> {
+    const session = sessionOf(ctx);
     // SIGINT the process group now, SIGKILL after a grace period if still alive.
-    const stopped = sessionOf(ctx).stopProcess(true);
+    const stopped = session.stopProcess(true);
+
+    const trackedJob = activeRemoteJobBySession.get(session);
+    const rawCancelFlag = message?.cancelRemoteJob ?? message?.jobConfig?.cancelRemoteJob;
+    const explicitJobId = (message?.jobId || message?.jobConfig?.jobId) as string | undefined;
+    const effectiveJobId = (explicitJobId || (rawCancelFlag === true ? trackedJob?.jobId : undefined))?.trim();
+    const effectiveRunner = (message?.runner || message?.jobConfig?.runner || trackedJob?.runner || 'ServerlessSpark') as string;
+    const effectiveProjectId = (message?.projectId || message?.jobConfig?.projectId || trackedJob?.projectId) as string | undefined;
+    const effectiveRegion = (message?.region || message?.jobConfig?.region || trackedJob?.region) as string | undefined;
+
+    const isRemoteSparkRunner =
+        effectiveRunner === 'ServerlessSpark' ||
+        effectiveRunner === 'Spark' ||
+        effectiveRunner === 'DataprocCluster';
+    const shouldCancelRemote = Boolean(
+        effectiveJobId &&
+        isRemoteSparkRunner &&
+        (rawCancelFlag === true || (rawCancelFlag !== false && Boolean(explicitJobId)))
+    );
+
+    const channel = ctx.outputChannel || getDesignerOutputChannel();
     if (stopped) {
-        const channel = ctx.outputChannel || getDesignerOutputChannel();
         channel.appendLine(`[${new Date().toLocaleTimeString()}] Pipeline execution stopped by user.`);
+    }
+
+    if (shouldCancelRemote && effectiveJobId) {
+        activeRemoteJobBySession.delete(session);
+        const result = await cancelRemoteSparkJob({
+            runner: effectiveRunner,
+            jobId: effectiveJobId,
+            projectId: effectiveProjectId,
+            region: effectiveRegion,
+        });
+        if (result.cancelled) {
+            const msg = `[${new Date().toLocaleTimeString()}] Cancelled remote ${effectiveRunner} job '${effectiveJobId}' (${result.commandLine}).`;
+            channel.appendLine(msg);
+            ctx.postToWebview({ command: 'pipelineLog', text: `${msg}\n`, stream: 'stdout' });
+        } else {
+            const errMsg = `[${new Date().toLocaleTimeString()}] Failed to cancel remote ${effectiveRunner} job '${effectiveJobId}': ${result.error}`;
+            channel.appendLine(errMsg);
+            ctx.postToWebview({ command: 'pipelineLog', text: `${errMsg}\n`, stream: 'stderr' });
+        }
+    }
+
+    if (stopped || shouldCancelRemote) {
+        activeRemoteJobBySession.delete(session);
         ctx.postToWebview({ command: 'pipelineStopped' });
     }
 }

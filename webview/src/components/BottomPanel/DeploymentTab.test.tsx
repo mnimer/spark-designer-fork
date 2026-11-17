@@ -1,35 +1,31 @@
+/**
+ * @fileoverview Unit tests for DeploymentTab component (R1, R7, R12).
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
 import { describe, it, expect, vi } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { DeploymentTab, type LogEntry } from './DeploymentTab';
+import { DeploymentTab, buildDefaultCommandPreview, type LogEntry } from './DeploymentTab';
 import { renderWithBottomPanel } from './testUtils';
 
-/**
- * Unit tests for DeploymentTab component
- * 
- * Author: Mike Nimer <mikenimer@google.com>
- * 
- * Purpose:
- * Validates the new 2-panel Deployment Tab layout, Execution Sandbox, log streaming,
- * GCP Console link, secret masking, and execution control buttons.
- */
 describe('DeploymentTab', () => {
   const defaultProps = {
     jobConfig: {
-      runner: 'Dataflow',
-      machineType: 'n1-standard-1',
-      minInstances: 1,
-      maxInstances: 5,
-      gcsStagingPath: 'gs://my-bucket/staging',
+      runner: 'ServerlessSpark',
+      runtimeVersion: '4.0',
+      tier: 'standard',
+      depsBucket: 'gs://my-spark-deps',
       subnetwork: 'default',
-      jobId: '2026-09-12_12_34_56-123456789',
+      jobId: 'batch-2026-001',
       region: 'us-central1',
-      projectId: 'my-test-project'
+      projectId: 'my-test-project',
     },
     setJobConfig: vi.fn(),
     runtimeVariables: [
       { key: 'JOB_ID', value: 'job-123' },
-      { key: 'API_SECRET_KEY', value: 'secret-12345' }
+      { key: 'API_SECRET_KEY', value: 'secret-12345' },
     ],
     addVariable: vi.fn(),
     updateVariable: vi.fn(),
@@ -41,22 +37,19 @@ describe('DeploymentTab', () => {
     needsRebuild: false,
     pipelineLogs: [
       { id: '1', text: '[INFO] Pipeline starting...', stream: 'stdout', timestamp: '12:00:00' } as LogEntry,
-      { id: '2', text: '[ERROR] Something failed', stream: 'stderr', timestamp: '12:00:01' } as LogEntry
+      { id: '2', text: '[ERROR] Something failed', stream: 'stderr', timestamp: '12:00:01' } as LogEntry,
     ],
     pipelineStatus: 'idle' as const,
-    runnerCommand: 'python pipeline.py --runner=DataflowRunner',
+    runnerCommand: '',
     onClearLogs: vi.fn(),
     onOpenConsole: vi.fn(),
-    projectId: 'my-test-project'
+    projectId: 'my-test-project',
   };
 
   it('renders RUN PIPELINE button and does NOT render SCHEDULE button', () => {
     renderWithBottomPanel(<DeploymentTab />, defaultProps);
 
-    // RUN PIPELINE button should be present
     expect(screen.getByRole('button', { name: /RUN PIPELINE/i })).toBeInTheDocument();
-
-    // SCHEDULE button should NOT be present
     expect(screen.queryByRole('button', { name: /SCHEDULE/i })).not.toBeInTheDocument();
   });
 
@@ -69,9 +62,13 @@ describe('DeploymentTab', () => {
     expect(defaultProps.onRunNow).toHaveBeenCalledTimes(1);
   });
 
-  it('renders STOP button and calls onStopPipeline when clicked', () => {
+  it('renders STOP button and cancel remote job checkbox for remote runners (R12)', () => {
     const onStopPipeline = vi.fn();
     renderWithBottomPanel(<DeploymentTab />, { ...defaultProps, onStopPipeline });
+
+    const cancelCheckbox = screen.getByLabelText(/Cancel remote Dataproc job on Stop/i);
+    expect(cancelCheckbox).toBeInTheDocument();
+    expect(cancelCheckbox).toBeChecked();
 
     const stopButton = screen.getByRole('button', { name: /STOP/i });
     expect(stopButton).toBeInTheDocument();
@@ -79,27 +76,79 @@ describe('DeploymentTab', () => {
 
     fireEvent.click(stopButton);
     expect(onStopPipeline).toHaveBeenCalledTimes(1);
+    expect(onStopPipeline).toHaveBeenCalledWith({ cancelRemoteJob: true });
+
+    // Uncheck remote cancellation and click STOP again
+    fireEvent.click(cancelCheckbox);
+    fireEvent.click(stopButton);
+    expect(onStopPipeline).toHaveBeenLastCalledWith({ cancelRemoteJob: false });
+  });
+
+  it('previews ./run_local.sh, ./run_dataproc_cluster.sh, and ./run_serverless_spark.sh commands (R12)', () => {
+    expect(
+      buildDefaultCommandPreview('Local', { runner: 'Local' }, 'proj-1', 'us-central1')
+    ).toContain('./run_local.sh');
+    expect(
+      buildDefaultCommandPreview(
+        'DataprocCluster',
+        { runner: 'DataprocCluster', clusterName: 'spark-cluster-a' },
+        'proj-1',
+        'us-central1'
+      )
+    ).toContain('CLUSTER_NAME=spark-cluster-a ./run_dataproc_cluster.sh');
+    expect(
+      buildDefaultCommandPreview(
+        'ServerlessSpark',
+        { runner: 'ServerlessSpark', depsBucket: 'gs://my-deps' },
+        'proj-1',
+        'us-central1'
+      )
+    ).toContain('DEPS_BUCKET=gs://my-deps ./run_serverless_spark.sh');
   });
 
   it('renders Execution Sandbox with runner command and logs', () => {
-    renderWithBottomPanel(<DeploymentTab />, defaultProps);
+    renderWithBottomPanel(<DeploymentTab />, {
+      ...defaultProps,
+      runnerCommand: 'bash ./run_serverless_spark.sh',
+    });
 
     expect(screen.getByText(/EXECUTION SANDBOX/i)).toBeInTheDocument();
     expect(screen.getByText(/RUNNER COMMAND/i)).toBeInTheDocument();
-    expect(screen.getByText(/python pipeline\.py --runner=DataflowRunner/i)).toBeInTheDocument();
+    expect(screen.getByText(/bash \.\/run_serverless_spark\.sh/i)).toBeInTheDocument();
     expect(screen.getByText(/\[INFO\] Pipeline starting\.\.\./i)).toBeInTheDocument();
     expect(screen.getByText(/\[ERROR\] Something failed/i)).toBeInTheDocument();
   });
 
-  it('renders GCP Cloud Console link when jobId is present', () => {
-    renderWithBottomPanel(<DeploymentTab />, defaultProps);
+  it('renders GCP Cloud Console monitoring link for ServerlessSpark and DataprocCluster jobs (R7)', () => {
+    const onOpenConsole = vi.fn();
+    const { rerenderWithContext } = renderWithBottomPanel(<DeploymentTab />, {
+      ...defaultProps,
+      onOpenConsole,
+    });
 
     const consoleButton = screen.getByRole('button', { name: /Open in GCP Console/i });
     expect(consoleButton).toBeInTheDocument();
 
     fireEvent.click(consoleButton);
-    expect(defaultProps.onOpenConsole).toHaveBeenCalledWith(
-      expect.stringContaining('https://console.cloud.google.com/dataflow/jobs/us-central1/2026-09-12_12_34_56-123456789?project=my-test-project')
+    expect(onOpenConsole).toHaveBeenCalledWith(
+      'https://console.cloud.google.com/dataproc/batches/us-central1/batch-2026-001/monitoring?project=my-test-project'
+    );
+
+    rerenderWithContext(<DeploymentTab />, {
+      ...defaultProps,
+      onOpenConsole,
+      jobConfig: {
+        runner: 'DataprocCluster',
+        clusterName: 'my-cluster',
+        jobId: 'job-cluster-777',
+        region: 'us-east1',
+        projectId: 'my-test-project',
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Open in GCP Console/i }));
+    expect(onOpenConsole).toHaveBeenLastCalledWith(
+      'https://console.cloud.google.com/dataproc/jobs/job-cluster-777?region=us-east1&project=my-test-project'
     );
   });
 
@@ -124,12 +173,12 @@ describe('DeploymentTab', () => {
     expect(defaultProps.onClearLogs).toHaveBeenCalledTimes(1);
   });
 
-  it('calls setJobConfig with an updater function when machineType changes and preserves jobId', () => {
+  it('calls setJobConfig with an updater function when Runtime Version changes and preserves jobId', () => {
     const setJobConfig = vi.fn();
     renderWithBottomPanel(<DeploymentTab />, { ...defaultProps, setJobConfig });
 
-    const machineTypeSelect = screen.getByDisplayValue('n1-standard-1 (1 vCPU, 3.75 GB)');
-    fireEvent.change(machineTypeSelect, { target: { value: 'n1-standard-4' } });
+    const runtimeVersionSelect = screen.getByLabelText(/Runtime Version/i);
+    fireEvent.change(runtimeVersionSelect, { target: { value: '3.0' } });
 
     expect(setJobConfig).toHaveBeenCalledTimes(1);
     const updater = setJobConfig.mock.calls[0][0];
@@ -139,26 +188,26 @@ describe('DeploymentTab', () => {
     ).toBe('function');
 
     const prevState = {
-      runner: 'Dataflow',
-      machineType: 'n1-standard-1',
-      jobId: 'abc',
+      runner: 'ServerlessSpark',
+      runtimeVersion: '4.0',
+      jobId: 'batch-abc',
       region: 'us-central1',
-      projectId: 'my-project'
+      projectId: 'my-project',
     };
     const nextState = updater(prevState);
-    expect(nextState.machineType).toBe('n1-standard-4');
-    expect(nextState.jobId).toBe('abc');
+    expect(nextState.runtimeVersion).toBe('3.0');
+    expect(nextState.jobId).toBe('batch-abc');
     expect(nextState.region).toBe('us-central1');
     expect(nextState.projectId).toBe('my-project');
   });
 
-  it('defaults Target Environment to DirectRunner when runner is unset', () => {
+  it('defaults Target Environment to Local when runner is unset or legacy DirectRunner (R1)', () => {
     renderWithBottomPanel(<DeploymentTab />, {
       ...defaultProps,
-      jobConfig: { machineType: 'n1-standard-1' },
+      jobConfig: { region: 'us-central1' },
     });
 
-    const runnerSelect = screen.getByDisplayValue('DirectRunner');
-    expect(runnerSelect).toBeInTheDocument();
+    const runnerSelect = screen.getByLabelText(/Target Environment/i);
+    expect(runnerSelect).toHaveValue('Local');
   });
 });

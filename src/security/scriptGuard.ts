@@ -7,14 +7,17 @@ import * as path from 'path';
 
 /**
  * Allowlist of shell script basenames permitted to receive executable permissions (chmod 755).
- * Based on the runner templates in the `runner-direct`, `runner-dataflow`, and `runner-spark` skills (`resources/codegen-skills/`) and runner script invocations in `src/extension.ts`:
- * - `run_directrunner.sh`
- * - `run_dataflowrunner.sh`
- * - `run_dataflow.sh`
- * - `run_sparkrunner.sh`
- * - `run_spark.sh`
+ * Based on the runner templates in `resources/templates/pyspark/` and `resources/codegen-skills/`:
+ * - `run_local.sh`
+ * - `run_dataproc_cluster.sh`
+ * - `run_serverless_spark.sh`
+ * - Legacy aliases retained for backward compatibility: `run_directrunner.sh`, `run_dataflowrunner.sh`,
+ *   `run_dataflow.sh`, `run_sparkrunner.sh`, `run_spark.sh`
  */
 export const ALLOWED_EXECUTABLE_SCRIPTS: ReadonlySet<string> = new Set([
+    'run_local.sh',
+    'run_dataproc_cluster.sh',
+    'run_serverless_spark.sh',
     'run_directrunner.sh',
     'run_dataflowrunner.sh',
     'run_dataflow.sh',

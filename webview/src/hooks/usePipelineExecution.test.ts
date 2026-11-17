@@ -97,7 +97,7 @@ describe('usePipelineExecution', () => {
     });
   });
 
-  it('handleStopPipeline posts stopPipeline with exact payload', () => {
+  it('handleStopPipeline posts stopPipeline with jobConfig and remote cancellation options', () => {
     const { result, mockPostMessage } = setup();
 
     act(() => {
@@ -107,6 +107,26 @@ describe('usePipelineExecution', () => {
     expect(mockPostMessage).toHaveBeenCalledTimes(1);
     expect(mockPostMessage).toHaveBeenCalledWith({
       command: 'stopPipeline',
+      jobConfig: sampleJobConfig,
+      runner: 'DataflowRunner',
+      jobId: 'my-job-123',
+      projectId: 'test-project',
+      region: 'us-central1',
+      cancelRemoteJob: true,
+    });
+
+    act(() => {
+      result.current.handleStopPipeline({ cancelRemoteJob: false });
+    });
+
+    expect(mockPostMessage).toHaveBeenLastCalledWith({
+      command: 'stopPipeline',
+      jobConfig: sampleJobConfig,
+      runner: 'DataflowRunner',
+      jobId: 'my-job-123',
+      projectId: 'test-project',
+      region: 'us-central1',
+      cancelRemoteJob: false,
     });
   });
 

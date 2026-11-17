@@ -12,10 +12,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, type ChildProcess } from 'child_process';
+import { execFile, spawn, type ChildProcess, type ExecFileException } from 'child_process';
+import { findGcloudPath } from '../cli/cliResolver';
 import { getGcloudProject } from '../cli/gcloudClient';
 import { applyRuntimeVariables, type RuntimeVariable } from '../security/envSanitizer';
-import { detectDataflowJob } from './jobIdDetector';
+import { detectDataflowJob, detectSparkJob } from './jobIdDetector';
 
 /** Project placeholder used by generated configs before a real project is chosen. */
 export const PLACEHOLDER_PROJECT_ID = 'YOUR_PROJECT_ID';
@@ -25,16 +26,44 @@ export const DEFAULT_RUN_REGION = 'us-central1';
 
 /** Job configuration fields the runner reads from the webview's run request. */
 export interface RunnerJobConfig {
-    /** Runner name: 'DirectRunner' | 'Dataflow' | 'Spark'. */
+    /** Runner name: 'Local' | 'DataprocCluster' | 'ServerlessSpark' (or legacy 'DirectRunner' | 'Spark' | 'Dataflow'). */
     runner?: string;
     /** Explicit GCP project; wins over the gcloud default (F6). */
     projectId?: string;
-    /** GCP region for job links. */
+    /** GCP region for job submission and Console links. */
     region?: string;
-    /** Exported to the script as GCS_STAGING_PATH. */
+    /** Serverless Spark staging bucket (`gs://<bucket>`), exported as DEPS_BUCKET. */
+    depsBucket?: string;
+    /** Legacy staging path, exported as GCS_STAGING_PATH and fallback for DEPS_BUCKET. */
     gcsStagingPath?: string;
-    /** Exported to the script as SUBNETWORK. */
+    /** Structured Streaming checkpoint root URI (`gs://...` or local path), exported as CHECKPOINT_ROOT. */
+    checkpointRoot?: string;
+    /** Target Dataproc cluster name for DataprocCluster runs, exported as CLUSTER_NAME. */
+    clusterName?: string;
+    /** Serverless Spark runtime version ('4.0' | '3.0'), exported as RUNTIME_VERSION. */
+    runtimeVersion?: string;
+    /** Serverless Spark compute tier ('standard' | 'premium'), exported as SERVERLESS_TIER. */
+    tier?: string;
+    /** Alias for `tier`, exported as SERVERLESS_TIER. */
+    serverlessTier?: string;
+    /** VPC subnetwork name or URI, exported as SUBNET and SUBNETWORK. */
     subnetwork?: string;
+    /** Alias for `subnetwork`, exported as SUBNET and SUBNETWORK. */
+    subnet?: string;
+    /** Custom workload service account email, exported as SERVICE_ACCOUNT. */
+    serviceAccount?: string;
+    /** Batch time-to-live in minutes (or duration string), formatted and exported as BATCH_TTL. */
+    batchTtlMinutes?: number | string;
+    /** Raw batch TTL string fallback, exported as BATCH_TTL. */
+    batchTtl?: string;
+    /** Comma-separated custom `gs://` JAR URIs, exported as SPARK_JARS. */
+    customJarUris?: string;
+    /** Alias for `customJarUris`, exported as SPARK_JARS. */
+    sparkJars?: string;
+    /** Whether Local mode should run via ManagedSparkSession (Spark Connect), exported as USE_SPARK_CONNECT. */
+    useSparkConnect?: boolean;
+    /** Spark Connect session template resource name or ID, exported as SPARK_CONNECT_SESSION_TEMPLATE. */
+    sessionTemplate?: string;
 }
 
 /**
@@ -44,14 +73,17 @@ export interface RunnerJobConfig {
  * @returns Candidate script names (empty for unknown runners).
  */
 export function runnerScriptCandidates(runner: string): string[] {
-    if (runner === 'DirectRunner') {
-        return ['run_directrunner.sh'];
+    if (runner === 'Local' || runner === 'DirectRunner') {
+        return ['run_local.sh', 'run_directrunner.sh'];
+    }
+    if (runner === 'DataprocCluster') {
+        return ['run_dataproc_cluster.sh'];
+    }
+    if (runner === 'ServerlessSpark' || runner === 'Spark') {
+        return ['run_serverless_spark.sh', 'run_sparkrunner.sh', 'run_spark.sh'];
     }
     if (runner === 'Dataflow') {
         return ['run_dataflowrunner.sh', 'run_dataflow.sh'];
-    }
-    if (runner === 'Spark') {
-        return ['run_sparkrunner.sh', 'run_spark.sh'];
     }
     return [];
 }
@@ -85,22 +117,62 @@ export function findRunnerScript(
  * @returns A shell-comment description line.
  */
 export function describeRunner(runner: string): string {
+    if (runner === 'Local') {
+        return '# Using Local PySpark / Spark Connect Runner (Local Machine)';
+    }
     if (runner === 'DirectRunner') {
         return '# Using Python / Java Direct Runner (Local Machine)';
+    }
+    if (runner === 'DataprocCluster') {
+        return '# Submitting PySpark Job to Google Cloud Dataproc Cluster (GCE/GKE)';
     }
     if (runner === 'Dataflow') {
         return '# Submitting Apache Beam Flex Template Job to Google Cloud Dataflow';
     }
-    return '# Submitting Apache Beam Job to Serverless Spark (Dataproc)';
+    return '# Submitting PySpark Batch Job to GCP Serverless Spark (Dataproc)';
+}
+
+/**
+ * Formats a batch TTL value (numeric minutes or suffixed duration string) into a
+ * gcloud-compatible duration string (for example `14400s` for `240` minutes).
+ *
+ * @param rawValue Numeric minutes or duration string from `jobConfig.batchTtlMinutes`.
+ * @returns Formatted duration string, or undefined when empty/invalid.
+ */
+export function formatBatchTtl(rawValue: number | string | undefined): string | undefined {
+    if (rawValue === undefined || rawValue === null) {
+        return undefined;
+    }
+    if (typeof rawValue === 'number') {
+        if (!Number.isFinite(rawValue) || rawValue <= 0) {
+            return undefined;
+        }
+        return `${Math.round(rawValue * 60)}s`;
+    }
+    const trimmed = String(rawValue).trim();
+    if (!trimmed) {
+        return undefined;
+    }
+    if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+        const mins = Number(trimmed);
+        if (!Number.isFinite(mins) || mins <= 0) {
+            return undefined;
+        }
+        return `${Math.round(mins * 60)}s`;
+    }
+    if (/^\d+[smhd]$/i.test(trimmed)) {
+        return trimmed.toLowerCase();
+    }
+    return undefined;
 }
 
 /** Options for {@link buildRunnerEnvironment}. */
 export interface RunnerEnvironmentOptions {
     /** Base environment, normally `process.env`. */
     baseEnv: Record<string, string | undefined>;
-    /** Runtime variables from the `.beam` document (sanitized, S1). */
+    /** Runtime variables from the `.spark` document (sanitized, S1/S9). */
     runtimeVariables?: readonly RuntimeVariable[];
-    /** Job config supplying staging path and subnetwork exports. */
+    /** Job config supplying Spark runner environment exports. */
     jobConfig?: RunnerJobConfig;
     /** Existence check for candidate PATH directories (injectable for tests). */
     exists?: (p: string) => boolean;
@@ -110,7 +182,7 @@ export interface RunnerEnvironmentOptions {
 export interface RunnerEnvironment {
     /** Environment passed to `spawn`. */
     env: Record<string, string>;
-    /** Runtime variable keys refused by the env sanitizer (S1). */
+    /** Runtime variable keys refused by the env sanitizer (S1/S9). */
     rejectedKeys: string[];
 }
 
@@ -118,7 +190,7 @@ export interface RunnerEnvironment {
  * Builds the child-process environment: prepends common tool directories
  * (Homebrew, gcloud SDK, pyenv, sdkman…) that exist on disk to PATH, forces
  * unbuffered/uncolored output, applies sanitized runtime variables, and exports
- * the staging path and subnetwork from the job config.
+ * the Spark runtime configuration from the job config.
  *
  * @param options Environment inputs.
  * @returns The environment and any rejected runtime variable keys.
@@ -151,15 +223,55 @@ export function buildRunnerEnvironment(options: RunnerEnvironmentOptions): Runne
         FORCE_COLOR: '0'
     };
 
-    // S1: runtime variables come from the .beam file; refuse keys that
-    // would let it hijack bash, the dynamic loader or the JVM/Python runtime.
+    // S1/S9: runtime variables come from the .spark file; refuse keys that
+    // would let it hijack bash, the dynamic loader or the JVM/PySpark runtime.
     const rejectedKeys = applyRuntimeVariables(env, runtimeVariables);
     if (jobConfig) {
-        if (jobConfig.gcsStagingPath) {
-            env['GCS_STAGING_PATH'] = jobConfig.gcsStagingPath;
+        if (jobConfig.projectId && jobConfig.projectId !== PLACEHOLDER_PROJECT_ID) {
+            env['PROJECT_ID'] = jobConfig.projectId;
         }
-        if (jobConfig.subnetwork) {
-            env['SUBNETWORK'] = jobConfig.subnetwork;
+        if (jobConfig.region) {
+            env['REGION'] = jobConfig.region;
+        }
+        const depsBucket = jobConfig.depsBucket || jobConfig.gcsStagingPath;
+        if (depsBucket) {
+            env['DEPS_BUCKET'] = depsBucket;
+            env['GCS_STAGING_PATH'] = jobConfig.gcsStagingPath || depsBucket;
+        }
+        if (jobConfig.checkpointRoot) {
+            env['CHECKPOINT_ROOT'] = jobConfig.checkpointRoot;
+        }
+        if (jobConfig.clusterName) {
+            env['CLUSTER_NAME'] = jobConfig.clusterName;
+        }
+        if (jobConfig.runtimeVersion) {
+            env['RUNTIME_VERSION'] = jobConfig.runtimeVersion;
+        }
+        const serverlessTier = jobConfig.tier || jobConfig.serverlessTier;
+        if (serverlessTier) {
+            env['SERVERLESS_TIER'] = serverlessTier;
+        }
+        const subnet = jobConfig.subnetwork || jobConfig.subnet;
+        if (subnet) {
+            env['SUBNET'] = subnet;
+            env['SUBNETWORK'] = subnet;
+        }
+        if (jobConfig.serviceAccount) {
+            env['SERVICE_ACCOUNT'] = jobConfig.serviceAccount;
+        }
+        const batchTtl = formatBatchTtl(jobConfig.batchTtlMinutes) ?? formatBatchTtl(jobConfig.batchTtl);
+        if (batchTtl) {
+            env['BATCH_TTL'] = batchTtl;
+        }
+        const sparkJars = jobConfig.customJarUris || jobConfig.sparkJars;
+        if (sparkJars) {
+            env['SPARK_JARS'] = sparkJars;
+        }
+        if (jobConfig.useSparkConnect === true) {
+            env['USE_SPARK_CONNECT'] = 'true';
+        }
+        if (jobConfig.sessionTemplate) {
+            env['SPARK_CONNECT_SESSION_TEMPLATE'] = jobConfig.sessionTemplate;
         }
     }
     return { env, rejectedKeys };
@@ -198,26 +310,21 @@ export async function resolveRunTarget(
 
 /** A job ID detected in runner output. */
 export interface DetectedRunnerJob {
-    /** Dataflow job ID or Spark batch ID. */
+    /** Serverless Spark batch ID, Dataproc cluster job ID, or Dataflow job ID. */
     jobId: string;
     /** Which service the job belongs to. */
-    runner: 'Dataflow' | 'Spark';
+    runner: 'ServerlessSpark' | 'DataprocCluster' | 'Spark' | 'Dataflow';
     /** Project to link the job against. */
     projectId: string;
     /** Region to link the job against. */
     region: string;
 }
 
-/** Spark/Dataproc batch ID patterns in gcloud output. */
-const SPARK_BATCH_PATTERN = /(?:batches\/|Batch\s*\[|Batch ID:\s*)([a-zA-Z0-9_-]{4,})/i;
-
-/** Words that follow "Batch" in status lines and must not be mistaken for IDs. */
-const SPARK_STATUS_WORDS = ['created', 'running', 'pending', 'failed'];
-
 /**
- * Creates a stateful detector that reports the FIRST Dataflow job or Spark
- * batch ID seen across output chunks, then ignores all further chunks.
- * Region/project parsed from a Dataflow Console URL take precedence over `target`.
+ * Creates a stateful detector that reports the FIRST Serverless Spark batch ID,
+ * Dataproc cluster job ID, or Dataflow job ID seen across output chunks, then
+ * ignores all further chunks. Region/project parsed from a Console URL or full
+ * GCP resource path take precedence over `target`.
  *
  * @param target Default project/region for reported jobs.
  * @returns A function to feed each output chunk; returns the job once, else null.
@@ -238,13 +345,158 @@ export function createJobIdTracker(target: RunTarget): (chunk: string) => Detect
             };
         }
 
-        const sparkMatch = chunk.match(SPARK_BATCH_PATTERN);
-        if (sparkMatch && sparkMatch[1] && !SPARK_STATUS_WORDS.includes(sparkMatch[1].toLowerCase())) {
+        const sparkJob = detectSparkJob(chunk);
+        if (sparkJob) {
             detected = true;
-            return { jobId: sparkMatch[1], runner: 'Spark', projectId: target.project, region: target.region };
+            return {
+                jobId: sparkJob.jobId,
+                runner: sparkJob.runner,
+                projectId: sparkJob.projectId || target.project,
+                region: sparkJob.region || target.region
+            };
         }
+
         return null;
     };
+}
+
+/** Safe identifier pattern for remote batch/job IDs passed to gcloud. */
+const SAFE_REMOTE_JOB_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,127}$/;
+
+/** Safe GCP region identifier pattern. */
+const SAFE_REGION_REGEX = /^[a-zA-Z0-9-]+$/;
+
+/** Safe GCP project ID pattern. */
+const SAFE_PROJECT_ID_REGEX = /^[a-zA-Z0-9.:_-]+$/;
+
+/** Options for {@link cancelRemoteSparkJob}. */
+export interface CancelRemoteSparkJobOptions {
+    /** Runner type: 'ServerlessSpark' | 'Spark' | 'DataprocCluster'. */
+    runner: string;
+    /** Remote Serverless batch ID or Dataproc cluster job ID to cancel. */
+    jobId: string;
+    /** GCP project ID (resolved via gcloud when omitted or placeholder). */
+    projectId?: string;
+    /** GCP region (defaults to DEFAULT_RUN_REGION). */
+    region?: string;
+    /** Optional gcloud executable override for tests. */
+    gcloudBin?: string;
+    /** Optional project lookup override for tests. */
+    getProject?: () => Promise<string | undefined>;
+}
+
+/** Result of {@link cancelRemoteSparkJob}. */
+export interface CancelRemoteSparkJobResult {
+    /** True when the gcloud cancellation command exited with code 0. */
+    cancelled: boolean;
+    /** The full gcloud command line executed (for logging). */
+    commandLine: string;
+    /** Standard output from gcloud, if any. */
+    stdout?: string;
+    /** Error message when validation or execution failed. */
+    error?: string;
+}
+
+/**
+ * Cancels an active remote Serverless Spark batch or kills a running Dataproc
+ * Cluster job via `gcloud`:
+ * - `ServerlessSpark` / `Spark`:
+ *   `gcloud dataproc batches cancel <batchId> --region=<region> --project=<projectId> --quiet`
+ * - `DataprocCluster`:
+ *   `gcloud dataproc jobs kill <jobId> --region=<region> --project=<projectId> --quiet`
+ *
+ * @param options Cancellation target and optional test overrides.
+ * @returns Cancellation outcome and command line string.
+ */
+export async function cancelRemoteSparkJob(
+    options: CancelRemoteSparkJobOptions
+): Promise<CancelRemoteSparkJobResult> {
+    const jobId = options.jobId?.trim() || '';
+    if (!SAFE_REMOTE_JOB_ID_REGEX.test(jobId)) {
+        return {
+            cancelled: false,
+            commandLine: '',
+            error: `Invalid remote Spark job/batch ID: '${options.jobId ?? ''}'`,
+        };
+    }
+
+    const target = await resolveRunTarget(
+        { projectId: options.projectId, region: options.region },
+        options.getProject
+    );
+    const region = target.region.trim();
+    if (!SAFE_REGION_REGEX.test(region)) {
+        return {
+            cancelled: false,
+            commandLine: '',
+            error: `Invalid GCP region: '${region}'`,
+        };
+    }
+
+    const projectId = target.project.trim();
+    if (!projectId || projectId === PLACEHOLDER_PROJECT_ID || !SAFE_PROJECT_ID_REGEX.test(projectId)) {
+        return {
+            cancelled: false,
+            commandLine: '',
+            error: `Valid GCP project ID is required to cancel remote job '${jobId}'.`,
+        };
+    }
+
+    let args: string[];
+    if (options.runner === 'ServerlessSpark' || options.runner === 'Spark') {
+        args = [
+            'dataproc',
+            'batches',
+            'cancel',
+            jobId,
+            `--region=${region}`,
+            `--project=${projectId}`,
+            '--quiet',
+        ];
+    } else if (options.runner === 'DataprocCluster') {
+        args = [
+            'dataproc',
+            'jobs',
+            'kill',
+            jobId,
+            `--region=${region}`,
+            `--project=${projectId}`,
+            '--quiet',
+        ];
+    } else {
+        return {
+            cancelled: false,
+            commandLine: '',
+            error: `Runner '${options.runner}' does not support remote Spark job cancellation.`,
+        };
+    }
+
+    const gcloudBin = options.gcloudBin || findGcloudPath();
+    const commandLine = `${gcloudBin} ${args.join(' ')}`;
+
+    return new Promise((resolve) => {
+        execFile(
+            gcloudBin,
+            args,
+            { timeout: 15000 },
+            (err: ExecFileException | null, stdout: string, stderr: string) => {
+                if (err) {
+                    const errText = stderr?.trim() || err.message;
+                    resolve({
+                        cancelled: false,
+                        commandLine,
+                        error: errText,
+                    });
+                    return;
+                }
+                resolve({
+                    cancelled: true,
+                    commandLine,
+                    ...(stdout?.trim() ? { stdout: stdout.trim() } : {}),
+                });
+            }
+        );
+    });
 }
 
 /** Callbacks wired to the spawned runner process. */

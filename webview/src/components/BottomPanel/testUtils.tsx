@@ -32,8 +32,10 @@ export interface BottomPanelTestOverrides {
   deleteVariable?: (index: number) => void;
   isJobIdValid?: (value: string) => boolean;
   onRunNow?: () => void;
-  onStopPipeline?: () => void;
+  onStopPipeline?: (options?: { cancelRemoteJob?: boolean }) => void;
   subnetworks?: { name: string; region: string; network: string; value: string }[];
+  clusters?: { name: string; status?: string; region?: string }[];
+  sessionTemplates?: Array<{ name: string; value?: string; description?: string } | string>;
   needsRebuild?: boolean;
   pipelineLogs?: LogEntry[];
   pipelineStatus?: 'idle' | 'running' | 'completed' | 'failed' | 'stopped';
@@ -119,6 +121,8 @@ export function createBottomPanelContextValue(
       set: rawJob.set ?? overrides?.setJobConfig ?? vi.fn(),
       isJobIdValid: rawJob.isJobIdValid ?? overrides?.isJobIdValid ?? vi.fn().mockReturnValue(true),
       subnetworks: rawJob.subnetworks ?? overrides?.subnetworks ?? [],
+      clusters: rawJob.clusters ?? overrides?.clusters,
+      sessionTemplates: rawJob.sessionTemplates ?? overrides?.sessionTemplates,
       projectId: rawJob.projectId ?? overrides?.projectId,
     },
     runtimeVariables: {

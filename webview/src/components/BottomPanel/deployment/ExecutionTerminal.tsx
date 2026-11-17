@@ -78,7 +78,13 @@ export const ExecutionTerminal: React.FC<ExecutionTerminalProps> = ({
             EXECUTION SANDBOX
           </span>
           <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-300 border border-slate-700">
-            {runner === 'DirectRunner' ? 'local' : runner === 'Dataflow' ? 'dataflow' : 'spark'}
+            {runner === 'Local' || runner === 'DirectRunner'
+              ? 'local'
+              : runner === 'DataprocCluster'
+                ? 'dataproc-cluster'
+                : runner === 'Dataflow'
+                  ? 'dataflow'
+                  : 'serverless-spark'}
           </span>
         </div>
 

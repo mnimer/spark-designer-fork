@@ -52,13 +52,17 @@ vi.mock('vscode', () => ({
     env: { openExternal: vi.fn() },
 }));
 
-const spawned = vi.hoisted(() => ({ calls: [] as Array<{ cmd: string; args: string[]; opts: any; child: any }> }));
+const spawned = vi.hoisted(() => ({
+    calls: [] as Array<{ cmd: string; args: string[]; opts: any; child: any }>,
+    execCalls: [] as Array<{ bin: string; args: string[] }>,
+}));
 
 vi.mock('child_process', async () => {
     const { EventEmitter: EE } = await import('events');
     return {
-        execFile: vi.fn((_bin: string, _args: string[], _opts: any, cb: any) => {
+        execFile: vi.fn((bin: string, args: string[], _opts: any, cb: any) => {
             const callback = typeof _opts === 'function' ? _opts : cb;
+            spawned.execCalls.push({ bin, args });
             callback(null, 'resolved-project\n', '');
         }),
         spawn: vi.fn((cmd: string, args: string[], opts: any) => {
@@ -219,6 +223,7 @@ describe('handleRunPipeline', () => {
 
     beforeEach(() => {
         spawned.calls.length = 0;
+        spawned.execCalls.length = 0;
         vscodeState.isTrusted = true;
         vi.mocked(vscode.window.showErrorMessage).mockClear();
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-run-'));
@@ -227,13 +232,13 @@ describe('handleRunPipeline', () => {
     });
 
     /**
-     * Context whose document lives at `<tmpDir>/demo.beam`.
+     * Context whose document lives at `<tmpDir>/demo.spark`.
      *
      * @param session Session to bind.
      * @returns Context and poster spy.
      */
     function runCtx(session: EditorSession) {
-        return makeCtx(session, { uri: vscode.Uri.file(path.join(tmpDir, 'demo.beam')) as any });
+        return makeCtx(session, { uri: vscode.Uri.file(path.join(tmpDir, 'demo.spark')) as any });
     }
 
     it('drops dangerous runtime variables and keeps safe ones', async () => {
@@ -294,6 +299,67 @@ describe('handleRunPipeline', () => {
         expect(childA.kill).toHaveBeenCalledWith('SIGINT');
         expect(childB.kill).not.toHaveBeenCalled();
         expect(b.ctx.session!.activeProcess).toBe(childB);
+    });
+
+    it('cancels an active remote ServerlessSpark batch when stopPipeline specifies cancelRemoteJob', async () => {
+        const { ctx, postToWebview } = runCtx(new EditorSession());
+        await handleStopPipeline(ctx, {
+            command: 'stopPipeline',
+            cancelRemoteJob: true,
+            runner: 'ServerlessSpark',
+            jobId: 'batch-remote-01',
+            projectId: 'spark-proj',
+            region: 'us-central1',
+        });
+
+        expect(spawned.execCalls).toContainEqual(
+            expect.objectContaining({
+                args: [
+                    'dataproc',
+                    'batches',
+                    'cancel',
+                    'batch-remote-01',
+                    '--region=us-central1',
+                    '--project=spark-proj',
+                    '--quiet',
+                ],
+            })
+        );
+        expect(postToWebview).toHaveBeenCalledWith(
+            expect.objectContaining({ command: 'pipelineLog', stream: 'stdout' })
+        );
+        expect(postToWebview).toHaveBeenCalledWith({ command: 'pipelineStopped' });
+    });
+
+    it('kills a tracked remote DataprocCluster job when stopPipeline passes cancelRemoteJob: true', async () => {
+        fs.writeFileSync(path.join(tmpDir, 'demo', 'run_dataproc_cluster.sh'), '#!/bin/bash\necho hi\n');
+        const { ctx, postToWebview } = runCtx(new EditorSession());
+        await handleRunPipeline(ctx, {
+            jobConfig: { runner: 'DataprocCluster', projectId: 'cluster-proj', region: 'us-east1' },
+        });
+        const child = spawned.calls[0].child;
+        child.stdout.emit('data', 'Job [cluster-job-777] submitted.\n');
+
+        await handleStopPipeline(ctx, {
+            command: 'stopPipeline',
+            cancelRemoteJob: true,
+        });
+
+        expect(child.kill).toHaveBeenCalledWith('SIGINT');
+        expect(spawned.execCalls).toContainEqual(
+            expect.objectContaining({
+                args: [
+                    'dataproc',
+                    'jobs',
+                    'kill',
+                    'cluster-job-777',
+                    '--region=us-east1',
+                    '--project=cluster-proj',
+                    '--quiet',
+                ],
+            })
+        );
+        expect(postToWebview).toHaveBeenCalledWith({ command: 'pipelineStopped' });
     });
 });
 

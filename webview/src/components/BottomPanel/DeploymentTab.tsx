@@ -4,14 +4,15 @@
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
-import React from 'react';
-import { 
-  Play, 
-  Square, 
-  Sliders, 
-  Loader2 
+/* eslint-disable react-refresh/only-export-components */
+import React, { useState } from 'react';
+import {
+  Play,
+  Square,
+  Sliders,
+  Loader2,
 } from 'lucide-react';
-import { RunnerSettings } from './deployment/RunnerSettings';
+import { RunnerSettings, normalizeSparkRunner } from './deployment/RunnerSettings';
 import { AdvancedConfig } from './deployment/AdvancedConfig';
 import { RuntimeVariablesGrid } from './deployment/RuntimeVariablesGrid';
 import { ExecutionTerminal, type LogEntry } from './deployment/ExecutionTerminal';
@@ -21,23 +22,45 @@ import { useBottomPanel } from './BottomPanelContext';
 export type { LogEntry };
 
 /**
- * DeploymentTab Component
- * 
- * Purpose:
- * Renders the DEPLOYMENT tab in the bottom panel with a split layout:
- * - Left Panel (25%-30% width): Target environment configuration (DirectRunner, Dataflow, Serverless Spark),
- *   Dataflow machine options, worker scaling, and Runtime Values & Secrets manager.
- * - Right Panel (70%-75% width): Live Execution Sandbox streaming stdout/stderr logs from running pipelines
- *   with runner command preview, auto-scrolling terminal, copy/clear controls, and GCP Console deep links.
- * 
- * Architectural Decisions:
- * - Implements 25%/75% split matching the design specification.
- * - Captures child process output directly inside the webview instead of launching external VS Code terminals.
- * - Automatically detects GCP Dataflow Job IDs and Spark Batch IDs to persist in diagram JSON and display Cloud Console links.
- * - Adheres strictly to the 8pt grid system, Tailwind CSS tokens, and semantic dark theme colors.
- * - Adds secret masking (eye toggle) for sensitive runtime variable values.
+ * Props for the DeploymentTab component.
  */
 export type DeploymentTabProps = Record<string, never>;
+
+/**
+ * Builds the default command line preview string for the selected Spark target environment.
+ *
+ * @param runner - Selected runner identifier.
+ * @param jobConfig - Current job configuration object.
+ * @param effectiveProjectId - Resolved GCP Project ID.
+ * @param effectiveRegion - Resolved GCP region.
+ * @returns Multi-line shell command preview string.
+ */
+export function buildDefaultCommandPreview(
+  runner: string,
+  jobConfig: Record<string, unknown>,
+  effectiveProjectId: string,
+  effectiveRegion: string
+): string {
+  const normalized = normalizeSparkRunner(runner);
+  if (normalized === 'DataprocCluster') {
+    const clusterName =
+      typeof jobConfig.clusterName === 'string' && jobConfig.clusterName.trim()
+        ? jobConfig.clusterName.trim()
+        : '<cluster>';
+    return `# Submitting PySpark Job to Google Cloud Dataproc Cluster\nPROJECT_ID=${effectiveProjectId} REGION=${effectiveRegion} CLUSTER_NAME=${clusterName} ./run_dataproc_cluster.sh`;
+  }
+  if (normalized === 'ServerlessSpark') {
+    const depsBucket =
+      (typeof jobConfig.depsBucket === 'string' && jobConfig.depsBucket.trim()) ||
+      (typeof jobConfig.gcsStagingPath === 'string' && jobConfig.gcsStagingPath.trim()) ||
+      'gs://<bucket>';
+    return `# Submitting PySpark Batch to GCP Serverless for Apache Spark\nPROJECT_ID=${effectiveProjectId} REGION=${effectiveRegion} DEPS_BUCKET=${depsBucket} ./run_serverless_spark.sh`;
+  }
+  if (jobConfig.useSparkConnect) {
+    return `# Running PySpark Pipeline via Spark Connect (ManagedSparkSession)\nUSE_SPARK_CONNECT=true ./run_local.sh`;
+  }
+  return `# Running Local PySpark 4.x Pipeline (local[*])\n./run_local.sh`;
+}
 
 /**
  * Deployment panel rendering pipeline execution configuration controls, runtime variables, and the live log terminal.
@@ -52,7 +75,9 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
     pipelineConfig,
   } = useBottomPanel();
 
-  const jobConfig = jobConfigSlice.value ?? { runner: 'DirectRunner' };
+  const [cancelRemoteJob, setCancelRemoteJob] = useState<boolean>(true);
+
+  const jobConfig = jobConfigSlice.value ?? { runner: 'Local' };
   const setJobConfig = jobConfigSlice.set;
   const runtimeVariables = rvSlice.variables;
   const addVariable = rvSlice.addVariable;
@@ -62,6 +87,8 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
   const onRunNow = execution.run;
   const onStopPipeline = execution.stop;
   const subnetworks = jobConfigSlice.subnetworks;
+  const clusters = jobConfigSlice.clusters;
+  const sessionTemplates = jobConfigSlice.sessionTemplates;
   const needsRebuild = pipelineConfig.config.needsRebuild;
   const pipelineLogs = execution.logs;
   const pipelineStatus = execution.status;
@@ -69,6 +96,7 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
   const onClearLogs = execution.clear;
   const onOpenConsole = execution.openConsole;
   const projectId = jobConfigSlice.projectId ?? 'YOUR_PROJECT_ID';
+
   // Compute GCP Cloud Console link when jobId is available
   const effectiveProjectId = jobConfig.projectId || projectId || 'YOUR_PROJECT_ID';
   const effectiveRegion = jobConfig.region || 'us-central1';
@@ -79,12 +107,17 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
     effectiveProjectId
   );
 
+  const normalizedRunner = normalizeSparkRunner(jobConfig.runner);
+  const isRemoteRunner =
+    normalizedRunner === 'DataprocCluster' || normalizedRunner === 'ServerlessSpark';
+
   // Format displayed runner command preview
-  const defaultCommandPreview = jobConfig.runner === 'DirectRunner'
-    ? `# Using Python / Java Direct Runner (Local Machine)\npython src/pipeline.py --runner=DirectRunner`
-    : jobConfig.runner === 'Dataflow'
-      ? `# Submitting Apache Beam Flex Template Job to Google Cloud Dataflow\ngcloud dataflow flex-template run ... --region=${effectiveRegion}`
-      : `# Submitting Apache Beam Job to Serverless Spark (Dataproc)\ngcloud dataproc batches submit pyspark ...`;
+  const defaultCommandPreview = buildDefaultCommandPreview(
+    jobConfig.runner,
+    jobConfig,
+    effectiveProjectId,
+    effectiveRegion
+  );
   const displayedCommand = runnerCommand || defaultCommandPreview;
 
   // Compute status badge styling
@@ -153,6 +186,8 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
               jobConfig={jobConfig}
               setJobConfig={setJobConfig}
               subnetworks={subnetworks}
+              clusters={clusters}
+              sessionTemplates={sessionTemplates}
             />
 
             <RuntimeVariablesGrid
@@ -164,39 +199,56 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
             />
           </div>
 
-          {/* Action Buttons: Run Pipeline & Stop */}
-          <div className="pt-3 border-t border-slate-800/80 flex gap-2.5">
-            <button 
-              type="button"
-              onClick={onRunNow}
-              disabled={needsRebuild || pipelineStatus === 'running'}
-              className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-xs font-bold flex-1 cursor-pointer transition shadow-lg active:scale-[0.98] ${
-                needsRebuild || pipelineStatus === 'running'
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed shadow-none' 
-                  : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-emerald-950/40'
-              }`}
-            >
-              {pipelineStatus === 'running' ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>RUNNING...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>RUN PIPELINE</span>
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={onStopPipeline}
-              className="bg-[#881337] hover:bg-[#9f1239] active:bg-[#4c0519] text-rose-200 hover:text-white px-3 py-2.5 rounded-lg text-xs font-bold w-1/4 transition cursor-pointer flex items-center justify-center gap-1.5 border border-rose-700/60 shadow-lg shadow-rose-950/30 active:scale-[0.98]"
-              title="Kill running pipeline process"
-            >
-              <Square className="w-3 h-3 fill-current" />
-              <span>STOP</span>
-            </button>
+          {/* Action Buttons: Run Pipeline & Stop / Cancel Job */}
+          <div className="pt-3 border-t border-slate-800/80 flex flex-col gap-2">
+            {isRemoteRunner && (
+              <label
+                htmlFor="cancelRemoteDataprocJob"
+                className="flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer select-none"
+              >
+                <input
+                  id="cancelRemoteDataprocJob"
+                  type="checkbox"
+                  checked={cancelRemoteJob}
+                  onChange={(e) => setCancelRemoteJob(e.target.checked)}
+                  className="rounded border-slate-700 bg-[#0d1017] text-blue-500 focus:ring-0 cursor-pointer"
+                />
+                <span>Cancel remote Dataproc job on Stop</span>
+              </label>
+            )}
+            <div className="flex gap-2.5">
+              <button
+                type="button"
+                onClick={onRunNow}
+                disabled={needsRebuild || pipelineStatus === 'running'}
+                className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-xs font-bold flex-1 cursor-pointer transition shadow-lg active:scale-[0.98] ${
+                  needsRebuild || pipelineStatus === 'running'
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed shadow-none'
+                    : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-emerald-950/40'
+                }`}
+              >
+                {pipelineStatus === 'running' ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>RUNNING...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>RUN PIPELINE</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onStopPipeline?.({ cancelRemoteJob })}
+                className="bg-[#881337] hover:bg-[#9f1239] active:bg-[#4c0519] text-rose-200 hover:text-white px-3 py-2.5 rounded-lg text-xs font-bold w-1/4 transition cursor-pointer flex items-center justify-center gap-1.5 border border-rose-700/60 shadow-lg shadow-rose-950/30 active:scale-[0.98]"
+                title="Stop running pipeline process and optionally cancel remote Dataproc job"
+              >
+                <Square className="w-3 h-3 fill-current" />
+                <span>STOP</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

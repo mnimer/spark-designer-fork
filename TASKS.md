@@ -87,18 +87,18 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
-| [R1](#r1) | 🚀 Run/Deploy | Update `RunnerSettings.tsx` to offer 3 Target Environments: `Local` ("Local PySpark / Spark Connect"), `DataprocCluster` ("Dataproc Cluster (GCE/GKE)"), and `ServerlessSpark` ("GCP Serverless Spark (Batch)"). | ⬜ Not Started |
-| [R2](#r2) | 🚀 Run/Deploy | Update `AdvancedConfig.tsx` for `Local` mode: add `Use Spark Connect (ManagedSparkSession)` toggle and `Runtime Profile (Session Template)` selector. | ⬜ Not Started |
-| [R3](#r3) | 🚀 Run/Deploy | Update `AdvancedConfig.tsx` for `DataprocCluster` mode: add live **Cluster Name** selector, `Region`, `Subnetwork`, and `Custom JAR URIs (gs://)`. | ⬜ Not Started |
-| [R4](#r4) | 🚀 Run/Deploy | Update `AdvancedConfig.tsx` for `ServerlessSpark` mode: add `Runtime Version` (`4.0 (Spark 4.2)` default, `3.0 (Spark 4.0)`), `Tier` (`standard` default, `premium`), `Deps Bucket (gs://<bucket>)` (validated as root bucket URI), `Checkpoint Root URI`, `Subnetwork`, `Service Account`, and `Batch TTL (minutes)`. | ⬜ Not Started |
-| [R5](#r5) | 🚀 Run/Deploy | Update `src/execution/PipelineRunner.ts` to resolve `run_local.sh`, `run_dataproc_cluster.sh`, and `run_serverless_spark.sh` and export Spark runtime environment variables (`DEPS_BUCKET`, `CHECKPOINT_ROOT`, `CLUSTER_NAME`, `RUNTIME_VERSION`). | ⬜ Not Started |
-| [R6](#r6) | 🚀 Run/Deploy | Update `src/execution/jobIdDetector.ts` to parse both Serverless Batch IDs (`batches/<id>`) and Dataproc Cluster Job IDs (`Job [<id>] submitted` / `jobs/<id>`). | ⬜ Not Started |
-| [R7](#r7) | 🚀 Run/Deploy | Update `webview/src/components/BottomPanel/deployment/consoleUrl.ts` to build Cloud Console monitoring URLs for both Serverless Batches (`/dataproc/batches/<region>/<id>/monitoring`) and Cluster Jobs (`/dataproc/jobs/<id>`). | ⬜ Not Started |
-| [R8](#r8) | 🚀 Run/Deploy | Replace `src/tree/dataflowTree.ts` with `src/tree/sparkTree.ts` (`SparkTreeProvider`) featuring 3 root sections: `Pipelines` (`**/*.spark`), `Serverless Batches`, and `Dataproc Cluster Jobs`. | ⬜ Not Started |
-| [R9](#r9) | 🚀 Run/Deploy | Implement `fetchServerlessBatches()` in `sparkTree.ts`: executes `gcloud dataproc batches list --region=<REGION> --limit=100 --format=json` and groups batches into `Running`, `Cancelled`, and `Completed` sorted by `createTime` descending. | ⬜ Not Started |
-| [R10](#r10) | 🚀 Run/Deploy | Implement `fetchClusterJobs()` in `sparkTree.ts`: executes `gcloud dataproc jobs list --region=<REGION> --limit=100 --format=json` and groups jobs into `Running`, `Cancelled`, and `Completed` sorted by `status.stateStartTime` descending. | ⬜ Not Started |
-| [R11](#r11) | 🚀 Run/Deploy | Wire clicking any batch or cluster job node in `SparkTreeProvider` to `spark-pipeline-builder.openJobInConsole`. | ⬜ Not Started |
-| [R12](#r12) | 🚀 Run/Deploy | Add a `Stop / Cancel Job` action in `DeploymentTab.tsx` and `PipelineRunner.ts` that signals the local process group and optionally runs `gcloud dataproc batches cancel` or `gcloud dataproc jobs kill`. | ⬜ Not Started |
+| [R1](#r1) | 🚀 Run/Deploy | Update `RunnerSettings.tsx` to offer 3 Target Environments: `Local` ("Local PySpark / Spark Connect"), `DataprocCluster` ("Dataproc Cluster (GCE/GKE)"), and `ServerlessSpark` ("GCP Serverless Spark (Batch)"). | ✅ Done |
+| [R2](#r2) | 🚀 Run/Deploy | Update `AdvancedConfig.tsx` for `Local` mode: add `Use Spark Connect (ManagedSparkSession)` toggle and `Runtime Profile (Session Template)` selector. | ✅ Done |
+| [R3](#r3) | 🚀 Run/Deploy | Update `AdvancedConfig.tsx` for `DataprocCluster` mode: add live **Cluster Name** selector, `Region`, `Subnetwork`, and `Custom JAR URIs (gs://)`. | ✅ Done |
+| [R4](#r4) | 🚀 Run/Deploy | Update `AdvancedConfig.tsx` for `ServerlessSpark` mode: add `Runtime Version` (`4.0 (Spark 4.2)` default, `3.0 (Spark 4.0)`), `Tier` (`standard` default, `premium`), `Deps Bucket (gs://<bucket>)` (validated as root bucket URI), `Checkpoint Root URI`, `Subnetwork`, `Service Account`, and `Batch TTL (minutes)`. | ✅ Done |
+| [R5](#r5) | 🚀 Run/Deploy | Update `src/execution/PipelineRunner.ts` to resolve `run_local.sh`, `run_dataproc_cluster.sh`, and `run_serverless_spark.sh` and export Spark runtime environment variables (`DEPS_BUCKET`, `CHECKPOINT_ROOT`, `CLUSTER_NAME`, `RUNTIME_VERSION`). | ✅ Done |
+| [R6](#r6) | 🚀 Run/Deploy | Update `src/execution/jobIdDetector.ts` to parse both Serverless Batch IDs (`batches/<id>`) and Dataproc Cluster Job IDs (`Job [<id>] submitted` / `jobs/<id>`). | ✅ Done |
+| [R7](#r7) | 🚀 Run/Deploy | Update `webview/src/components/BottomPanel/deployment/consoleUrl.ts` to build Cloud Console monitoring URLs for both Serverless Batches (`/dataproc/batches/<region>/<id>/monitoring`) and Cluster Jobs (`/dataproc/jobs/<id>`). | ✅ Done |
+| [R8](#r8) | 🚀 Run/Deploy | Replace `src/tree/dataflowTree.ts` with `src/tree/sparkTree.ts` (`SparkTreeProvider`) featuring 3 root sections: `Pipelines` (`**/*.spark`), `Serverless Batches`, and `Dataproc Cluster Jobs`. | ✅ Done |
+| [R9](#r9) | 🚀 Run/Deploy | Implement `fetchServerlessBatches()` in `sparkTree.ts`: executes `gcloud dataproc batches list --region=<REGION> --limit=100 --format=json` and groups batches into `Running`, `Cancelled`, and `Completed` sorted by `createTime` descending. | ✅ Done |
+| [R10](#r10) | 🚀 Run/Deploy | Implement `fetchClusterJobs()` in `sparkTree.ts`: executes `gcloud dataproc jobs list --region=<REGION> --limit=100 --format=json` and groups jobs into `Running`, `Cancelled`, and `Completed` sorted by `status.stateStartTime` descending. | ✅ Done |
+| [R11](#r11) | 🚀 Run/Deploy | Wire clicking any batch or cluster job node in `SparkTreeProvider` to `spark-pipeline-builder.openJobInConsole`. | ✅ Done |
+| [R12](#r12) | 🚀 Run/Deploy | Add a `Stop / Cancel Job` action in `DeploymentTab.tsx` and `PipelineRunner.ts` that signals the local process group and optionally runs `gcloud dataproc batches cancel` or `gcloud dataproc jobs kill`. | ✅ Done |
 
 ### Phase 4 — Live GCP Asset Discovery (`D1`–`D6`)
 

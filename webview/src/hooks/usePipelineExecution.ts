@@ -23,7 +23,7 @@ import type { WebviewToHostMessage } from '../utils/protocol';
 export type { LogEntry, LogStream };
 
 /**
- * Valid execution states for an Apache Beam pipeline run.
+ * Valid execution states for an Apache Spark pipeline run.
  */
 export type PipelineStatus = 'idle' | 'running' | 'completed' | 'failed' | 'stopped';
 
@@ -54,6 +54,14 @@ export function appendLog(
 }
 
 /**
+ * Options for stopping a running pipeline.
+ */
+export interface StopPipelineOptions {
+  /** Whether to also cancel the active remote Dataproc batch or cluster job via gcloud. */
+  cancelRemoteJob?: boolean;
+}
+
+/**
  * Options for the `usePipelineExecution` hook.
  */
 export interface UsePipelineExecutionOptions<TConfig extends Record<string, unknown> = Record<string, unknown>> {
@@ -80,7 +88,7 @@ export interface UsePipelineExecutionResult {
   runnerCommand: string;
   setRunnerCommand: React.Dispatch<React.SetStateAction<string>>;
   handleRunNow: () => void;
-  handleStopPipeline: () => void;
+  handleStopPipeline: (options?: StopPipelineOptions) => void;
   handleClearLogs: () => void;
 }
 
@@ -142,11 +150,30 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
     });
   }, [post]);
 
-  // Outbound stop handler: posts stopPipeline command
-  const handleStopPipeline = useCallback(() => {
+  // Outbound stop handler: posts stopPipeline command including jobConfig and remote cancel option
+  const handleStopPipeline = useCallback((options?: StopPipelineOptions) => {
     console.log('[@usePipelineExecution] handleStopPipeline called');
+    const currentJobConfig = (jobConfigRef.current || {}) as Record<string, unknown>;
+    const runner = typeof currentJobConfig.runner === 'string' ? currentJobConfig.runner : 'Local';
+    const jobId = typeof currentJobConfig.jobId === 'string' ? currentJobConfig.jobId : undefined;
+    const region =
+      typeof currentJobConfig.region === 'string' && currentJobConfig.region
+        ? currentJobConfig.region
+        : 'us-central1';
+    const resolvedProjectId =
+      typeof currentJobConfig.projectId === 'string' && currentJobConfig.projectId
+        ? currentJobConfig.projectId
+        : projectIdRef.current;
+    const cancelRemoteJob = options?.cancelRemoteJob ?? true;
+
     post({
       command: 'stopPipeline',
+      jobConfig: jobConfigRef.current,
+      runner,
+      jobId,
+      projectId: resolvedProjectId,
+      region,
+      cancelRemoteJob,
     });
   }, [post]);
 
@@ -168,7 +195,7 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
         }
         const startEntry: LogEntry = {
           id: `start-${Date.now()}`,
-          text: `[${new Date().toLocaleTimeString()}] Pipeline execution initiated (${message.runner || 'DirectRunner'})...\n`,
+          text: `[${new Date().toLocaleTimeString()}] Pipeline execution initiated (${message.runner || 'Local'})...\n`,
           stream: 'stdout',
           timestamp: new Date().toLocaleTimeString(),
         };

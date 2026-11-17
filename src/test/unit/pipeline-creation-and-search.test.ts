@@ -25,7 +25,7 @@ import {
     getInitialPipelineContent,
     PIPELINE_SEARCH_EXCLUDE_DIRS,
     PIPELINE_SEARCH_EXCLUDE_PATTERN,
-    DataFlowTreeProvider,
+    SparkTreeProvider,
     SPARK_EDITOR_VIEW_TYPE
 } from '../../extension';
 
@@ -50,12 +50,12 @@ describe('Finding A8 — Starter Pipeline YAML Serialization', () => {
             edges: [],
             runtimeVariables: [],
             pipelineConfig: {
-                language: 'Python',
+                language: 'PySpark',
                 outputFolder: '',
                 needsRebuild: false
             },
             jobConfig: {
-                runner: 'DirectRunner',
+                runner: 'Local',
                 machineType: 'n1-standard-1',
                 minInstances: 1,
                 maxInstances: 10,
@@ -99,11 +99,11 @@ describe('Finding M17 — Activation Events and Workspace Search Exclusions', ()
         const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 
         expect(packageJson.activationEvents).not.toContain('*');
-        expect(packageJson.activationEvents).toContain('onCustomEditor:dataflow-pipeline-builder.beamEditor');
-        expect(packageJson.activationEvents).toContain('onView:dataflowExplorer');
+        expect(packageJson.activationEvents).toContain('onCustomEditor:spark-pipeline-builder.sparkEditor');
+        expect(packageJson.activationEvents).toContain('onView:sparkExplorer');
     });
 
-    it('PIPELINE_SEARCH_EXCLUDE_PATTERN excludes node_modules, .git, and build outputs without excluding .beam files (M17b)', () => {
+    it('PIPELINE_SEARCH_EXCLUDE_PATTERN excludes node_modules, .git, and build outputs without excluding .spark files (M17b)', () => {
         expect(PIPELINE_SEARCH_EXCLUDE_DIRS).toContain('node_modules');
         expect(PIPELINE_SEARCH_EXCLUDE_DIRS).toContain('.git');
         expect(PIPELINE_SEARCH_EXCLUDE_DIRS).toContain('.venv');
@@ -113,25 +113,25 @@ describe('Finding M17 — Activation Events and Workspace Search Exclusions', ()
         expect(PIPELINE_SEARCH_EXCLUDE_DIRS).toContain('build');
         expect(PIPELINE_SEARCH_EXCLUDE_DIRS).toContain('out');
 
-        // Must NOT exclude .beam files themselves
-        expect(PIPELINE_SEARCH_EXCLUDE_DIRS).not.toContain('*.beam');
-        expect(PIPELINE_SEARCH_EXCLUDE_DIRS).not.toContain('beam');
-        expect(PIPELINE_SEARCH_EXCLUDE_PATTERN).not.toContain('*.beam');
+        // Must NOT exclude .spark files themselves
+        expect(PIPELINE_SEARCH_EXCLUDE_DIRS).not.toContain('*.spark');
+        expect(PIPELINE_SEARCH_EXCLUDE_DIRS).not.toContain('spark');
+        expect(PIPELINE_SEARCH_EXCLUDE_PATTERN).not.toContain('*.spark');
 
         // Pattern must be a valid glob
         expect(PIPELINE_SEARCH_EXCLUDE_PATTERN).toContain('**/node_modules/**');
         expect(PIPELINE_SEARCH_EXCLUDE_PATTERN).toContain('**/.git/**');
     });
 
-    it('DataFlowTreeProvider passes PIPELINE_SEARCH_EXCLUDE_PATTERN to findFiles (M17b)', async () => {
-        const provider = new DataFlowTreeProvider();
+    it('SparkTreeProvider passes PIPELINE_SEARCH_EXCLUDE_PATTERN to findFiles (M17b)', async () => {
+        const provider = new SparkTreeProvider();
         provider.refresh();
 
         // Wait a microtask turn for scanPipelines async execution
         await new Promise((resolve) => setTimeout(resolve, 10));
 
         expect(mockFindFiles).toHaveBeenCalledWith(
-            '**/*.beam',
+            '**/*.spark',
             PIPELINE_SEARCH_EXCLUDE_PATTERN
         );
     });
@@ -225,14 +225,17 @@ describe('command wiring integrity', () => {
     it('never dispatches to an unregistered first-party command', () => {
         const registered = registeredCommands();
         const dispatched = new Set<string>();
-        const re = /executeCommand\(\s*'(dataflow-pipeline-builder\.[^']+)'/g;
+        const re = /executeCommand\(\s*'(spark-pipeline-builder\.[^']+)'/g;
         let m: RegExpExecArray | null;
         while ((m = re.exec(executableSource)) !== null) { dispatched.add(m[1]); }
+        // Also check item.command = { command: 'spark-pipeline-builder. ...' }
+        const cmdPropRe = /command:\s*'(spark-pipeline-builder\.[^']+)'/g;
+        while ((m = cmdPropRe.exec(executableSource)) !== null) { dispatched.add(m[1]); }
 
         // Guard against vacuity: a for-loop over an empty set passes trivially, so if the
         // regex ever stops matching (renamed prefix, reformatted call site) this test
         // would go green while checking nothing at all.
-        expect(dispatched.size, 'expected at least one first-party executeCommand call').toBeGreaterThan(0);
+        expect(dispatched.size, 'expected at least one first-party command reference').toBeGreaterThan(0);
 
         for (const id of dispatched) {
             expect(registered, `source dispatches to "${id}" but nothing registers it`).toContain(id);
@@ -245,7 +248,10 @@ describe('command wiring integrity', () => {
         const offenders = executableSource
             .split('\n')
             .map((line, i) => ({ line: line.trim(), n: i + 1 }))
-            .filter(({ line }) => line.includes('dataflow-pipeline-builder.openPipeline'));
+            .filter(({ line }) =>
+                line.includes('dataflow-pipeline-builder.openPipeline') ||
+                line.includes('spark-pipeline-builder.openPipeline')
+            );
 
         // Report line numbers rather than the 138KB source blob on failure.
         expect(offenders.map((o) => `line ${o.n}: ${o.line}`)).toEqual([]);

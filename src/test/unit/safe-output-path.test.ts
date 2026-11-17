@@ -102,7 +102,10 @@ describe('resolveSafeOutputPath - Path Traversal Containment', () => {
 
 describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
     it('accepts all expected runner script templates and execution scripts', () => {
-        // Direct basenames
+        // Direct basenames (Spark 4.x and legacy aliases)
+        expect(isAllowedExecutableScript('run_local.sh')).toBe(true);
+        expect(isAllowedExecutableScript('run_dataproc_cluster.sh')).toBe(true);
+        expect(isAllowedExecutableScript('run_serverless_spark.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_directrunner.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_dataflowrunner.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_dataflow.sh')).toBe(true);
@@ -110,6 +113,9 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
         expect(isAllowedExecutableScript('run_spark.sh')).toBe(true);
 
         // Full paths containing allowlisted basenames
+        expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_local.sh')).toBe(true);
+        expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_dataproc_cluster.sh')).toBe(true);
+        expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_serverless_spark.sh')).toBe(true);
         expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_directrunner.sh')).toBe(true);
         expect(isAllowedExecutableScript('src/run_dataflowrunner.sh')).toBe(true);
     });
@@ -124,6 +130,7 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
     });
 
     it('rejects non-.sh files even if they share similar runner names', () => {
+        expect(isAllowedExecutableScript('run_local.py')).toBe(false);
         expect(isAllowedExecutableScript('run_directrunner.py')).toBe(false);
         expect(isAllowedExecutableScript('run_directrunner.bat')).toBe(false);
         expect(isAllowedExecutableScript('run_directrunner.sh.exe')).toBe(false);
@@ -141,11 +148,14 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
     });
 
     it('verifies the set of allowlisted scripts contains expected entries', () => {
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_local.sh')).toBe(true);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataproc_cluster.sh')).toBe(true);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_serverless_spark.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_directrunner.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataflowrunner.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataflow.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sparkrunner.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_spark.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(5);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(8);
     });
 });

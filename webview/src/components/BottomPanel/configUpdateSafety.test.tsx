@@ -3,24 +3,9 @@
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
- * Bug: a pipeline whose .beam file recorded `language: Java` and `runner: Dataflow`
- * generated a Python project. The payload the webview sent had `language: Python` and
- * `runner: DirectRunner` while every other field (nodes, edges, staging path, subnetwork)
- * matched the file -- i.e. exactly the two dropdown-backed fields had reverted.
- *
- * Root cause: the child controls built a COMPLETE config object from their props snapshot
- * and passed it up:
- *
- *     setJobConfig({ ...jobConfig, runner: e.target.value })
- *     setPipelineConfig({ ...pipelineConfig, language: lang })
- *
- * Because the parent returns that object wholesale from the state updater, it REPLACES
- * state rather than merging. Any field changed after the snapshot those props came from is
- * silently reverted -- last write wins, using stale data.
- *
- * The fix is to pass updater functions so the merge always happens against the freshest
- * state. These tests pin that invariant structurally: the setter must receive a function,
- * and applying that function to a `prev` must preserve every field it does not target.
+ * Ensures child controls always pass an updater function `(prev) => ({ ...prev, ... })`
+ * to `setJobConfig` and `setPipelineConfig` so sibling fields modified after the child's
+ * render snapshot are never overwritten.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -33,11 +18,11 @@ import { renderWithBottomPanel } from './testUtils';
 
 describe('config updates never clobber sibling fields (regression)', () => {
   const jobConfig = {
-    runner: 'Dataflow',
-    machineType: 'n1-standard-4',
-    minInstances: 2,
-    maxInstances: 8,
-    gcsStagingPath: 'gs://my-bucket/dataflow-staging',
+    runner: 'ServerlessSpark',
+    runtimeVersion: '4.0',
+    tier: 'standard',
+    depsBucket: 'gs://my-bucket',
+    gcsStagingPath: 'gs://my-bucket',
     network: '',
     subnetwork: 'regions/us-central1/subnetworks/default',
   };
@@ -57,8 +42,8 @@ describe('config updates never clobber sibling fields (regression)', () => {
     const setJobConfig = vi.fn();
     renderWithBottomPanel(<DeploymentTab />, { ...deploymentProps, setJobConfig });
 
-    const runner = screen.getByDisplayValue('Dataflow');
-    fireEvent.change(runner, { target: { value: 'DirectRunner' } });
+    const runner = screen.getByLabelText(/Target Environment/i);
+    fireEvent.change(runner, { target: { value: 'Local' } });
 
     expect(setJobConfig).toHaveBeenCalledTimes(1);
     const arg = setJobConfig.mock.calls[0][0];
@@ -72,29 +57,27 @@ describe('config updates never clobber sibling fields (regression)', () => {
     const setJobConfig = vi.fn();
     renderWithBottomPanel(<DeploymentTab />, { ...deploymentProps, setJobConfig });
 
-    fireEvent.change(screen.getByDisplayValue('Dataflow'), {
-      target: { value: 'DirectRunner' },
+    fireEvent.change(screen.getByLabelText(/Target Environment/i), {
+      target: { value: 'DataprocCluster' },
     });
 
     const updater = setJobConfig.mock.calls[0][0] as (p: any) => any;
 
-    // Apply against a "fresh" state that differs from the props the child rendered with.
-    // This is the scenario that used to lose data: the child's snapshot is stale.
-    const fresher = { ...jobConfig, gcsStagingPath: 'gs://changed-after-render', machineType: 'n2-standard-16' };
+    const fresher = {
+      ...jobConfig,
+      depsBucket: 'gs://changed-after-render',
+      runtimeVersion: '3.0',
+    };
     const next = updater(fresher);
 
-    expect(next.runner).toBe('DirectRunner');
-    // The whole point: fields the user did not touch must come from `fresher`, not from
-    // the stale props the child captured.
-    expect(next.gcsStagingPath).toBe('gs://changed-after-render');
-    expect(next.machineType).toBe('n2-standard-16');
+    expect(next.runner).toBe('DataprocCluster');
+    expect(next.depsBucket).toBe('gs://changed-after-render');
+    expect(next.runtimeVersion).toBe('3.0');
     expect(next.subnetwork).toBe(jobConfig.subnetwork);
   });
 
   it('outputFolder change sends an updater that preserves the rest of pipelineConfig', () => {
     const setPipelineConfig = vi.fn();
-    // SourceCodeTab owns the Target Folder input; BottomPanelContext adapts setOutputFolder
-    // onto setPipelineConfig via pipelineConfigReducer, so assert the adapter contract here.
     renderWithBottomPanel(
       <SourceCodeTab />,
       {

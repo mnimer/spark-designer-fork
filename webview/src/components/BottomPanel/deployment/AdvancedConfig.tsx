@@ -1,17 +1,19 @@
 /**
- * @fileoverview Advanced job and Structured Streaming defaults configuration for pipeline runners.
+ * @fileoverview Advanced job and Structured Streaming defaults configuration for Spark pipeline runners.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
 import React from 'react';
 import { InfoTooltip } from '../../InfoTooltip';
+import { normalizeSparkRunner } from './RunnerSettings';
 import type {
   SparkPipelineStreamingDefaults,
   SparkStreamingTriggerType,
 } from '../../../utils/sharedTypes';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-refresh/only-export-components */
 
 /**
  * Option descriptor for GCP subnetwork selections.
@@ -24,14 +26,42 @@ export interface SubnetworkOption {
 }
 
 /**
+ * Option descriptor for discovered Dataproc clusters.
+ */
+export interface DataprocClusterOption {
+  name: string;
+  status?: string;
+  region?: string;
+}
+
+/**
+ * Option descriptor for Spark Connect session templates.
+ */
+export type SessionTemplateOption =
+  | string
+  | {
+      name: string;
+      value?: string;
+      description?: string;
+    };
+
+/**
  * Structure of job configuration fields used in advanced runner and streaming settings.
  */
 export interface AdvancedJobConfig extends SparkPipelineStreamingDefaults {
   runner: string;
-  machineType?: string;
-  minInstances?: number;
-  maxInstances?: number;
+  useSparkConnect?: boolean;
+  sessionTemplate?: string;
+  clusterName?: string;
+  customJarUris?: string;
+  sparkJars?: string;
+  runtimeVersion?: '4.0' | '3.0' | string;
+  tier?: 'standard' | 'premium' | string;
+  serverlessTier?: 'standard' | 'premium' | string;
+  depsBucket?: string;
   gcsStagingPath?: string;
+  serviceAccount?: string;
+  batchTtlMinutes?: number | string;
   network?: string;
   subnetwork?: string;
   jobId?: string;
@@ -50,6 +80,10 @@ export interface AdvancedConfigProps {
   setJobConfig: (update: React.SetStateAction<any>) => void;
   /** List of selectable VPC subnetworks. */
   subnetworks: SubnetworkOption[];
+  /** Optional list of discovered Dataproc clusters for DataprocCluster mode. */
+  clusters?: DataprocClusterOption[];
+  /** Optional list of discovered Spark Connect session templates for Local mode. */
+  sessionTemplates?: SessionTemplateOption[];
 }
 
 const STREAMING_TRIGGER_OPTIONS: Array<{ value: SparkStreamingTriggerType; label: string }> = [
@@ -59,10 +93,51 @@ const STREAMING_TRIGGER_OPTIONS: Array<{ value: SparkStreamingTriggerType; label
   { value: 'continuous', label: 'Continuous (Low Latency)' },
 ];
 
+const COMMON_GCP_REGIONS = [
+  'us-central1',
+  'us-east1',
+  'us-east4',
+  'us-west1',
+  'europe-west1',
+  'europe-west4',
+  'asia-east1',
+  'asia-northeast1',
+];
+
+/**
+ * Validates that a Serverless Spark `--deps-bucket` value is a root GCS bucket URI (`gs://<bucket>`).
+ *
+ * Returns a human-readable warning string when invalid (such as missing `gs://` scheme or
+ * containing object path segments like `gs://my-bucket/subfolder`), or `null` when valid or empty.
+ *
+ * @param value - Raw depsBucket input string.
+ * @returns Validation warning message, or null if valid.
+ */
+export function validateDepsBucketUri(value?: string): string | null {
+  if (!value || !value.trim()) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('gs://')) {
+    return 'Deps Bucket must start with gs:// (for example gs://my-spark-deps-bucket).';
+  }
+  const withoutScheme = trimmed.slice('gs://'.length).replace(/\/+$/, '');
+  if (!withoutScheme) {
+    return 'Deps Bucket must specify a root bucket name (gs://<bucket>).';
+  }
+  if (withoutScheme.includes('/')) {
+    return 'Deps Bucket must be a root bucket URI (gs://<bucket>) without object path segments.';
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(withoutScheme)) {
+    return 'Deps Bucket contains invalid GCS bucket characters.';
+  }
+  return null;
+}
+
 /**
  * Returns true when the selected Spark trigger strategy requires an interval string.
  *
- * @param triggerType Selected Spark streaming trigger type.
+ * @param triggerType - Selected Spark streaming trigger type.
  * @returns True if `triggerType` uses a time interval.
  */
 function triggerUsesInterval(triggerType: SparkStreamingTriggerType): boolean {
@@ -70,16 +145,21 @@ function triggerUsesInterval(triggerType: SparkStreamingTriggerType): boolean {
 }
 
 /**
- * Renders contextual runner options and pipeline-level Structured Streaming defaults.
+ * Renders contextual runner options (`Local`, `DataprocCluster`, `ServerlessSpark`) and
+ * pipeline-level Structured Streaming defaults.
  *
- * @param props Current job configuration, state updater, and discovered subnetworks.
+ * @param props - Current job configuration, state updater, and discovered GCP assets.
  * @returns The rendered advanced runner and streaming configuration controls.
  */
 export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
   jobConfig,
   setJobConfig,
   subnetworks,
+  clusters = [],
+  sessionTemplates = [],
 }) => {
+  const effectiveRunner = normalizeSparkRunner(jobConfig.runner);
+
   const effectiveTriggerType: SparkStreamingTriggerType =
     jobConfig.defaultTriggerType === 'availableNow' ||
     jobConfig.defaultTriggerType === 'once' ||
@@ -90,24 +170,96 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
   const checkpointRootValue = jobConfig.checkpointRoot ?? '';
   const triggerIntervalValue = jobConfig.defaultTriggerInterval ?? '10 seconds';
 
-  const handleMachineTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  // Local mode values (R2)
+  const useSparkConnectValue = Boolean(jobConfig.useSparkConnect);
+  const sessionTemplateValue = jobConfig.sessionTemplate ?? '';
+
+  // DataprocCluster mode values (R3)
+  const clusterNameValue = jobConfig.clusterName ?? '';
+  const regionValue = jobConfig.region || 'us-central1';
+  const customJarUrisValue = jobConfig.customJarUris ?? jobConfig.sparkJars ?? '';
+
+  // ServerlessSpark mode values (R4)
+  const runtimeVersionValue = jobConfig.runtimeVersion === '3.0' ? '3.0' : '4.0';
+  const tierValue =
+    jobConfig.tier === 'premium' || jobConfig.serverlessTier === 'premium'
+      ? 'premium'
+      : 'standard';
+  const depsBucketValue = jobConfig.depsBucket ?? jobConfig.gcsStagingPath ?? '';
+  const depsBucketWarning = validateDepsBucketUri(depsBucketValue);
+  const serviceAccountValue = jobConfig.serviceAccount ?? '';
+  const batchTtlMinutesValue = jobConfig.batchTtlMinutes ?? '';
+
+  const handleUseSparkConnectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    setJobConfig((prev: any) => ({ ...prev, useSparkConnect: checked }));
+  };
+
+  const handleSessionTemplateChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, machineType: nextValue }));
+    setJobConfig((prev: any) => ({ ...prev, sessionTemplate: nextValue }));
   };
 
-  const handleMinWorkersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const nextValue = parseInt(e.target.value, 10) || 1;
-    setJobConfig((prev: any) => ({ ...prev, minInstances: nextValue }));
-  };
-
-  const handleMaxWorkersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const nextValue = parseInt(e.target.value, 10) || 1;
-    setJobConfig((prev: any) => ({ ...prev, maxInstances: nextValue }));
-  };
-
-  const handleStagingPathChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleClusterNameChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, gcsStagingPath: nextValue }));
+    setJobConfig((prev: any) => ({ ...prev, clusterName: nextValue }));
+  };
+
+  const handleRegionChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const nextValue = e.target.value;
+    setJobConfig((prev: any) => ({ ...prev, region: nextValue }));
+  };
+
+  const handleCustomJarUrisChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = e.target.value;
+    setJobConfig((prev: any) => ({
+      ...prev,
+      customJarUris: nextValue,
+      sparkJars: nextValue,
+    }));
+  };
+
+  const handleRuntimeVersionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextValue = e.target.value;
+    setJobConfig((prev: any) => ({ ...prev, runtimeVersion: nextValue }));
+  };
+
+  const handleTierChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextValue = e.target.value === 'premium' ? 'premium' : 'standard';
+    setJobConfig((prev: any) => ({
+      ...prev,
+      tier: nextValue,
+      serverlessTier: nextValue,
+    }));
+  };
+
+  const handleDepsBucketChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = e.target.value;
+    setJobConfig((prev: any) => ({
+      ...prev,
+      depsBucket: nextValue,
+      gcsStagingPath: nextValue,
+    }));
+  };
+
+  const handleServiceAccountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = e.target.value;
+    setJobConfig((prev: any) => ({ ...prev, serviceAccount: nextValue }));
+  };
+
+  const handleBatchTtlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === '') {
+      setJobConfig((prev: any) => ({ ...prev, batchTtlMinutes: '' }));
+      return;
+    }
+    const parsed = parseInt(raw, 10);
+    const nextValue = !Number.isNaN(parsed) && String(parsed) === raw.trim() ? parsed : raw;
+    setJobConfig((prev: any) => ({ ...prev, batchTtlMinutes: nextValue }));
   };
 
   const handleSubnetworkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -138,102 +290,141 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
 
   return (
     <>
-      {/* Contextual Options: Google Cloud Dataflow */}
-      {jobConfig.runner === 'Dataflow' && (
-        <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]">
+      {/* Contextual Options: Local PySpark / Spark Connect (R2) */}
+      {effectiveRunner === 'Local' && (
+        <div
+          data-testid="local-runner-options"
+          className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]"
+        >
           <div className="text-xs font-bold uppercase tracking-wider text-blue-400">
-            Dataflow Options
+            Local &amp; Spark Connect Options
           </div>
+
+          <label
+            htmlFor="advancedUseSparkConnect"
+            className="flex items-center gap-2 text-xs text-[var(--vscode-text-primary)] cursor-pointer select-none"
+          >
+            <input
+              id="advancedUseSparkConnect"
+              name="useSparkConnect"
+              type="checkbox"
+              checked={useSparkConnectValue}
+              onChange={handleUseSparkConnectChange}
+              className="rounded border-[var(--vscode-border)] bg-[var(--vscode-input-bg)] text-blue-500 focus:ring-0 cursor-pointer"
+            />
+            <span className="font-semibold">Use Spark Connect (ManagedSparkSession)</span>
+            <InfoTooltip text="When enabled, initializes DataprocSparkSession instead of a local JVM SparkSession." />
+          </label>
 
           <div className="flex flex-col gap-1">
             <label
-              htmlFor="advancedMachineType"
+              htmlFor="advancedSessionTemplate"
               className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
             >
-              <span>Machine Type</span>
-              <InfoTooltip text="Compute Engine machine type used for worker instances." />
-            </label>
-            <select
-              id="advancedMachineType"
-              value={jobConfig.machineType || 'n1-standard-1'}
-              onChange={handleMachineTypeChange}
-              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
-            >
-              <option value="n1-standard-1">n1-standard-1 (1 vCPU, 3.75 GB)</option>
-              <option value="n1-standard-2">n1-standard-2 (2 vCPU, 7.5 GB)</option>
-              <option value="n1-standard-4">n1-standard-4 (4 vCPU, 15 GB)</option>
-              <option value="n2-standard-2">n2-standard-2 (2 vCPU, 8 GB)</option>
-              <option value="n2-standard-4">n2-standard-4 (4 vCPU, 16 GB)</option>
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex flex-col gap-1">
-              <label
-                htmlFor="advancedMinWorkers"
-                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
-              >
-                <span>Min Workers</span>
-                <InfoTooltip text="Minimum worker count allocated when the job starts." />
-              </label>
-              <input
-                id="advancedMinWorkers"
-                type="number"
-                min={1}
-                max={999}
-                value={jobConfig.minInstances ?? 1}
-                onChange={handleMinWorkersChange}
-                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)] w-full"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label
-                htmlFor="advancedMaxWorkers"
-                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
-              >
-                <span>Max Workers</span>
-                <InfoTooltip text="Maximum autoscaling worker ceiling." />
-              </label>
-              <input
-                id="advancedMaxWorkers"
-                type="number"
-                min={1}
-                max={999}
-                value={jobConfig.maxInstances ?? 10}
-                onChange={handleMaxWorkersChange}
-                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)] w-full"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label
-              htmlFor="advancedStagingPath"
-              className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
-            >
-              <span>GCS Staging Path</span>
-              <InfoTooltip text="Cloud Storage URI used for temporary staging files." />
+              <span>Runtime Profile (Session Template)</span>
+              <InfoTooltip text="Optional Dataproc template name or resource URI used when connecting remotely." />
             </label>
             <input
-              id="advancedStagingPath"
+              id="advancedSessionTemplate"
+              name="sessionTemplate"
               type="text"
-              value={jobConfig.gcsStagingPath || ''}
-              onChange={handleStagingPathChange}
-              placeholder="gs://<bucket>/staging"
+              list="advancedSessionTemplatesList"
+              value={sessionTemplateValue}
+              onChange={handleSessionTemplateChange}
+              placeholder="projects/<project>/locations/<region>/sessionTemplates/<name>"
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
             />
+            <datalist id="advancedSessionTemplatesList">
+              {sessionTemplates.map((tpl, idx) => {
+                const value = typeof tpl === 'string' ? tpl : tpl.value || tpl.name;
+                const label = typeof tpl === 'string' ? tpl : tpl.name;
+                return (
+                  <option key={idx} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
+            </datalist>
+          </div>
+        </div>
+      )}
+
+      {/* Contextual Options: Dataproc Cluster (GCE/GKE) (R3) */}
+      {effectiveRunner === 'DataprocCluster' && (
+        <div
+          data-testid="dataproc-cluster-options"
+          className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]"
+        >
+          <div className="text-xs font-bold uppercase tracking-wider text-cyan-400">
+            Dataproc Cluster Options
           </div>
 
           <div className="flex flex-col gap-1">
             <label
-              htmlFor="advancedDataflowSubnetwork"
+              htmlFor="advancedClusterName"
+              className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+            >
+              <span>Cluster Name</span>
+              <InfoTooltip text="Target RUNNING Dataproc GCE or GKE target in the selected location." />
+            </label>
+            <input
+              id="advancedClusterName"
+              name="clusterName"
+              type="text"
+              list="advancedDataprocClustersList"
+              value={clusterNameValue}
+              onChange={handleClusterNameChange}
+              placeholder="my-spark-cluster"
+              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
+            />
+            <datalist id="advancedDataprocClustersList">
+              {clusters.map((cluster, idx) => (
+                <option key={idx} value={cluster.name}>
+                  {cluster.name}
+                  {cluster.status ? ` (${cluster.status})` : ''}
+                </option>
+              ))}
+            </datalist>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="advancedClusterRegion"
+              className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+            >
+              <span>Region</span>
+              <InfoTooltip text="GCP location hosting the target Dataproc workload (defaults to us-central1)." />
+            </label>
+            <input
+              id="advancedClusterRegion"
+              name="region"
+              type="text"
+              list="advancedClusterRegionsList"
+              value={regionValue}
+              onChange={handleRegionChange}
+              placeholder="us-central1"
+              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
+            />
+            <datalist id="advancedClusterRegionsList">
+              {COMMON_GCP_REGIONS.map((reg) => (
+                <option key={reg} value={reg}>
+                  {reg}
+                </option>
+              ))}
+            </datalist>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="advancedClusterSubnetwork"
               className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
             >
               <span>Subnetwork</span>
-              <InfoTooltip text="VPC subnetwork attached to worker nodes." />
+              <InfoTooltip text="VPC network path used by worker nodes." />
             </label>
             <select
-              id="advancedDataflowSubnetwork"
+              id="advancedClusterSubnetwork"
+              name="subnetwork"
               value={jobConfig.subnetwork || ''}
               onChange={handleSubnetworkChange}
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
@@ -246,25 +437,124 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               ))}
             </select>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="advancedCustomJarUris"
+              className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+            >
+              <span>Custom JAR URIs (gs://)</span>
+              <InfoTooltip text="Optional comma-separated Cloud Storage archive paths passed via --jars." />
+            </label>
+            <input
+              id="advancedCustomJarUris"
+              name="customJarUris"
+              type="text"
+              value={customJarUrisValue}
+              onChange={handleCustomJarUrisChange}
+              placeholder="gs://spark-lib/spanner/spark-4.0-spanner-1.5.0.jar"
+              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
+            />
+          </div>
         </div>
       )}
 
-      {/* Contextual Options: Serverless Spark */}
-      {(jobConfig.runner === 'Spark' || jobConfig.runner === 'ServerlessSpark') && (
-        <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]">
+      {/* Contextual Options: GCP Serverless Spark (Batch) (R4) */}
+      {effectiveRunner === 'ServerlessSpark' && (
+        <div
+          data-testid="serverless-spark-options"
+          className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]"
+        >
           <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-            Spark Options
+            Serverless Spark Options
           </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="advancedRuntimeVersion"
+                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+              >
+                <span>Runtime Version</span>
+                <InfoTooltip text="Serverless for Apache Spark image release. 4.0 provides Spark 4.2, Python 3.13, and Java 25." />
+              </label>
+              <select
+                id="advancedRuntimeVersion"
+                name="runtimeVersion"
+                value={runtimeVersionValue}
+                onChange={handleRuntimeVersionChange}
+                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
+              >
+                <option value="4.0">4.0 (Spark 4.2)</option>
+                <option value="3.0">3.0 (Spark 4.0)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="advancedServerlessTier"
+                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+              >
+                <span>Tier</span>
+                <InfoTooltip text="Serverless compute level. Defaults to standard." />
+              </label>
+              <select
+                id="advancedServerlessTier"
+                name="tier"
+                value={tierValue}
+                onChange={handleTierChange}
+                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
+              >
+                <option value="standard">standard</option>
+                <option value="premium">premium</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="advancedDepsBucket"
+              className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+            >
+              <span>Deps Bucket (gs://&lt;bucket&gt;)</span>
+              <InfoTooltip text="Root Cloud Storage URI used for staging dependencies (--deps-bucket=gs://<bucket>)." />
+            </label>
+            <input
+              id="advancedDepsBucket"
+              name="depsBucket"
+              type="text"
+              value={depsBucketValue}
+              onChange={handleDepsBucketChange}
+              placeholder="gs://<bucket>"
+              aria-invalid={Boolean(depsBucketWarning)}
+              className={`bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border text-xs font-mono focus:outline-none ${
+                depsBucketWarning
+                  ? 'border-amber-500 focus:border-amber-400'
+                  : 'border-[var(--vscode-border)] focus:border-[var(--vscode-highlight)]'
+              }`}
+            />
+            {depsBucketWarning && (
+              <span
+                role="alert"
+                data-testid="deps-bucket-warning"
+                className="text-[11px] text-amber-400 leading-snug"
+              >
+                {depsBucketWarning}
+              </span>
+            )}
+          </div>
+
           <div className="flex flex-col gap-1">
             <label
               htmlFor="advancedSparkSubnetwork"
               className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
             >
               <span>Subnetwork</span>
-              <InfoTooltip text="VPC subnetwork used for Serverless Spark executor networking." />
+              <InfoTooltip text="VPC network path used for Serverless Spark executor networking (requires Private Google Access)." />
             </label>
             <select
               id="advancedSparkSubnetwork"
+              name="subnetwork"
               value={jobConfig.subnetwork || ''}
               onChange={handleSubnetworkChange}
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
@@ -277,10 +567,52 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               ))}
             </select>
           </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="advancedServiceAccount"
+                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+              >
+                <span>Service Account</span>
+                <InfoTooltip text="Optional custom IAM workload identity email for Serverless Spark execution." />
+              </label>
+              <input
+                id="advancedServiceAccount"
+                name="serviceAccount"
+                type="text"
+                value={serviceAccountValue}
+                onChange={handleServiceAccountChange}
+                placeholder="spark-sa@project.iam.gserviceaccount.com"
+                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)] w-full"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="advancedBatchTtlMinutes"
+                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+              >
+                <span>Batch TTL (minutes)</span>
+                <InfoTooltip text="Maximum batch lifetime (--ttl). Serverless Spark defaults to 240m (4h)." />
+              </label>
+              <input
+                id="advancedBatchTtlMinutes"
+                name="batchTtlMinutes"
+                type="number"
+                min={10}
+                max={20160}
+                value={batchTtlMinutesValue}
+                onChange={handleBatchTtlChange}
+                placeholder="240"
+                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)] w-full"
+              />
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Pipeline-Level Structured Streaming Defaults (A9) */}
+      {/* Pipeline-Level Structured Streaming Defaults (A9 & R4 Checkpoint Root URI) */}
       <div
         data-testid="pipeline-streaming-defaults"
         className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]"

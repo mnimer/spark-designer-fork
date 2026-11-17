@@ -139,6 +139,20 @@ function App() {
   // Job and pipeline configuration state
   const [jobConfig, setJobConfig] = useState<{
     runner: string;
+    useSparkConnect?: boolean;
+    sessionTemplate?: string;
+    clusterName?: string;
+    customJarUris?: string;
+    sparkJars?: string;
+    runtimeVersion?: string;
+    tier?: string;
+    serverlessTier?: string;
+    depsBucket?: string;
+    serviceAccount?: string;
+    batchTtlMinutes?: number | string;
+    checkpointRoot?: string;
+    defaultTriggerType?: string;
+    defaultTriggerInterval?: string;
     machineType?: string;
     minInstances?: number;
     maxInstances?: number;
@@ -149,7 +163,19 @@ function App() {
     region?: string;
     projectId?: string;
   }>({
-    runner: 'DirectRunner',
+    runner: 'Local',
+    useSparkConnect: false,
+    sessionTemplate: '',
+    clusterName: '',
+    customJarUris: '',
+    sparkJars: '',
+    runtimeVersion: '4.0',
+    tier: 'standard',
+    serverlessTier: 'standard',
+    depsBucket: '',
+    serviceAccount: '',
+    batchTtlMinutes: '',
+    checkpointRoot: '',
     machineType: 'n1-standard-1',
     minInstances: 1,
     maxInstances: 10,
@@ -367,10 +393,26 @@ function App() {
         // child's render cannot clobber sibling fields.
         const config = typeof update === 'function' ? (update as (p: any) => any)(prev) : update;
         const configChanged =
+          prev.runner !== config.runner ||
+          prev.useSparkConnect !== config.useSparkConnect ||
+          prev.sessionTemplate !== config.sessionTemplate ||
+          prev.clusterName !== config.clusterName ||
+          prev.region !== config.region ||
+          prev.customJarUris !== config.customJarUris ||
+          prev.sparkJars !== config.sparkJars ||
+          prev.runtimeVersion !== config.runtimeVersion ||
+          prev.tier !== config.tier ||
+          prev.serverlessTier !== config.serverlessTier ||
+          prev.depsBucket !== config.depsBucket ||
+          prev.gcsStagingPath !== config.gcsStagingPath ||
+          prev.checkpointRoot !== config.checkpointRoot ||
+          prev.defaultTriggerType !== config.defaultTriggerType ||
+          prev.defaultTriggerInterval !== config.defaultTriggerInterval ||
+          prev.serviceAccount !== config.serviceAccount ||
+          prev.batchTtlMinutes !== config.batchTtlMinutes ||
           prev.machineType !== config.machineType ||
           prev.minInstances !== config.minInstances ||
           prev.maxInstances !== config.maxInstances ||
-          prev.gcsStagingPath !== config.gcsStagingPath ||
           prev.network !== config.network ||
           prev.subnetwork !== config.subnetwork;
 
