@@ -3,7 +3,7 @@
 ## Project Overview & Architecture
 
 - **Primary Goal**: Build a visual drag-and-drop VS Code extension for designing Apache Spark 4.x (PySpark DataFrame, Catalyst SQL, and Structured Streaming) pipelines targeting Local PySpark / Spark Connect, Dataproc Clusters, and GCP Serverless Spark.
-- **Task Plan**: `TASKS.md` is the single source of truth for phases and task status (`S0`–`S11`, `A1`–`A14`, `G1`–`G12`, `R1`–`R12`, `D1`–`D6`, `SRC1`–`SRC38`, `SNK1`–`SNK37`, `OP1`–`OP29`, `T1`–`T10`, `I1`–`I10`, `DOC1`–`DOC6`). Update only the `Status` cell in the Task Index table.
+- **Task Plan**: `TASKS.md` is the single source of truth for phases and task status  Update only the `Status` cell in the Task Index table.
 - **Agent Customizations Layout**: Store project-wide instructions in root `AGENTS.md` (not `GEMINI.md`). Store all workspace rules, skills, and workflows under `.agents/` (`.agents/rules/`, `.agents/skills/`, `.agents/workflows/`), never under `.gemini/`.
 - **Directory Layout**:
   - `src/`: VS Code Extension Host (Node.js / CommonJS, `tsconfig.json`).
@@ -15,7 +15,7 @@
 
 ## Model Selection Rules
 
-- **Valid Model**: Use `gemini-3.7-flash` on Vertex AI with `location: 'global'`.
+- **Valid Model**: Use `gemini-3.8-flash` on Vertex AI with `location: 'global'`.
 - **Forbidden Models**: Never revert to or map model names to `gemini-2.5*` or Gemini 1.x/2.x, and never use regional Vertex AI endpoints (`us-central1` returns 404 for `gemini-3.7-flash`).
 
 ## Hard Codebase & Worktree Invariants
@@ -44,7 +44,8 @@
    - Strictly follow the 8pt spacing grid (`p-2`, `p-3`, `p-4`, `gap-2`, `gap-4`) and `var(--vscode-*)` theme tokens.
    - Nested React components accept props down and emit events up via `onChange`. Include `<InfoTooltip text="..." />` on property fields.
    - Because `<InfoTooltip>` renders `<span role="tooltip" aria-label="...">` inside `<label>`, pass `{ selector: 'input' }` / `{ selector: 'select' }` / `{ selector: 'textarea' }` to `getByLabelText(...)` (or use `getByRole`) in React Testing Library tests so label queries never collide with tooltip text.
-   - Reuse `StorageBackendFields` (`webview/src/components/common/StorageBackendFields.tsx`) across all File Format sources and sinks, and `StreamingSinkSettingsField` across streaming sinks.
+   - Reuse `StorageBackendFields` (`webview/src/components/common/StorageBackendFields.tsx`) across all File Format sources and sinks.
+   - `PropertyForm.tsx` automatically renders `<NodeDocsCard />`, `<StepExecutionSettingsField />` (for `STEP` nodes), and `<StreamingSinkSettingsField />` (for streaming `SINK` nodes) above the lazy form. Never render those three wrapper cards inside individual Source, Sink, or Step panels, and always render `<SystemInstructionsField />` at the bottom of each panel.
    - In generated code, do not add undocumented fallbacks. Verify official documentation or fail fast.
 7. **Standalone Git Search & Dual-Toolchain Split (`root` vs. `webview/`)**:
    - This repository lives outside CitC and Cog, so `cs --corpus=local` fails immediately. Use `git grep` and `git ls-files` instead.
@@ -56,6 +57,7 @@
    - Register every executable `.sh` runner script basename in `ALLOWED_EXECUTABLE_SCRIPTS` (`src/security/scriptGuard.ts`) or `handleRunPipeline` refuses execution.
 9. **Codegen Skill Library & Runner Template Invariants (`src/test/unit/codegen/codegen-skills-invariants.test.ts`)**:
    - Extend existing `resources/codegen-skills/io-<connector>/SKILL.md` files for matching Sources and Sinks (one `io-*` skill per connector and zero duplicate `sparkTransform` owners). Restrict `{{...}}` placeholders to `MODEL_FACING_PLACEHOLDERS` and `{{spark_version}}`.
+   - Keep `src/codegen/codegenConfig.ts` (`STREAMING_SOURCE_TRANSFORMS`, `STREAMING_STEP_TRANSFORMS`, `PYTHON_DATASOURCE_TRANSFORMS`), `src/shared/sparkNodeCapabilities.ts`, and `src/spark/versionMatrix.ts` synchronized whenever catalog transforms change.
    - Keep runner templates byte-identical in `resources/codegen-skills/runner-*/templates/python/` and `resources/templates/pyspark/`, and preserve the test-pinned `## Credential Handling Rules` strings in `core-pyspark/SKILL.md`.
    - Load `.agents/skills/spark-connector-authoring/SKILL.md` before authoring or editing codegen skills.
 

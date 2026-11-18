@@ -21,9 +21,10 @@ description: >-
 2. Read `TASKS.md`, `AGENTS.md`, `DESIGN.md`, and target interfaces (plus `.agents/skills/spark-connector-authoring/SKILL.md` for connector or step catalog phases) before briefing workers.
 3. Group tasks into 3–6 author slices (`workspace: "share"`) with **100% disjoint file ownership**, plus:
    - `integrator` (`workspace: "inherit"` on the phase worktree branch)
-   - `verifier` (or split `verifier-skills` / `verifier-forms` on `workspace: "inherit"`, strictly read-only)
+   - `verifier` (or split `verifier-a` / `verifier-b` on `workspace: "inherit"`, strictly read-only)
    - `monitor` (when `swarm_monitor` is in `<skills>`)
-4. **Reserve shared barrel and registry files for `integrator`**: In catalog phases (`SRC*`, `SNK*`, `OP*`), authors own only isolated `resources/codegen-skills/*` and `webview/src/properties/*` files. Keep `webview/src/catalog/nodes/*.ts`, `webview/src/catalog/propertyFormRegistry.ts`, `webview/src/catalog/documentation/*.ts`, `webview/src/catalog/paletteGroupState.ts`, `src/legacyNodeMigration.ts`, `src/test/unit/codegen/CodegenSkillCatalog.test.ts`, `src/test/unit/codegen/codegen-skills-invariants.test.ts`, and `TASKS.md` exclusively in `integrator`.
+   Verify every parallel author `swarm{action: "add"}` call explicitly sets `workspace: "share"`. Never leave an author on default `inherit`.
+4. **Reserve shared barrel and registry files for `integrator`**: In catalog phases (`SRC*`, `SNK*`, `OP*`), authors own only isolated `resources/codegen-skills/*` and `webview/src/properties/*` files. Keep `webview/src/catalog/nodes/*.ts`, `webview/src/catalog/propertyFormRegistry.ts`, `webview/src/catalog/documentation/*.ts`, `webview/src/catalog/paletteGroupState.ts`, `webview/src/utils/legacyNodeMigration.ts`, `src/codegen/codegenConfig.ts`, `src/spark/versionMatrix.ts`, `src/test/unit/codegen/CodegenSkillCatalog.test.ts`, `src/test/unit/codegen/codegen-skills-invariants.test.ts`, and `TASKS.md` exclusively in `integrator`.
 5. Leave `model` unset on `swarm{action: "add"}` unless the user requests another model. If a worker hits `503 No capacity available` or quota exhaustion while `waiting`, switch its model in place with `swarm{action: "model", name, model}` and inform the user. Never `kill` and re-`add` a stalled worker because `kill` deletes its worktree and context.
 6. **Assign full vertical IPC call chains**: If a task sends state or actions between the Webview and Extension Host, assign the complete call path (`Leaf Component -> Context -> App.tsx -> useVsCodeBridge.ts -> src/shared/protocol.ts -> src/ipc/handlers/*.ts`) to one owner (or explicitly assign the bridge files) so options are never dropped at unowned middle layers.
 
@@ -31,7 +32,7 @@ description: >-
 
 Include these 5 rules in every `workspace: "share"` author brief:
 
-1. **Bootstrap `node_modules` via hardlinks** (never run `npm ci`):
+1. **Verify isolated worktree & bootstrap `node_modules` via hardlinks** (never run `npm ci` or `git worktree add` into scratch folders; if `pwd` is the shared phase worktree instead of a `swarm-*` worktree, stop and alert `@coordinator`):
    ```bash
    test -d node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/node_modules ./node_modules
    test -d webview/node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/webview/node_modules ./webview/node_modules
@@ -44,13 +45,15 @@ Include these 5 rules in every `workspace: "share"` author brief:
 ## 3. Integration, Bundle Build & Phase Completion
 
 1. **`integrator` workflow** (runs after verifiers approve all author branches):
-   - Cherry-pick all authored commits onto the phase branch in logical order.
+   - Cherry-pick all verifier-approved per-task commits onto the phase branch in exact numerical task order (`TASK1`..`TASKN`).
    - Fold any cross-slice integration fix into its target task commit with `git commit --fixup <task-sha>` and `GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash origin/develop` rather than leaving extra fix commits at the branch tip.
-   - Wire shared catalog registries, documentation maps, legacy migrations, and invariant tests.
+   - Wire shared catalog registries, documentation maps, legacy migrations (`webview/src/utils/legacyNodeMigration.ts`), feature detector sets (`src/codegen/codegenConfig.ts`), unreferenced legacy Beam panel removals, and invariant tests.
    - Audit `git log origin/develop..HEAD` to ensure commit messages contain zero file paths, extensions, or links.
    - Verify **zero regressions** relative to `origin/develop` across `npm run lint`, `npm --prefix webview run lint`, `npm run test:unit`, and `npm run test:webview` (`npm run test:all`) without modifying unrelated legacy suites scheduled for later phases.
    - Update `TASKS.md` (`Status` -> `✅ Done`), sync `ARCHITECTURE.md` / `DESIGN.md` if applicable, and create the phase completion commit.
    - Run `npm run build` (`npm run build:webview && npm run compile`) so `out/extension.js` and `webview/dist/` are ready for immediate Extension Development Host (`F5`) testing, and confirm `git status` remains clean.
+   - Have a read-only verifier audit the final branch commits, test outputs, and PR description accuracy (such as verifying which panels actually import `useAssetLoader`) before notifying `@coordinator`.
 2. **Coordinator wrap-up**:
    - Post `[done] <summary>` (no `@` mentions) so `monitor` goes quiet, then `kill` finished workers (excluding `monitor`) only after all commits are landed on the phase branch.
-   - Present the copy-ready `phase -> develop` PR description in a single ` ```text ` block (with zero file paths, extensions, or links inside the block).
+   - Run `git worktree prune` (using `WaitMsBeforeAsync: 10000` if removing leftover `swarm-*` folders with hardlinked `node_modules`) and confirm `git worktree list` and `git branch` contain zero leftover `swarm-*` entries.
+   - Present the copy-ready `phase -> develop` PR description artifact or ` ```text ` block.

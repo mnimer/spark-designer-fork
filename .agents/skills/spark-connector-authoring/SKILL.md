@@ -40,7 +40,8 @@ Every catalog `sparkTransform` must resolve to an `io-*` or `transform-*` skill 
    - Each `sparkTransform` can be owned by at most **one** skill across the entire library.
    - When adding a Sink (`<Name>Sink`) whose counterpart Source (`<Name>Source`) already exists in `resources/codegen-skills/io-<connector>/SKILL.md`, extend that existing skill (`transforms: [<Name>Source, <Name>Sink]`) and add the `write_sinks(dfs, config)` batch and streaming write rules to it.
    - Create new `io-*` folders only for sink-only connectors (`io-console`, `io-memory`, `io-foreach-batch`), and group Step nodes under `kind: transform` skills.
-   - **Legacy Alias Disambiguation**: `CodegenSkillCatalog.transformKey()` strips trailing `IO`, `Source`, and `Sink`. Once both `KafkaSource` and `KafkaSink` are registered, bare `'KafkaIO'` matches two transforms (`matches.length === 2`) and `resolveTransform('KafkaIO')` will not guess. Always map legacy `BeamIO` names by node `type` (`SOURCE` vs `SINK`) in `src/legacyNodeMigration.ts`.
+   - **Legacy Alias Disambiguation**: `CodegenSkillCatalog.transformKey()` strips trailing `IO`, `Source`, and `Sink`. Once both `KafkaSource` and `KafkaSink` are registered, bare `'KafkaIO'` matches two transforms (`matches.length === 2`) and `resolveTransform('KafkaIO')` will not guess. Always map legacy `BeamIO` names by node `type` (`SOURCE` vs `SINK`) in `webview/src/utils/legacyNodeMigration.ts`.
+   - **Feature Detector Config Sync**: When adding or renaming catalog transforms, keep `STREAMING_SOURCE_TRANSFORMS`, `STREAMING_STEP_TRANSFORMS`, and `PYTHON_DATASOURCE_TRANSFORMS` in `src/codegen/codegenConfig.ts` aligned with `src/shared/sparkNodeCapabilities.ts` and `src/spark/versionMatrix.ts`.
 3. **Managed Spark 4.x Classpath & Testable I/O Rules (`src/spark/versionMatrix.ts`)**:
    - Structure code examples around `read_sources(spark, config)`, pure `transform(dfs, config)` (zero external I/O so `tests/test_pipeline.py` runs offline with in-memory DataFrames), and `write_sinks(dfs, config)`.
    - Never pass pre-installed Managed Spark connectors (`spark-bigquery`, `iceberg-spark-runtime`, `gcs-connector`, `hadoop-aws`, `hadoop-azure`) to `spark.jars.packages` on Serverless Spark or Dataproc Clusters (Maven coordinates apply to `local` runner only).
@@ -52,13 +53,15 @@ Every catalog `sparkTransform` must resolve to an `io-*` or `transform-*` skill 
 
 ## 2. Property Forms & Shared Components (`webview/src/`)
 
-1. **Shared Form Building Blocks**:
+1. **Shared Form Building Blocks & `PropertyForm.tsx` Container Contract**:
+   - **Container-Managed Cards (Never Duplicate)**: `webview/src/components/PropertyForm.tsx` automatically renders `<NodeDocsCard />`, `<StepExecutionSettingsField />` (on `STEP` nodes), and `<StreamingSinkSettingsField />` (on streaming `SINK` nodes) above the lazy panel component. Never render those three components inside individual Source, Sink, or Step panels.
+   - **System Instructions Footer**: Render `<SystemInstructionsField />` (`resolveSystemInstructions(node)`) at the bottom of every Source, Sink, and Step property panel.
    - **File Format Nodes (`Parquet`, `ORC`, `Avro`, `CSV`, `JSON`, `Text`, `XML`, `BinaryFile`, `TFRecord`)**: Embed `StorageBackendFields` (`webview/src/components/common/StorageBackendFields.tsx`) for `gs://`, `s3a://`, `abfss://`, `wasbs://`, `hdfs://`, and `file://` URIs, live GCS bucket quick-pick (`useAssetLoader`), `pathGlobFilter`, `recursiveFileLookup`, and `SecretManagerAuthFields`.
-   - **Streaming Sinks**: Embed `StreamingSinkSettingsField` (`webview/src/components/common/StreamingSinkSettingsField.tsx`) exposing `outputMode`, `triggerType`, `triggerInterval`, and `checkpointLocation`.
-   - **Live GCP Asset Discovery**: Preserve `useAssetLoader` hooks in `BigQueryIO` (`datasets`, `tables`), `IcebergIO` (`bigLakeCatalogs`), `StorageBackendFields` (`buckets`), and `SecretManagerAuthFields` (`secrets`).
+   - **Live GCP Asset Discovery (`useAssetLoader`)**: Preserve `useAssetLoader` hooks in `BigQueryIO` (`datasets`, `tables`, `buckets`), `IcebergIO` (`bigLakeCatalogs`), `BigTableIO` (`bigtableInstances`, `bigtableTables`), `CloudSQL` (`sqlInstances`, `sqlDatabases`), `StorageBackendFields` (`buckets`), and `SecretManagerAuthFields` / `SecretManagerSecretField` (`secrets`). Note that `SpannerIO` and `AlloyDb` use manual text fields rather than `useAssetLoader`.
 2. **Registry & Documentation 1-to-1 Parity (`webview/src/catalog/propertyFormRegistry.test.ts`)**:
    - Every key added to `PROPERTY_FORM_REGISTRY` (`webview/src/catalog/propertyFormRegistry.ts`) must have a matching key in `NODE_DOCUMENTATION_REGISTRY` (`webview/src/catalog/documentation/{sources,sinks,transforms}.ts`).
    - Declare **one** `const XProperties = lazyForm(() => import(...))` per concrete React component and reuse that variable for all alias keys (`SINK:KafkaSink`, `KafkaSink`, `SINK:KafkaIO`, `WriteToKafka`). Two `lazyForm()` calls pointing to the same component fail the unique-chunk assertion.
+   - Delete unreferenced legacy Beam panel `.tsx` and `.test.tsx` files under `webview/src/properties/{source,sink,step}/` when replacing legacy palette nodes so no dead chunks remain.
    - Match `NodeDefinition` capability flags (`supportedReadModes`, `defaultReadMode`, `streamingSinkMode`, `errorOutput`, `inputArity`) in `webview/src/catalog/nodes/{sources,sinks,steps}.ts` against `SPARK_NODE_CAPABILITIES` in `src/shared/sparkNodeCapabilities.ts`.
    - Update `defaultGroupOpenState` in `webview/src/catalog/paletteGroupState.ts` whenever palette `category` names change.
 
