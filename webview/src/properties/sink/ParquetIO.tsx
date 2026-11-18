@@ -1,34 +1,56 @@
 /**
- * ParquetIO Sink Properties Component
- * 
+ * @fileoverview Parquet Sink (SNK11 ParquetSink / ParquetIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam ParquetIO Sink nodes
- * (e.g. FileIO.<GenericRecord>write().via(ParquetIO.sink(schema)...).to(...) in Java or
- * beam.io.WriteToParquet(...) in Python).
- * 
- * Architectural Decisions:
- * - ParquetIO write operations require a target destination directory or file path prefix (.to(...)).
- * - Designed for multi-cloud and local file systems (Google Cloud Storage gs://, Amazon S3 s3://, HDFS hdfs://, local files).
- * - Provides an Avro/PyArrow schema configuration textarea with a 1-click sample schema generator.
- * - Supports industry-standard Parquet compression codecs (SNAPPY, GZIP, ZSTD, BROTLI, UNCOMPRESSED).
- * - Exposes sharding controls (numShards, shardTemplate) and advanced row group buffer sizing.
- * - Adheres strictly to the 8pt grid system, VS Code theme variables, and Tailwind CSS.
+ * Renders the property configuration panel for Apache Spark Parquet sink nodes
+ * using df.write.parquet(uri) or df.writeStream.format("parquet").start(uri).
+ * Embeds the shared StorageBackendFields component for multi-cloud URI and Secret Manager
+ * configuration alongside Spark 4.x saveMode, compression codec, partitionBy columns,
+ * maxRecordsPerFile, datetime/INT96 write rebase modes, and SystemInstructionsField.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
-import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { StoragePathField } from '../../components/common/StoragePathField';
-import { SchemaEditor, resolveSchemaFields, type SchemaField } from '../../components/common/SchemaEditor';
-import { FileCode } from 'lucide-react';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 
 /**
- * React Flow node shape for the Parquet sink panel, including its persisted configuration data.
+ * Supported Spark 4.x batch DataFrameWriter save modes.
+ */
+export const SPARK_SAVE_MODES: SelectFieldOption[] = [
+  { value: 'append', label: 'append (Append rows to existing path)' },
+  { value: 'overwrite', label: 'overwrite (Replace existing data)' },
+  { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
+  { value: 'ignore', label: 'ignore (Skip write if destination exists)' },
+];
+
+/**
+ * Supported Spark 4.x Parquet compression codecs.
+ */
+export const PARQUET_COMPRESSION_CODECS: SelectFieldOption[] = [
+  { value: 'snappy', label: 'snappy (Default, balanced throughput)' },
+  { value: 'zstd', label: 'zstd (High compression ratio and speed)' },
+  { value: 'gzip', label: 'gzip (Higher compression, higher CPU)' },
+  { value: 'none', label: 'none (Uncompressed)' },
+];
+
+/**
+ * Supported Spark 4.x Parquet calendar rebase modes when writing dates and timestamps.
+ */
+export const PARQUET_WRITE_REBASE_MODES: SelectFieldOption[] = [
+  { value: 'EXCEPTION', label: 'EXCEPTION (Fail on ambiguous ancient dates)' },
+  { value: 'CORRECTED', label: 'CORRECTED (Write Proleptic Gregorian verbatim)' },
+  { value: 'LEGACY', label: 'LEGACY (Rebase Gregorian to Julian calendar)' },
+];
+
+/**
+ * React Flow node shape for the Parquet sink panel.
  */
 export interface ParquetIOSinkNode {
   data: {
@@ -37,18 +59,20 @@ export interface ParquetIOSinkNode {
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      storageBackend?: string;
+      path?: string;
       to?: string;
-      suffix?: string;
-      schema?: string;
-      schemaString?: string;
-      schemaFields?: SchemaField[];
+      uri?: string;
+      authMode?: string;
+      secretName?: string;
+      saveMode?: 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+      mode?: string;
+      compression?: 'snappy' | 'zstd' | 'gzip' | 'none' | string;
       codec?: string;
-      numShards?: string | number;
-      shardTemplate?: string;
-      rowGroupBufferSize?: string | number;
-      recordBatchSize?: string | number;
-      useCompliantNestedType?: boolean;
-      useDeprecatedInt96Timestamps?: boolean;
+      partitionBy?: string | string[];
+      maxRecordsPerFile?: string | number;
+      datetimeRebaseMode?: 'EXCEPTION' | 'CORRECTED' | 'LEGACY';
+      int96RebaseMode?: 'EXCEPTION' | 'CORRECTED' | 'LEGACY';
       system_instructions?: string;
       special_instructions?: string;
       [key: string]: any;
@@ -57,234 +81,168 @@ export interface ParquetIOSinkNode {
 }
 
 /**
- * Props for the ParquetIOSinkProperties component.
+ * Props for the {@link ParquetIOSinkProperties} component.
  */
 export interface ParquetIOSinkPropertiesProps {
   node: ParquetIOSinkNode;
   onChange: (properties: any) => void;
 }
 
-export const PARQUET_CODECS = [
-  { value: 'SNAPPY', label: 'SNAPPY (Default, Fast)' },
-  { value: 'GZIP', label: 'GZIP (Higher Compression)' },
-  { value: 'ZSTD', label: 'ZSTD (Balanced)' },
-  { value: 'BROTLI', label: 'BROTLI' },
-  { value: 'UNCOMPRESSED', label: 'UNCOMPRESSED / NONE' }
-];
+/**
+ * Normalizes a raw Parquet compression codec value to a canonical Spark codec name.
+ */
+function normalizeParquetCompression(raw?: string): string {
+  const lower = (raw ?? '').trim().toLowerCase();
+  if (lower === 'uncompressed') {
+    return 'none';
+  }
+  if (PARQUET_COMPRESSION_CODECS.some((opt) => opt.value === lower)) {
+    return lower;
+  }
+  return 'snappy';
+}
 
 /**
- * ParquetIOSinkProperties renders the property configuration form for ParquetIO writes.
+ * Formats a partitionBy property value as a comma-separated column list string.
  */
-export const ParquetIOSinkProperties: React.FC<ParquetIOSinkPropertiesProps> = ({ node, onChange }) => {
+function resolvePartitionByValue(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.join(', ');
+  }
+  return typeof raw === 'string' ? raw : '';
+}
+
+/**
+ * Dedicated property panel for Apache Spark ParquetSink / ParquetIO sink nodes.
+ *
+ * @param props Selected node and change callback.
+ * @returns Rendered Parquet sink property panel.
+ */
+export const ParquetIOSinkProperties: React.FC<ParquetIOSinkPropertiesProps> = ({
+  node,
+  onChange,
+}) => {
   const properties = node.data.properties || {};
-  const to = properties.to || '';
-  const suffix = properties.suffix ?? '.parquet';
-  const schemaFields: SchemaField[] = resolveSchemaFields(properties);
-  const codec = properties.codec || 'SNAPPY';
-  const numShards = properties.numShards ?? '';
-  const shardTemplate = properties.shardTemplate || '';
-  const rowGroupBufferSize = properties.rowGroupBufferSize ?? 67108864;
-  const recordBatchSize = properties.recordBatchSize ?? 1000;
-  const useCompliantNestedType = properties.useCompliantNestedType ?? false;
-  const useDeprecatedInt96Timestamps = properties.useDeprecatedInt96Timestamps ?? false;
+  const storageProperties =
+    properties.path === undefined && typeof properties.to === 'string' && properties.to.length > 0
+      ? { ...properties, path: properties.to }
+      : properties;
 
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
-  const [isSchemaOpen, setIsSchemaOpen] = useState<boolean>(true);
-
-  // Validation: destination directory/prefix (.to) is required
-  const isToInvalid = !to.trim();
-
-  // System instructions text with fallback
+  const rawSaveMode = (properties.saveMode || properties.mode || 'append').toLowerCase();
+  const saveMode = SPARK_SAVE_MODES.some((opt) => opt.value === rawSaveMode)
+    ? rawSaveMode
+    : 'append';
+  const compression = normalizeParquetCompression(properties.compression || properties.codec);
+  const partitionBy = resolvePartitionByValue(properties.partitionBy);
+  const maxRecordsPerFile = properties.maxRecordsPerFile ?? '';
+  const datetimeRebaseMode = properties.datetimeRebaseMode || 'EXCEPTION';
+  const int96RebaseMode = properties.int96RebaseMode || 'EXCEPTION';
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles generic input changes for form fields
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: isCheckbox ? checked : value,
     });
   };
 
-
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Destination Directory (.to) Input */}
-      <StoragePathField
-        id="parquetSinkTo"
-        name="to"
-        label="Destination Directory / Prefix (.to)"
-        tooltip="Base output directory path or prefix where Parquet files will be written (e.g. gs://bucket/output/, s3://bucket/output/, hdfs://path/output/, or /local/output/). Required."
-        value={to}
-        errorMessage={isToInvalid ? 'Destination Directory is required.' : undefined}
-        onChange={handleChange}
-        placeholder="gs://bucket/output/, s3://bucket/output/, or /local/output/"
-        helperText="Target storage prefix across Cloud Storage, Amazon S3, HDFS, or local storage."
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={storageProperties}
+        onChange={onChange}
+        idPrefix="parquetSink"
+        pathLabel="Output Parquet URI / Path"
+        pathPlaceholder="gs://my-bucket/output/parquet/"
+        showGlobAndRecursive={false}
       />
 
-      {/* File Suffix Input */}
-      <PropertyField
-        id="parquetSinkSuffix"
-        name="suffix"
-        label="File Name Suffix"
-        tooltip="File extension appended to each shard (e.g. .parquet). Defaults to .parquet."
-        value={suffix}
-        onChange={handleChange}
-        placeholder=".parquet"
-      />
-
-      {/* Compression Codec Dropdown */}
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="parquetSinkCodec" className="flex items-center text-xs font-bold uppercase text-[var(--vscode-text-muted)] gap-1.5">
-          <span>Compression Codec</span>
-          <InfoTooltip text="Parquet block-level compression algorithm. SNAPPY is recommended for high read/write throughput; GZIP and ZSTD offer higher compression ratios." />
-        </label>
-        <select
-          id="parquetSinkCodec"
-          name="codec"
-          value={codec}
-          onChange={handleChange}
-          className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm focus:outline-none focus:border-[var(--vscode-highlight)] font-mono"
-        >
-          {PARQUET_CODECS.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Schema Accordion Section */}
-      <CollapsibleSection
-        title="Schema Specification"
-        icon={<FileCode className="w-4 h-4 text-rose-400" />}
-        isOpen={isSchemaOpen}
-        onToggle={() => setIsSchemaOpen(!isSchemaOpen)}
-      >
-        <div className="mt-2">
-          <SchemaEditor
-            fields={schemaFields}
-            schemaTitle="Avro / PyArrow Schema (Required for Java / Strict Python)"
-            jsonTextareaId="parquetSinkSchema"
-            stringTextareaId="parquetSinkSchemaString"
-            onChange={({ schemaFields: nextFields, schema: nextSchema, schemaString: nextStr }) => {
-              onChange({
-                ...properties,
-                schemaFields: nextFields,
-                schema: nextSchema,
-                schemaString: nextStr
-              });
-            }}
-          />
-        </div>
-      </CollapsibleSection>
-
-      {/* Sharding Configuration */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
-        <label htmlFor="parquetSinkNumShards" className="flex items-center text-xs font-bold uppercase text-[var(--vscode-text-muted)] gap-1.5">
-          <span>Number of Shards</span>
-          <InfoTooltip text="Fixed number of output shards. Set to 0 to let the Beam runner automatically determine sharding dynamically." />
-        </label>
-        <input
-          id="parquetSinkNumShards"
-          type="number"
-          name="numShards"
-          value={numShards}
-          onChange={handleChange}
-          placeholder="0 (Automatic)"
-          min="0"
-          className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm focus:outline-none focus:border-[var(--vscode-highlight)] font-mono"
-        />
-        <span className="text-[11px] text-[var(--vscode-text-muted)]">
-          0 or empty lets the runner automatically size output shards.
+      {/* Parquet Writer Options */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          Parquet Writer Options
         </span>
 
-        <PropertyField
-          id="parquetSinkShardTemplate"
-          name="shardTemplate"
-          label="Shard Name Template (Optional)"
-          tooltip="Custom template for shard naming (e.g. -SSSSS-of-NNNNN). Leave blank for Beam standard default."
-          value={shardTemplate}
+        <SelectField
+          id="parquetSinkSaveMode"
+          name="saveMode"
+          label="Save Mode (mode)"
+          tooltip="Controls how Spark handles existing data at the destination URI in batch writes. Structured Streaming writes use append mode."
+          value={saveMode}
+          options={SPARK_SAVE_MODES}
           onChange={handleChange}
-          placeholder="-SSSSS-of-NNNNN"
+        />
+
+        <SelectField
+          id="parquetSinkCompression"
+          name="compression"
+          label="Compression Codec (compression)"
+          tooltip="Block-level compression codec applied to output Parquet files."
+          value={compression}
+          options={PARQUET_COMPRESSION_CODECS}
+          onChange={handleChange}
+        />
+
+        <PropertyField
+          id="parquetSinkPartitionBy"
+          name="partitionBy"
+          label="Partition Columns (partitionBy)"
+          tooltip="Optional comma-separated column names used to partition output directories in Hive layout (for example, event_date, region)."
+          value={partitionBy}
+          onChange={handleChange}
+          placeholder="e.g. event_date, region"
+          mono={true}
+        />
+
+        <PropertyField
+          id="parquetSinkMaxRecordsPerFile"
+          type="number"
+          name="maxRecordsPerFile"
+          label="Max Records Per File (maxRecordsPerFile)"
+          tooltip="Optional maximum number of rows written to a single Parquet part-file before rolling to a new file."
+          value={maxRecordsPerFile}
+          onChange={handleChange}
+          placeholder="e.g. 1000000"
+          min="1"
+          mono={true}
         />
       </div>
 
-      {/* Advanced Settings Accordion */}
+      {/* Advanced Parquet Calendar Rebase Settings */}
       <CollapsibleSection
-        title="Advanced Parquet Settings"
+        title="Advanced Parquet Write Settings"
         isOpen={isAdvancedOpen}
         onToggle={() => setIsAdvancedOpen(!isAdvancedOpen)}
       >
-        <div className="flex flex-col gap-3">
-          {/* Row Group Buffer Size */}
-          <div className="flex flex-col gap-1 mt-2">
-            <label htmlFor="parquetSinkRowGroupBufferSize" className="text-[11px] font-semibold text-[var(--vscode-text-muted)] flex items-center gap-1.5">
-              <span>Row Group Buffer Size (bytes)</span>
-              <InfoTooltip text="Byte size of the uncompressed in-memory row group buffer before flushing to file. Default: 67108864 (64 MB)." />
-            </label>
-            <input
-              id="parquetSinkRowGroupBufferSize"
-              type="number"
-              name="rowGroupBufferSize"
-              value={rowGroupBufferSize}
-              onChange={handleChange}
-              placeholder="67108864"
-              min="1048576"
-              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] font-mono"
-            />
-          </div>
+        <div className="flex flex-col gap-3 mt-2">
+          <SelectField
+            id="parquetSinkDatetimeRebaseMode"
+            name="datetimeRebaseMode"
+            label="Datetime Rebase Mode (datetimeRebaseModeInWrite)"
+            tooltip="Controls calendar rebasing when writing DATE and TIMESTAMP values older than 1582-10-15."
+            value={datetimeRebaseMode}
+            options={PARQUET_WRITE_REBASE_MODES}
+            onChange={handleChange}
+          />
 
-          {/* Record Batch Size */}
-          <div className="flex flex-col gap-1">
-            <label htmlFor="parquetSinkRecordBatchSize" className="text-[11px] font-semibold text-[var(--vscode-text-muted)] flex items-center gap-1.5">
-              <span>Record Batch Size</span>
-              <InfoTooltip text="Number of records in each record batch stored within the row group buffer. Default: 1000." />
-            </label>
-            <input
-              id="parquetSinkRecordBatchSize"
-              type="number"
-              name="recordBatchSize"
-              value={recordBatchSize}
-              onChange={handleChange}
-              placeholder="1000"
-              min="1"
-              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] font-mono"
-            />
-          </div>
-
-          {/* Use Compliant Nested Types */}
-          <label htmlFor="parquetSinkCompliantNested" className="flex items-center gap-2 cursor-pointer">
-            <input
-              id="parquetSinkCompliantNested"
-              type="checkbox"
-              name="useCompliantNestedType"
-              checked={useCompliantNestedType}
-              onChange={handleChange}
-              className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
-            />
-            <span className="text-xs text-[var(--vscode-text-secondary)]">Use Compliant Parquet Nested Types (3-level lists)</span>
-            <InfoTooltip text="Writes 3-level compliant Parquet list representations for nested arrays." />
-          </label>
-
-          {/* Use Deprecated INT96 Timestamps */}
-          <label htmlFor="parquetSinkInt96" className="flex items-center gap-2 cursor-pointer">
-            <input
-              id="parquetSinkInt96"
-              type="checkbox"
-              name="useDeprecatedInt96Timestamps"
-              checked={useDeprecatedInt96Timestamps}
-              onChange={handleChange}
-              className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
-            />
-            <span className="text-xs text-[var(--vscode-text-secondary)]">Use Deprecated INT96 Timestamps</span>
-            <InfoTooltip text="Writes nanosecond-precision timestamps using legacy INT96 format (required by some older query engines like older Hive/Impala)." />
-          </label>
+          <SelectField
+            id="parquetSinkInt96RebaseMode"
+            name="int96RebaseMode"
+            label="INT96 Rebase Mode (int96RebaseModeInWrite)"
+            tooltip="Controls calendar rebasing when writing legacy INT96 timestamp values."
+            value={int96RebaseMode}
+            options={PARQUET_WRITE_REBASE_MODES}
+            onChange={handleChange}
+          />
         </div>
       </CollapsibleSection>
 
@@ -292,10 +250,11 @@ export const ParquetIOSinkProperties: React.FC<ParquetIOSinkPropertiesProps> = (
       <SystemInstructionsField
         id="parquetSinkInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline source code for this ParquetIO writer step."
-        placeholder="e.g. Ensure Parquet writer configures snappy compression and uses Avro SpecificRecord serialization."
-        wrapperClassName="flex flex-col gap-1.5 pt-2 border-t border-[var(--vscode-border-light)]"
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
+        placeholder="e.g. Repartition by event_date before writing to avoid small files."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark Parquet writer code."
+        helperText="Additional guidance appended to the prompt when generating PySpark code."
+        wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
+        textareaClassName="h-24"
         onChange={(value) =>
           onChange({
             ...properties,
@@ -306,3 +265,5 @@ export const ParquetIOSinkProperties: React.FC<ParquetIOSinkPropertiesProps> = (
     </div>
   );
 };
+
+export const ParquetSinkProperties = ParquetIOSinkProperties;

@@ -1,52 +1,50 @@
 /**
- * CassandraIOSinkProperties Component
+ * @fileoverview Cassandra Sink Properties Component (SNK31).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam CassandraIO.write() and delete() sink nodes.
- * Configures cluster connection parameters (hosts/contact points, port, local datacenter),
- * destination keyspace and table, mutation mode (write vs delete), entity/mapper class,
- * consistency level, Google Cloud Secret Manager credentials, and advanced performance options
- * (max batch size, concurrent async queries, timeouts, SSL).
+ * Renders the property configuration panel for Apache Spark 4.x Cassandra Sink nodes
+ * supporting both the Spark 4.0 Python DataSourceWriter / foreachBatch fallback (cassandra-driver)
+ * and the native JVM connector (.format("org.apache.spark.sql.cassandra")).
  *
  * Architectural Decisions:
- * - Follows the "props in, events up" controlled input architecture with no local prop mirroring.
- * - Supports Mutation Mode switching between insert/upsert ('write') and deletion ('delete').
- * - Dynamically loads GCP Secret Manager secrets via 'getSecrets' IPC message to populate datalist.
- * - Secret normalization supports both raw resource strings and SecretItem objects with short ID extraction.
- * - Real-time validation for required contact points, keyspace, and table fields with accessible ARIA tags.
- * - Collapsible Advanced Sink Settings group for write tuning (withMaxBatchSize, withConcurrentAsyncQueries, timeouts, SSL).
- * - Preserves system_instructions / special_instructions fallback chain for LLM code generation.
- * - Uses Tailwind CSS and 8pt grid spacing with VS Code theme tokens.
+ * - Configures contactPoints, port (default 9042), localDc, and SSL encryption.
+ * - Configures destination keyspace, table, connectorBackend ('python_driver' | 'jvm_connector'),
+ *   consistencyLevel, ttlColumn, writetimeColumn, and statement concurrency.
+ * - Uses SecretManagerAuthFields for Apache Cassandra password resolution.
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import {
+  SecretManagerAuthFields,
+  type SecretItem,
+} from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { MappingStrategyField, type MappingStrategy } from '../../components/common/MappingStrategyField';
-import { resolveSchemaFields, type SchemaField } from '../../components/common/SchemaEditor';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 
-/**
- * Secret item loaded from Secret Manager for Cassandra authentication.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
+export type CassandraConnectorBackend = 'python_driver' | 'jvm_connector';
+export type CassandraConsistencyLevel =
+  | 'LOCAL_QUORUM'
+  | 'QUORUM'
+  | 'LOCAL_ONE'
+  | 'ONE'
+  | 'EACH_QUORUM'
+  | 'ALL';
 
-export type CassandraMutationMode = 'write' | 'delete';
-export type CassandraConsistencyLevel = 'ONE' | 'QUORUM' | 'LOCAL_QUORUM' | 'ALL' | 'LOCAL_ONE';
+const CONSISTENCY_LEVELS: readonly CassandraConsistencyLevel[] = [
+  'LOCAL_QUORUM',
+  'QUORUM',
+  'LOCAL_ONE',
+  'ONE',
+  'EACH_QUORUM',
+  'ALL',
+];
 
-/**
- * Props for the CassandraIOSinkProperties component.
- */
+/** Props for the {@link CassandraIOSinkProperties} component. */
 export interface CassandraIOSinkPropertiesProps {
   node: {
     data: {
@@ -55,137 +53,132 @@ export interface CassandraIOSinkPropertiesProps {
       system_instructions?: string;
       special_instructions?: string;
       properties?: {
-        hosts?: string;
         contactPoints?: string;
+        hosts?: string;
         port?: number | string;
+        localDc?: string;
+        ssl?: boolean;
         keyspace?: string;
         table?: string;
-        localDc?: string;
-        mutationType?: CassandraMutationMode | string;
-        mutationMode?: CassandraMutationMode | string;
-        entityStrategy?: MappingStrategy | string;
-        entity?: string;
-        schemaString?: string;
-        schema?: string;
-        schemaFields?: SchemaField[];
+        connectorBackend?: CassandraConnectorBackend | string;
         consistencyLevel?: CassandraConsistencyLevel | string;
-        authMode?: 'default' | 'secret_manager' | string;
-        usernameSecret?: string;
+        ttlColumn?: string;
+        writetimeColumn?: string;
+        concurrency?: number | string;
+        username?: string;
+        authMode?: string;
+        secretName?: string;
         passwordSecret?: string;
-        maxBatchSize?: number | string;
-        concurrentAsyncQueries?: number | string;
-        connectTimeout?: number | string;
-        readTimeout?: number | string;
-        ssl?: boolean;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * CassandraIOSinkProperties renders the configuration form for CassandraIO.write() transforms.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Configures properties for Apache Spark 4.x Cassandra batch and streaming sink nodes.
  */
-export const CassandraIOSinkProperties: React.FC<CassandraIOSinkPropertiesProps> = ({ node, onChange }) => {
-  const properties = node.data.properties || {};
+export const CassandraIOSinkProperties: React.FC<CassandraIOSinkPropertiesProps> = ({
+  node,
+  onChange,
+}) => {
+  const properties = (node?.data?.properties ?? {}) as Record<string, unknown>;
 
-  // Form field state extracted from node properties
-  const hosts = properties.hosts ?? properties.contactPoints ?? '';
-  const port = properties.port !== undefined && properties.port !== '' ? properties.port : 9042;
-  const keyspace = properties.keyspace ?? '';
-  const table = properties.table ?? '';
-  const localDc = properties.localDc ?? '';
-  const mutationType = properties.mutationType ?? properties.mutationMode ?? 'write';
-  const entity = properties.entity ?? '';
-  const entityStrategy = properties.entityStrategy || (properties.entity ? 'customClass' : 'infer');
-  const schemaFields = React.useMemo(
-    () => resolveSchemaFields(properties),
-    [properties.schemaFields, properties.schema, properties.schemaString]
-  );
-  const consistencyLevel = properties.consistencyLevel ?? '';
-  const authMode = properties.authMode ?? 'default';
-  const usernameSecret = properties.usernameSecret ?? '';
-  const passwordSecret = properties.passwordSecret ?? '';
-  const maxBatchSize = properties.maxBatchSize ?? '';
-  const concurrentAsyncQueries = properties.concurrentAsyncQueries ?? '';
-  const connectTimeout = properties.connectTimeout ?? '';
-  const readTimeout = properties.readTimeout ?? '';
-  const ssl = properties.ssl ?? false;
+  const contactPoints =
+    typeof properties.contactPoints === 'string'
+      ? properties.contactPoints
+      : typeof properties.hosts === 'string'
+        ? properties.hosts
+        : '';
+  const port =
+    properties.port !== undefined && properties.port !== ''
+      ? (properties.port as number | string)
+      : 9042;
+  const localDc = typeof properties.localDc === 'string' ? properties.localDc : '';
+  const ssl = typeof properties.ssl === 'boolean' ? properties.ssl : false;
+  const keyspace = typeof properties.keyspace === 'string' ? properties.keyspace : '';
+  const table = typeof properties.table === 'string' ? properties.table : '';
+  const connectorBackend: CassandraConnectorBackend =
+    properties.connectorBackend === 'jvm_connector' ? 'jvm_connector' : 'python_driver';
+  const consistencyLevel: CassandraConsistencyLevel =
+    typeof properties.consistencyLevel === 'string' &&
+    (CONSISTENCY_LEVELS as readonly string[]).includes(properties.consistencyLevel)
+      ? (properties.consistencyLevel as CassandraConsistencyLevel)
+      : 'LOCAL_QUORUM';
+  const ttlColumn = typeof properties.ttlColumn === 'string' ? properties.ttlColumn : '';
+  const writetimeColumn =
+    typeof properties.writetimeColumn === 'string' ? properties.writetimeColumn : '';
+  const concurrency =
+    typeof properties.concurrency === 'number' || typeof properties.concurrency === 'string'
+      ? properties.concurrency
+      : 100;
+  const username = typeof properties.username === 'string' ? properties.username : '';
+  const rawAuthMode = properties.authMode;
+  const authMode =
+    rawAuthMode === 'secretManager' || rawAuthMode === 'secret_manager'
+      ? 'secretManager'
+      : 'default';
+  const secretName =
+    typeof properties.secretName === 'string'
+      ? properties.secretName
+      : typeof properties.passwordSecret === 'string'
+        ? properties.passwordSecret
+        : '';
 
-  // Local state for dynamically loaded Secret Manager resources and UI state
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const isContactPointsEmpty = !contactPoints.trim();
+  const isKeyspaceEmpty = !keyspace.trim();
+  const isTableEmpty = !table.trim();
 
-  // Field validation
-  const isHostsEmpty = !String(hosts).trim();
-  const isKeyspaceEmpty = !String(keyspace).trim();
-  const isTableEmpty = !String(table).trim();
-
-  // NOTE: Fallback chain for system instructions
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    // NOTE: Merge updated property and dispatch to parent component
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, number, select, and checkbox input changes.
-   *
-   * @param e Standard React change event
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    if (name === 'contactPoints') {
+      delete next.hosts;
     }
+    if (name === 'secretName') {
+      delete next.passwordSecret;
+    }
+    onChange(next);
   };
-
-  const handleSchemaChange = (data: { schemaFields: SchemaField[]; schema: string; schemaString: string }) => {
-    onChange({
-      ...properties,
-      schemaFields: data.schemaFields,
-      schema: data.schema,
-      schemaString: data.schemaString
-    });
-  };
-
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Cassandra Cluster Connection Settings */}
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark 4.0 Cassandra Sink</span>
+        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[11px]">
+          {connectorBackend === 'jvm_connector'
+            ? 'org.apache.spark.sql.cassandra'
+            : 'cassandra-driver'}{' '}
+          · NATIVE
+        </span>
+      </div>
+
+      {/* Cluster Connection */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Cluster Connection</span>
-          <InfoTooltip text="Configures connection to Cassandra nodes. Maps to CassandraIO.write().withHosts() and withPort()." />
+          <span>Cassandra Cluster Connection</span>
+          <InfoTooltip text="Configure contactPoints, native CQL port (9042), local datacenter, and TLS encryption." />
         </label>
 
         <PropertyField
-          id="cassandraSinkHosts"
-          name="hosts"
-          label="Contact Points / Hosts"
-          required="Contact points / hosts are required"
-          tooltip="Comma-separated list of Cassandra cluster hostnames or IP addresses (e.g. 127.0.0.1, 10.0.0.1). Maps to withHosts(). Required."
-          value={hosts}
-          invalid={isHostsEmpty}
-          error={isHostsEmpty ? 'Contact points / hosts are required' : null}
-          placeholder="127.0.0.1, 10.0.0.1"
+          id="cassandraSinkContactPoints"
+          name="contactPoints"
+          label="Contact Points (contactPoints)"
+          required="Contact points are required"
+          tooltip="Comma-separated list of Cassandra seed node hostnames or IP addresses."
+          value={contactPoints}
+          invalid={isContactPointsEmpty}
+          error={isContactPointsEmpty ? 'Contact points are required' : null}
+          placeholder="10.0.0.1,10.0.0.2"
           onChange={handleChange}
           mono={true}
         />
@@ -194,33 +187,50 @@ export const CassandraIOSinkProperties: React.FC<CassandraIOSinkPropertiesProps>
           <PropertyField
             id="cassandraSinkPort"
             name="port"
-            label="Native Port"
+            label="Port"
             type="number"
-            tooltip="Native CQL transport port for the Cassandra nodes (default 9042). Maps to withPort()."
+            tooltip="Native CQL transport port (default 9042)."
             value={port}
-            onChange={handleChange}
             placeholder="9042"
+            onChange={handleChange}
             mono={true}
           />
-
           <PropertyField
             id="cassandraSinkLocalDc"
             name="localDc"
-            label="Local Datacenter"
-            tooltip="Specifies the local Data Center (DC) name used by the load balancing policy (e.g. datacenter1). Maps to withLocalDc()."
+            label="Local Datacenter (localDc)"
+            tooltip="Local datacenter name for DCAwareRoundRobinPolicy."
             value={localDc}
-            onChange={handleChange}
             placeholder="datacenter1"
+            onChange={handleChange}
             mono={true}
           />
         </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            id="cassandraSinkSsl"
+            type="checkbox"
+            name="ssl"
+            checked={ssl}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+          />
+          <label
+            htmlFor="cassandraSinkSsl"
+            className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+          >
+            <span>Enable TLS / SSL Client Encryption</span>
+            <InfoTooltip text="Encrypts CQL client-to-node traffic using standard TLS certificates." />
+          </label>
+        </div>
       </div>
 
-      {/* Target Destination Settings */}
+      {/* Destination Table, Backend & CQL Write Semantics */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Write Destination</span>
-          <InfoTooltip text="Specify the target Cassandra keyspace and table to write records." />
+          <span>Target Table &amp; CQL Write Options</span>
+          <InfoTooltip text="Configure destination keyspace, table, Spark 4.x execution backend, consistency level, TTL, and writetime." />
         </label>
 
         <div className="grid grid-cols-2 gap-2">
@@ -229,265 +239,144 @@ export const CassandraIOSinkProperties: React.FC<CassandraIOSinkPropertiesProps>
             name="keyspace"
             label="Keyspace"
             required="Keyspace is required"
-            tooltip="Target Cassandra keyspace name. Maps to withKeyspace(). Required."
+            tooltip="Destination Cassandra keyspace name."
             value={keyspace}
             invalid={isKeyspaceEmpty}
             error={isKeyspaceEmpty ? 'Keyspace is required' : null}
-            placeholder="e.g. telemetry"
+            placeholder="telemetry"
             onChange={handleChange}
             mono={true}
           />
-
           <PropertyField
             id="cassandraSinkTable"
             name="table"
             label="Table"
             required="Table is required"
-            tooltip="Target Cassandra table name. When using Auto-Infer or Define Schema, Gemini generates the @Table(keyspace = ..., name = ...) annotation on the entity POJO from this value. Required."
+            tooltip="Destination Cassandra table name."
             value={table}
             invalid={isTableEmpty}
             error={isTableEmpty ? 'Table is required' : null}
-            placeholder="e.g. device_rollups"
+            placeholder="device_rollups"
             onChange={handleChange}
             mono={true}
           />
         </div>
-      </div>
 
-      {/* Mutation Mode & Entity Settings */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Mutation &amp; Entity Mapping</span>
-          <InfoTooltip text="Configures mutation mode (write vs delete), entity mapping strategy, and write consistency." />
-        </label>
-
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">Mutation Mode</span>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-              <input
-                type="radio"
-                name="mutationType"
-                value="write"
-                checked={mutationType === 'write'}
-                onChange={handleChange}
-                className="accent-[var(--vscode-highlight)]"
-              />
-              <span>Write / Upsert (CassandraIO.write())</span>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="cassandraSinkConnectorBackend"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Spark 4.x Backend</span>
+              <InfoTooltip text="Default to Spark 4.0 Python cassandra-driver because OSS JVM spark-cassandra-connector lags Spark 4.x." />
             </label>
-            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-              <input
-                type="radio"
-                name="mutationType"
-                value="delete"
-                checked={mutationType === 'delete'}
-                onChange={handleChange}
-                className="accent-[var(--vscode-highlight)]"
-              />
-              <span>Delete (CassandraIO.delete())</span>
-            </label>
+            <select
+              id="cassandraSinkConnectorBackend"
+              name="connectorBackend"
+              value={connectorBackend}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-xs focus:outline-none focus:border-blue-500"
+            >
+              <option value="python_driver">
+                Python DataSourceWriter / foreachBatch (cassandra-driver)
+              </option>
+              <option value="jvm_connector">
+                JVM Connector (.format(&quot;org.apache.spark.sql.cassandra&quot;))
+              </option>
+            </select>
           </div>
-        </div>
 
-        <MappingStrategyField
-          id="cassandraSinkEntityStrategy"
-          strategyName="entityStrategy"
-          strategy={entityStrategy}
-          label="Entity Mapping Strategy"
-          tooltip="Select how Beam elements map to Cassandra entity mutations. 'Auto-Infer' lets Gemini generate the @Table POJO matching your keyspace and table automatically. 'Define Schema' lets you specify exact fields & types. 'Custom Class' references a pre-compiled entity class."
-          optionLabels={{
-            customClass: 'Custom Entity Class Name (Optional)'
-          }}
-          inferDescription={
-            <>
-              Gemini will automatically synthesize a DataStax{' '}
-              <code className="text-slate-200 bg-slate-800/80 px-1 py-0.5 rounded">@Table</code>-annotated POJO matching your target keyspace and table.
-            </>
-          }
-          schemaFields={schemaFields}
-          schemaStringPlaceholder="device_id:STRING:REQUIRED, window_start:TIMESTAMP, avg_val:DOUBLE"
-          onSchemaChange={handleSchemaChange}
-          customClassId="cassandraSinkEntity"
-          customClassName="entity"
-          customClassLabel="Entity / Mapper Class"
-          customClassTooltip="Fully qualified class name of the POJO/entity annotated with DataStax driver annotations. Maps to withEntity()."
-          customClassPlaceholder="com.example.CassandraRowEntity"
-          customClassValue={entity}
-          onChange={handleChange}
-        />
-
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <label
               htmlFor="cassandraSinkConsistencyLevel"
-              className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
             >
-              Consistency Level
+              <span>Consistency Level</span>
+              <InfoTooltip text="Cassandra write consistency level (default LOCAL_QUORUM)." />
             </label>
-            <InfoTooltip text="Write consistency level for Cassandra coordinator updates. Maps to withConsistencyLevel()." />
+            <select
+              id="cassandraSinkConsistencyLevel"
+              name="consistencyLevel"
+              value={consistencyLevel}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-xs font-mono focus:outline-none focus:border-blue-500"
+            >
+              {CONSISTENCY_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            id="cassandraSinkConsistencyLevel"
-            name="consistencyLevel"
-            value={consistencyLevel}
-            onChange={handleChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)]"
-          >
-            <option value="">Default (Cluster configured)</option>
-            <option value="LOCAL_QUORUM">LOCAL_QUORUM</option>
-            <option value="QUORUM">QUORUM</option>
-            <option value="ONE">ONE</option>
-            <option value="LOCAL_ONE">LOCAL_ONE</option>
-            <option value="ALL">ALL</option>
-          </select>
         </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="cassandraSinkTtlColumn"
+            name="ttlColumn"
+            label="TTL Column / Seconds (Optional)"
+            tooltip="Column name or static integer seconds applied to CQL USING TTL."
+            value={ttlColumn}
+            placeholder="ttl_seconds or 86400"
+            onChange={handleChange}
+            mono={true}
+          />
+          <PropertyField
+            id="cassandraSinkWritetimeColumn"
+            name="writetimeColumn"
+            label="Writetime Column (Optional)"
+            tooltip="Microsecond epoch column applied to CQL USING TIMESTAMP."
+            value={writetimeColumn}
+            placeholder="event_time_micros"
+            onChange={handleChange}
+            mono={true}
+          />
+        </div>
+
+        <PropertyField
+          id="cassandraSinkConcurrency"
+          name="concurrency"
+          label="Statement Concurrency"
+          type="number"
+          min={1}
+          tooltip="Number of concurrent in-flight prepared statements per executor task (default 100)."
+          value={concurrency}
+          placeholder="100"
+          onChange={handleChange}
+          mono={true}
+        />
       </div>
 
-      {/* Authentication Block */}
+      {/* Authentication */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Authentication</span>
-          <InfoTooltip text="Choose authentication strategy: default (no authentication / cluster security disabled) or credentials securely referenced from GCP Secret Manager." />
-        </label>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="default"
-              checked={authMode === 'default'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Default (No Auth)</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="secret_manager"
-              checked={authMode === 'secret_manager'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Secret Manager</span>
-          </label>
-        </div>
+        <PropertyField
+          id="cassandraSinkUsername"
+          name="username"
+          label="CQL Username (Optional)"
+          tooltip="Cassandra PlainTextAuthProvider username when cluster authentication is enabled."
+          value={username}
+          placeholder="cassandra"
+          onChange={handleChange}
+          mono={true}
+        />
 
-        {authMode === 'secret_manager' && (
-          <div className="flex flex-col gap-3 mt-1">
-            <PropertyField
-              id="cassandraSinkUsernameSecret"
-              name="usernameSecret"
-              label="Username Secret"
-              tooltip="Google Cloud Secret Manager secret containing the Cassandra username."
-              value={usernameSecret}
-              onChange={handleChange}
-              list="cassandra-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. cassandra-username"
-              mono={true}
-            />
-            <PropertyField
-              id="cassandraSinkPasswordSecret"
-              name="passwordSecret"
-              label="Password Secret"
-              tooltip="Google Cloud Secret Manager secret containing the Cassandra password."
-              value={passwordSecret}
-              onChange={handleChange}
-              list="cassandra-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. cassandra-password"
-              mono={true}
-            />
-            {secretError && (
-              <span className="text-xs text-red-400" role="alert">
-                {secretError}
-              </span>
-            )}
-          </div>
-        )}
+        <SecretManagerAuthFields
+          idPrefix="cassandraSink"
+          serviceName="Apache Cassandra"
+          authMode={authMode}
+          secretName={secretName}
+          datalistId="cassandra-sink-secret-options"
+          secretPlaceholder="e.g. cassandra-password-secret"
+          onChange={handleChange}
+        />
       </div>
 
-      {/* Collapsible Advanced Sink Settings */}
-      <CollapsibleSection
-        title="Advanced Sink Settings"
-        isOpen={showAdvanced}
-        onToggle={() => setShowAdvanced(!showAdvanced)}
-      >
-        <div className="grid grid-cols-2 gap-2">
-          <PropertyField
-            id="cassandraSinkMaxBatchSize"
-            name="maxBatchSize"
-            label="Max Batch Size"
-            type="number"
-            tooltip="Controls the maximum number of statements grouped into a single batch before sending to Cassandra."
-            value={maxBatchSize}
-            onChange={handleChange}
-            placeholder="100"
-            mono={true}
-          />
-
-          <PropertyField
-            id="cassandraSinkConcurrentAsyncQueries"
-            name="concurrentAsyncQueries"
-            label="Concurrent Async Queries"
-            type="number"
-            tooltip="Maximum number of in-flight asynchronous queries allowed per worker."
-            value={concurrentAsyncQueries}
-            onChange={handleChange}
-            placeholder="50"
-            mono={true}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
-          <PropertyField
-            id="cassandraSinkConnectTimeout"
-            name="connectTimeout"
-            label="Connect Timeout (ms)"
-            type="number"
-            tooltip="Socket connection timeout in milliseconds. Maps to withConnectTimeout()."
-            value={connectTimeout}
-            onChange={handleChange}
-            placeholder="5000"
-            mono={true}
-          />
-
-          <PropertyField
-            id="cassandraSinkReadTimeout"
-            name="readTimeout"
-            label="Read Timeout (ms)"
-            type="number"
-            tooltip="Socket read timeout in milliseconds. Maps to withReadTimeout()."
-            value={readTimeout}
-            onChange={handleChange}
-            placeholder="12000"
-            mono={true}
-          />
-        </div>
-
-        <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-          <input
-            id="cassandraSinkSsl"
-            type="checkbox"
-            name="ssl"
-            checked={ssl}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0"
-          />
-          <label htmlFor="cassandraSinkSsl" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Enable SSL / TLS</span>
-            <InfoTooltip text="Enables SSL/TLS encrypted communication with the Cassandra cluster. Maps to withSsl()." />
-          </label>
-        </div>
-      </CollapsibleSection>
-
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="cassandraSinkInstructions"
         value={systemInstructions}
-        tooltip="Optional instructions passed to LLM code generator when synthesizing CassandraIO pipelines."
-        placeholder="e.g. Write mutated Cassandra entities using CassandraIO.write()"
+        placeholder="Enter custom instructions for Spark Cassandra sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -498,3 +387,5 @@ export const CassandraIOSinkProperties: React.FC<CassandraIOSinkPropertiesProps>
     </div>
   );
 };
+
+export const CassandraSinkProperties = CassandraIOSinkProperties;

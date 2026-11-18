@@ -1,46 +1,41 @@
 /**
- * SnowflakeIOSinkProperties Component
+ * Snowflake Sink Properties Component (SNK25)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the configuration panel for Apache Beam SnowflakeIO Sink nodes (SnowflakeIO.write()).
- * Configures writing records to Snowflake tables via DataSourceConfiguration, staging CSV records
- * in external cloud storage, write and create dispositions, user data mapping, and authentication.
+ * Renders the property configuration panel for Apache Spark Snowflake Sink nodes
+ * (.write.format("net.snowflake.spark.snowflake") and streaming foreachBatch).
  *
  * Architectural Decisions:
- * - Enforces required destination table, connection coordinates (server, database), and staging parameters
- *   (staging bucket, storage integration) with validation alerts and accessible ARIA attributes.
- * - Staging parameters are prominently grouped in a dedicated card, as SnowflakeIO writes require staging
- *   temporary CSV files before executing Snowflake COPY INTO commands.
- * - Dynamic discovery: fetches GCP Secret Manager secrets via 'getSecrets' IPC message for secure credentials.
- * - Provides distinct datalist id 'snowflake-sink-secret-options' avoiding collisions.
- * - Supports authentication modes: Username/Password, Key Pair (private key & passphrase), and OAuth.
- * - Dispositions card configures WriteDisposition (APPEND, TRUNCATE, EMPTY) and CreateDisposition (CREATE_IF_NEEDED, CREATE_NEVER).
- * - Decomposed into local presentational sub-components with onToggle callback for collapsible state.
- * - Preserves system_instructions / special_instructions in the bottom textarea for LLM code generation.
- * - Follows the 8pt grid system and Tailwind CSS styling with VS Code theme tokens.
+ * - Configures standard Spark-Snowflake sink options: sfURL, sfWarehouse, sfDatabase,
+ *   sfSchema, sfRole, dbtable, saveMode, usestagingtable, truncateTable, preactions,
+ *   and postactions.
+ * - Supports password (sfPassword) and PEM key-pair (pem_private_key) authentication
+ *   resolved through Google Cloud Secret Manager via SecretManagerAuthFields.
  */
 
-import React, { useState } from 'react';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import {
+  SecretManagerAuthFields,
+  type AuthModeOption,
+  type SecretItem,
+} from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import type { SecretItem } from '../../components/common/SecretManagerAuthFields';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
 
 export type { SecretItem };
 
-export type SnowflakeWriteDisposition = 'APPEND' | 'TRUNCATE' | 'EMPTY';
-export type SnowflakeCreateDisposition = 'CREATE_IF_NEEDED' | 'CREATE_NEVER';
-export type SnowflakeAuthMode = 'username_password' | 'key_pair' | 'oauth';
+export type SnowflakeSaveMode = 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+export type SnowflakeCredentialType = 'password' | 'pem_private_key';
 
-/**
- * Props for the SnowflakeIOSinkProperties component.
- */
+const SNOWFLAKE_SINK_AUTH_OPTIONS: AuthModeOption[] = [
+  { value: 'secretManager', label: 'Google Cloud Secret Manager (sfPassword / pem_private_key)' },
+];
+
+/** Props for the {@link SnowflakeIOSinkProperties} component. */
 export interface SnowflakeIOSinkPropertiesProps {
   node: {
     data: {
@@ -49,685 +44,358 @@ export interface SnowflakeIOSinkPropertiesProps {
       system_instructions?: string;
       special_instructions?: string;
       properties?: {
+        sfURL?: string;
         serverName?: string;
-        database?: string;
-        schema?: string;
+        sfWarehouse?: string;
         warehouse?: string;
+        sfDatabase?: string;
+        database?: string;
+        sfSchema?: string;
+        schema?: string;
+        sfRole?: string;
         role?: string;
+        sfUser?: string;
+        dbtable?: string;
         table?: string;
-        stagingBucketName?: string;
-        storageIntegrationName?: string;
-        writeDisposition?: SnowflakeWriteDisposition;
-        createDisposition?: SnowflakeCreateDisposition;
-        tableSchema?: string;
-        quotationMark?: string;
-        fileNameTemplate?: string;
-        authMode?: SnowflakeAuthMode;
-        usernameSecret?: string;
+        saveMode?: SnowflakeSaveMode;
+        usestagingtable?: boolean;
+        truncateTable?: boolean;
+        preactions?: string;
+        postactions?: string;
+        credentialType?: SnowflakeCredentialType;
+        authMode?: string;
+        secretName?: string;
         passwordSecret?: string;
         privateKeySecret?: string;
-        privateKeyPassphraseSecret?: string;
-        oauthTokenSecret?: string;
-        flushRowLimit?: number | string;
-        loginTimeout?: number | string;
-        extraParameters?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * Props for the SnowflakeSinkConnectionCard component.
+ * Configures properties for Apache Spark Snowflake sink nodes (.write.format("net.snowflake.spark.snowflake")).
  */
-interface SnowflakeSinkConnectionCardProps {
-  serverName: string;
-  database: string;
-  schema: string;
-  warehouse: string;
-  role: string;
-  table: string;
-  isServerEmpty: boolean;
-  isDatabaseEmpty: boolean;
-  isTableEmpty: boolean;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Local presentational sub-component for Snowflake sink connection coordinates and destination table.
- */
-const SnowflakeSinkConnectionCard: React.FC<SnowflakeSinkConnectionCardProps> = ({
-  serverName,
-  database,
-  schema,
-  warehouse,
-  role,
-  table,
-  isServerEmpty,
-  isDatabaseEmpty,
-  isTableEmpty,
-  onChange
+export const SnowflakeIOSinkProperties: React.FC<SnowflakeIOSinkPropertiesProps> = ({
+  node,
+  onChange,
 }) => {
-  return (
-    <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-      <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        <span>Snowflake Destination</span>
-        <InfoTooltip text="Connection coordinates and target table for writing into Snowflake via SnowflakeIO.write()." />
-      </label>
+  const properties = node?.data?.properties || {};
 
-      <PropertyField
-        id="snowflakeSinkServerName"
-        name="serverName"
-        label="Account / Server Name"
-        required="Snowflake account/server name is required"
-        tooltip="Snowflake account identifier or full host URL (e.g. xy12345.us-east-1.snowflakecomputing.com). Maps to withServerName() or withUrl()."
-        value={serverName}
-        invalid={isServerEmpty}
-        error={isServerEmpty ? 'Snowflake account/server name is required' : null}
-        placeholder="e.g. xy12345.us-central1.gcp.snowflakecomputing.com"
-        onChange={onChange}
-        mono={true}
-      />
+  const sfURL = properties.sfURL ?? properties.serverName ?? '';
+  const sfWarehouse = properties.sfWarehouse ?? properties.warehouse ?? '';
+  const sfDatabase = properties.sfDatabase ?? properties.database ?? '';
+  const sfSchema = properties.sfSchema ?? properties.schema ?? 'PUBLIC';
+  const sfRole = properties.sfRole ?? properties.role ?? '';
+  const sfUser = properties.sfUser || '';
+  const dbtable = properties.dbtable ?? properties.table ?? '';
+  const saveMode: SnowflakeSaveMode = properties.saveMode || 'append';
+  const usestagingtable = properties.usestagingtable ?? true;
+  const truncateTable = properties.truncateTable ?? false;
+  const preactions = properties.preactions || '';
+  const postactions = properties.postactions || '';
+  const credentialType: SnowflakeCredentialType =
+    properties.credentialType || (properties.privateKeySecret ? 'pem_private_key' : 'password');
+  const authMode = 'secretManager';
+  const secretName =
+    properties.secretName ?? properties.privateKeySecret ?? properties.passwordSecret ?? '';
 
-      <div className="grid grid-cols-2 gap-2">
-        <PropertyField
-          id="snowflakeSinkDatabase"
-          name="database"
-          label="Database"
-          required="Snowflake database is required"
-          tooltip="Target Snowflake database name. Maps to withDatabase()."
-          value={database}
-          invalid={isDatabaseEmpty}
-          error={isDatabaseEmpty ? 'Snowflake database is required' : null}
-          placeholder="e.g. ANALYTICS_DB"
-          onChange={onChange}
-          mono={true}
-        />
-        <PropertyField
-          id="snowflakeSinkSchema"
-          name="schema"
-          label="Schema"
-          tooltip="Target Snowflake schema name. Maps to withSchema(). Default: PUBLIC."
-          value={schema}
-          placeholder="e.g. PUBLIC"
-          onChange={onChange}
-          mono={true}
-        />
-      </div>
+  const isUrlEmpty = !String(sfURL).trim();
+  const isWarehouseEmpty = !String(sfWarehouse).trim();
+  const isDatabaseEmpty = !String(sfDatabase).trim();
+  const isTableEmpty = !String(dbtable).trim();
 
-      <div className="grid grid-cols-2 gap-2">
-        <PropertyField
-          id="snowflakeSinkWarehouse"
-          name="warehouse"
-          label="Warehouse"
-          tooltip="Virtual warehouse used for write execution. Maps to withWarehouse()."
-          value={warehouse}
-          placeholder="e.g. COMPUTE_WH"
-          onChange={onChange}
-          mono={true}
-        />
-        <PropertyField
-          id="snowflakeSinkRole"
-          name="role"
-          label="Role"
-          tooltip="Snowflake authorization role. Maps to withRole()."
-          value={role}
-          placeholder="e.g. ACCOUNTADMIN"
-          onChange={onChange}
-          mono={true}
-        />
-      </div>
-
-      <PropertyField
-        id="snowflakeSinkTable"
-        name="table"
-        label="Destination Table"
-        required="Destination table name is required"
-        tooltip="Target Snowflake table to write data into. Maps to .to(String) in SnowflakeIO.write()."
-        value={table}
-        invalid={isTableEmpty}
-        error={isTableEmpty ? 'Destination table name is required' : null}
-        placeholder="e.g. AGGREGATED_METRICS"
-        onChange={onChange}
-        mono={true}
-      />
-    </div>
-  );
-};
-
-/**
- * Props for the SnowflakeSinkStagingCard component.
- */
-interface SnowflakeSinkStagingCardProps {
-  stagingBucketName: string;
-  storageIntegrationName: string;
-  isStagingBucketEmpty: boolean;
-  isStorageIntegrationEmpty: boolean;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Local presentational sub-component for staging bucket and storage integration in Snowflake sink.
- */
-const SnowflakeSinkStagingCard: React.FC<SnowflakeSinkStagingCardProps> = ({
-  stagingBucketName,
-  storageIntegrationName,
-  isStagingBucketEmpty,
-  isStorageIntegrationEmpty,
-  onChange
-}) => {
-  return (
-    <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-      <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        <span>Staging Configuration</span>
-        <InfoTooltip text="Beam stages CSV records in cloud storage and instructs Snowflake to COPY INTO the target table." />
-      </label>
-
-      <PropertyField
-        id="snowflakeSinkStagingBucketName"
-        name="stagingBucketName"
-        label="Staging Bucket"
-        required="Staging bucket name is required"
-        tooltip="Cloud storage URI where Beam stages temporary CSV files (e.g. gs://my-bucket/snowflake-staging/ or s3://my-bucket/). Maps to withStagingBucketName()."
-        value={stagingBucketName}
-        invalid={isStagingBucketEmpty}
-        error={isStagingBucketEmpty ? 'Staging bucket name is required' : null}
-        placeholder="gs://my-bucket/staging-path/"
-        onChange={onChange}
-        mono={true}
-      />
-
-      <PropertyField
-        id="snowflakeSinkStorageIntegrationName"
-        name="storageIntegrationName"
-        label="Storage Integration"
-        required="Storage integration name is required"
-        tooltip="Name of the Snowflake STORAGE INTEGRATION object granting access to the staging bucket. Maps to withStorageIntegrationName()."
-        value={storageIntegrationName}
-        invalid={isStorageIntegrationEmpty}
-        error={isStorageIntegrationEmpty ? 'Storage integration name is required' : null}
-        placeholder="e.g. GCS_STORAGE_INT"
-        onChange={onChange}
-        mono={true}
-      />
-    </div>
-  );
-};
-
-/**
- * Props for the SnowflakeSinkDispositionsCard component.
- */
-interface SnowflakeSinkDispositionsCardProps {
-  writeDisposition: SnowflakeWriteDisposition;
-  createDisposition: SnowflakeCreateDisposition;
-  tableSchema: string;
-  quotationMark: string;
-  fileNameTemplate: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Local presentational sub-component for write/create dispositions, schema, and file formatting.
- */
-const SnowflakeSinkDispositionsCard: React.FC<SnowflakeSinkDispositionsCardProps> = ({
-  writeDisposition,
-  createDisposition,
-  tableSchema,
-  quotationMark,
-  fileNameTemplate,
-  onChange
-}) => {
-  return (
-    <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-      <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        <span>Dispositions &amp; Serialization</span>
-        <InfoTooltip text="Controls write disposition, table auto-creation, and staged file formatting." />
-      </label>
-
-      <div className="grid grid-cols-2 items-end gap-2 mt-1">
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="snowflakeSinkWriteDisposition"
-            className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
-          >
-            <span>Write Disposition</span>
-            <InfoTooltip text="Action when writing to an existing table: APPEND appends new rows; TRUNCATE truncates table before writing; EMPTY fails if table is not empty. Maps to withWriteDisposition()." />
-          </label>
-          <select
-            id="snowflakeSinkWriteDisposition"
-            name="writeDisposition"
-            value={writeDisposition}
-            onChange={onChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)]"
-          >
-            <option value="APPEND">APPEND (Append to existing rows)</option>
-            <option value="TRUNCATE">TRUNCATE (Truncate table before writing)</option>
-            <option value="EMPTY">EMPTY (Fail if table has rows)</option>
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="snowflakeSinkCreateDisposition"
-            className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
-          >
-            <span>Create Disposition</span>
-            <InfoTooltip text="Action if target table does not exist: CREATE_IF_NEEDED creates the table using TableSchema; CREATE_NEVER requires table to pre-exist. Maps to withCreateDisposition()." />
-          </label>
-          <select
-            id="snowflakeSinkCreateDisposition"
-            name="createDisposition"
-            value={createDisposition}
-            onChange={onChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)]"
-          >
-            <option value="CREATE_IF_NEEDED">CREATE_IF_NEEDED</option>
-            <option value="CREATE_NEVER">CREATE_NEVER</option>
-          </select>
-        </div>
-      </div>
-
-      <PropertyField
-        id="snowflakeSinkTableSchema"
-          name="tableSchema"
-          label="Table Schema"
-          tooltip="Snowflake TableSchema instance reference or DDL for automatic table creation. Maps to withTableSchema()."
-          value={tableSchema}
-          placeholder="e.g. com.example.TargetTableSchema"
-          onChange={onChange}
-          mono={true}
-        />
-
-      <div className="grid grid-cols-2 gap-2 mt-1">
-        <PropertyField
-          id="snowflakeSinkQuotationMark"
-          name="quotationMark"
-          label="Quotation Mark"
-          tooltip="Quote character enclosing CSV field values during staging. Maps to withQuotationMark(). Default: double quote."
-          value={quotationMark}
-          placeholder='e.g. "'
-          onChange={onChange}
-          mono={true}
-        />
-        <PropertyField
-          id="snowflakeSinkFileNameTemplate"
-          name="fileNameTemplate"
-          label="File Name Template"
-          tooltip="File naming template for staged CSV part files. Maps to withFileNameTemplate()."
-          value={fileNameTemplate}
-          placeholder="e.g. output-shard-%s.csv"
-          onChange={onChange}
-          mono={true}
-        />
-      </div>
-    </div>
-  );
-};
-
-/**
- * Props for the SnowflakeSinkAuthCard component.
- */
-interface SnowflakeSinkAuthCardProps {
-  authMode: SnowflakeAuthMode;
-  usernameSecret: string;
-  passwordSecret: string;
-  privateKeySecret: string;
-  privateKeyPassphraseSecret: string;
-  oauthTokenSecret: string;
-  secretOptions: { value: string; label: string }[];
-  secretError: string | null;
-  secretsLoading?: boolean;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Local presentational sub-component for Snowflake sink authentication configuration.
- */
-const SnowflakeSinkAuthCard: React.FC<SnowflakeSinkAuthCardProps> = ({
-  authMode,
-  usernameSecret,
-  passwordSecret,
-  privateKeySecret,
-  privateKeyPassphraseSecret,
-  oauthTokenSecret,
-  secretOptions,
-  secretError,
-  secretsLoading,
-  onChange
-}) => {
-  return (
-    <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-      <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        <span>Authentication</span>
-        <InfoTooltip text="Authentication strategy for Snowflake connection via GCP Secret Manager: Username/Password, Key Pair, or OAuth Token." />
-      </label>
-
-      <div className="flex flex-col gap-1.5 mt-1">
-        <label
-          htmlFor="snowflakeSinkAuthMode"
-          className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
-        >
-          <span>Authentication Strategy</span>
-        </label>
-        <select
-          id="snowflakeSinkAuthMode"
-          name="authMode"
-          value={authMode}
-          onChange={onChange}
-          className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)]"
-        >
-          <option value="username_password">Username &amp; Password (Secret Manager)</option>
-          <option value="key_pair">Key Pair Authentication (Private Key)</option>
-          <option value="oauth">OAuth Access Token</option>
-        </select>
-      </div>
-
-      <div className="flex flex-col gap-3 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
-        {authMode !== 'oauth' && (
-          <PropertyField
-            id="snowflakeSinkUsernameSecret"
-            name="usernameSecret"
-            label="Username Secret"
-            value={usernameSecret}
-            onChange={onChange}
-            list="snowflake-sink-secret-options"
-            datalist={secretOptions}
-            loading={secretsLoading}
-            placeholder="e.g. snowflake-username"
-            tooltip="GCP Secret Manager secret containing the Snowflake login user name."
-            invalid={!!secretError}
-            mono={true}
-          />
-        )}
-
-        {authMode === 'username_password' && (
-          <PropertyField
-            id="snowflakeSinkPasswordSecret"
-            name="passwordSecret"
-            label="Password Secret"
-            value={passwordSecret}
-            onChange={onChange}
-            list="snowflake-sink-secret-options"
-            datalist={secretOptions}
-            loading={secretsLoading}
-            placeholder="e.g. snowflake-password"
-            tooltip="GCP Secret Manager secret containing the Snowflake user password."
-            error={secretError}
-            invalid={!!secretError}
-            mono={true}
-          />
-        )}
-
-        {authMode === 'key_pair' && (
-          <>
-            <PropertyField
-              id="snowflakeSinkPrivateKeySecret"
-              name="privateKeySecret"
-              label="Private Key Secret"
-              value={privateKeySecret}
-              onChange={onChange}
-              list="snowflake-sink-secret-options"
-              datalist={secretOptions}
-              loading={secretsLoading}
-              placeholder="e.g. snowflake-rsa-private-key"
-              tooltip="GCP Secret Manager secret containing the PEM-encoded private key."
-              error={secretError}
-              invalid={!!secretError}
-              mono={true}
-            />
-            <PropertyField
-              id="snowflakeSinkPrivateKeyPassphraseSecret"
-              name="privateKeyPassphraseSecret"
-              label="Key Passphrase Secret (Optional)"
-              value={privateKeyPassphraseSecret}
-              onChange={onChange}
-              list="snowflake-sink-secret-options"
-              datalist={secretOptions}
-              loading={secretsLoading}
-              placeholder="e.g. snowflake-key-passphrase"
-              tooltip="Optional GCP Secret Manager secret containing the passphrase for the encrypted private key."
-              mono={true}
-            />
-          </>
-        )}
-
-        {authMode === 'oauth' && (
-          <PropertyField
-            id="snowflakeSinkOauthTokenSecret"
-            name="oauthTokenSecret"
-            label="OAuth Token Secret"
-            value={oauthTokenSecret}
-            onChange={onChange}
-            list="snowflake-sink-secret-options"
-            datalist={secretOptions}
-            loading={secretsLoading}
-            placeholder="e.g. snowflake-oauth-token"
-            tooltip="GCP Secret Manager secret containing the OAuth access token."
-            error={secretError}
-            invalid={!!secretError}
-            mono={true}
-          />
-        )}
-      </div>
-    </div>
-  );
-};
-
-/**
- * Props for the SnowflakeSinkAdvancedCard component.
- */
-interface SnowflakeSinkAdvancedCardProps {
-  showAdvanced: boolean;
-  onToggle: () => void;
-  flushRowLimit: number | string;
-  loginTimeout: number | string;
-  extraParameters: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Local presentational sub-component for advanced Snowflake sink buffer and session settings.
- */
-const SnowflakeSinkAdvancedCard: React.FC<SnowflakeSinkAdvancedCardProps> = ({
-  showAdvanced,
-  onToggle,
-  flushRowLimit,
-  loginTimeout,
-  extraParameters,
-  onChange
-}) => {
-  return (
-    <CollapsibleSection
-      title="Advanced Sink Settings"
-      isOpen={showAdvanced}
-      onToggle={onToggle}
-    >
-      <div className="grid grid-cols-2 gap-2">
-        <PropertyField
-          id="snowflakeSinkFlushRowLimit"
-          name="flushRowLimit"
-          label="Flush Row Limit"
-          type="number"
-          value={flushRowLimit}
-          onChange={onChange}
-          placeholder="e.g. 10000"
-          tooltip="Maximum number of rows buffered before flushing to a staged file. Maps to withFlushRowLimit()."
-          min={0}
-        />
-        <PropertyField
-          id="snowflakeSinkLoginTimeout"
-          name="loginTimeout"
-          label="Login Timeout (Seconds)"
-          type="number"
-          value={loginTimeout}
-          onChange={onChange}
-          placeholder="e.g. 60"
-          tooltip="Login timeout duration in seconds for DataSourceConfiguration.withLoginTimeout()."
-          min={0}
-        />
-      </div>
-
-      <PropertyField
-        id="snowflakeSinkExtraParameters"
-        name="extraParameters"
-        label="Extra Session / JDBC Parameters"
-        type="textarea"
-        rows={2}
-        value={extraParameters}
-        onChange={onChange}
-        placeholder="CLIENT_SESSION_KEEP_ALIVE=true"
-        tooltip="Additional session connection parameters."
-        mono={true}
-      />
-    </CollapsibleSection>
-  );
-};
-
-/**
- * SnowflakeIOSinkProperties renders the configuration form for writing records to Snowflake.
- *
- * @param props Component properties containing the active node and onChange callback
- */
-export const SnowflakeIOSinkProperties: React.FC<SnowflakeIOSinkPropertiesProps> = ({ node, onChange }) => {
-  const properties = node.data.properties || {};
-
-  // Form field state extracted from node properties
-  const serverName = properties.serverName || '';
-  const database = properties.database || '';
-  const schema = properties.schema || '';
-  const warehouse = properties.warehouse || '';
-  const role = properties.role || '';
-  const table = properties.table || '';
-  const stagingBucketName = properties.stagingBucketName || '';
-  const storageIntegrationName = properties.storageIntegrationName || '';
-  const writeDisposition: SnowflakeWriteDisposition = properties.writeDisposition || 'APPEND';
-  const createDisposition: SnowflakeCreateDisposition = properties.createDisposition || 'CREATE_IF_NEEDED';
-  const tableSchema = properties.tableSchema || '';
-  const quotationMark = properties.quotationMark || '';
-  const fileNameTemplate = properties.fileNameTemplate || '';
-  const authMode: SnowflakeAuthMode = properties.authMode || 'username_password';
-  const usernameSecret = properties.usernameSecret || '';
-  const passwordSecret = properties.passwordSecret || '';
-  const privateKeySecret = properties.privateKeySecret || '';
-  const privateKeyPassphraseSecret = properties.privateKeyPassphraseSecret || '';
-  const oauthTokenSecret = properties.oauthTokenSecret || '';
-  const flushRowLimit = properties.flushRowLimit ?? '';
-  const loginTimeout = properties.loginTimeout ?? '';
-  const extraParameters = properties.extraParameters || '';
-
-  // Request Secret Manager secrets via useAssetLoader hook
-  const { items: rawSecrets, error: secretError, loading: secretsLoading } = useAssetLoader<SecretItem | string>('secrets');
-  const normalizedSecrets = (rawSecrets || []).map(normalizeSecretItem);
-  const secretOptions = normalizedSecrets.map(s => ({ value: s.id, label: s.name }));
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
-  const isServerEmpty = !serverName.trim();
-  const isDatabaseEmpty = !database.trim();
-  const isTableEmpty = !table.trim();
-  const isStagingBucketEmpty = !stagingBucketName.trim();
-  const isStorageIntegrationEmpty = !storageIntegrationName.trim();
-
-  // Fallback chain for system instructions
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, number, select, and checkbox input changes.
-   *
-   * @param e Standard React change event
-   */
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    delete next.sfPassword;
+
+    if (name === 'sfURL') {
+      delete next.serverName;
     }
+    if (name === 'sfWarehouse') {
+      delete next.warehouse;
+    }
+    if (name === 'sfDatabase') {
+      delete next.database;
+    }
+    if (name === 'sfSchema') {
+      delete next.schema;
+    }
+    if (name === 'sfRole') {
+      delete next.role;
+    }
+    if (name === 'dbtable') {
+      delete next.table;
+    }
+    if (name === 'secretName') {
+      delete next.passwordSecret;
+      delete next.privateKeySecret;
+    }
+
+    onChange(next);
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Snowflake Destination Connection Card */}
-      <SnowflakeSinkConnectionCard
-        serverName={serverName}
-        database={database}
-        schema={schema}
-        warehouse={warehouse}
-        role={role}
-        table={table}
-        isServerEmpty={isServerEmpty}
-        isDatabaseEmpty={isDatabaseEmpty}
-        isTableEmpty={isTableEmpty}
-        onChange={handleChange}
-      />
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark Snowflake Sink</span>
+        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+          net.snowflake.spark.snowflake · foreachBatch
+        </span>
+      </div>
 
-      {/* Staging Bucket & Storage Integration */}
-      <SnowflakeSinkStagingCard
-        stagingBucketName={stagingBucketName}
-        storageIntegrationName={storageIntegrationName}
-        isStagingBucketEmpty={isStagingBucketEmpty}
-        isStorageIntegrationEmpty={isStorageIntegrationEmpty}
-        onChange={handleChange}
-      />
+      {/* Snowflake Connection Coordinates */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          <span>Snowflake Connection Coordinates</span>
+          <InfoTooltip text="Configures sfURL, sfWarehouse, sfDatabase, sfSchema, and sfRole options for the Spark Snowflake connector." />
+        </label>
 
-      {/* Dispositions and Schema */}
-      <SnowflakeSinkDispositionsCard
-        writeDisposition={writeDisposition}
-        createDisposition={createDisposition}
-        tableSchema={tableSchema}
-        quotationMark={quotationMark}
-        fileNameTemplate={fileNameTemplate}
-        onChange={handleChange}
-      />
+        <PropertyField
+          id="snowflakeSinkSfUrl"
+          name="sfURL"
+          label="Snowflake URL (sfURL)"
+          required="sfURL is required"
+          tooltip="Snowflake account URL (for example xy12345.us-central1.gcp.snowflakecomputing.com)."
+          value={sfURL}
+          invalid={isUrlEmpty}
+          error={isUrlEmpty ? 'sfURL is required' : null}
+          placeholder="xy12345.us-central1.gcp.snowflakecomputing.com"
+          onChange={handleChange}
+          mono={true}
+        />
 
-      {/* Authentication Strategy Card */}
-      <SnowflakeSinkAuthCard
-        authMode={authMode}
-        usernameSecret={usernameSecret}
-        passwordSecret={passwordSecret}
-        privateKeySecret={privateKeySecret}
-        privateKeyPassphraseSecret={privateKeyPassphraseSecret}
-        oauthTokenSecret={oauthTokenSecret}
-        secretOptions={secretOptions}
-        secretError={secretError}
-        secretsLoading={secretsLoading}
-        onChange={handleChange}
-      />
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="snowflakeSinkSfWarehouse"
+            name="sfWarehouse"
+            label="Warehouse (sfWarehouse)"
+            required="sfWarehouse is required"
+            tooltip="Snowflake virtual warehouse name used for write execution."
+            value={sfWarehouse}
+            invalid={isWarehouseEmpty}
+            error={isWarehouseEmpty ? 'sfWarehouse is required' : null}
+            placeholder="COMPUTE_WH"
+            onChange={handleChange}
+            mono={true}
+          />
+          <PropertyField
+            id="snowflakeSinkSfDatabase"
+            name="sfDatabase"
+            label="Database (sfDatabase)"
+            required="sfDatabase is required"
+            tooltip="Target Snowflake database name."
+            value={sfDatabase}
+            invalid={isDatabaseEmpty}
+            error={isDatabaseEmpty ? 'sfDatabase is required' : null}
+            placeholder="ANALYTICS_DB"
+            onChange={handleChange}
+            mono={true}
+          />
+        </div>
 
-      {/* Collapsible Advanced Sink Settings */}
-      <SnowflakeSinkAdvancedCard
-        showAdvanced={showAdvanced}
-        onToggle={() => setShowAdvanced(!showAdvanced)}
-        flushRowLimit={flushRowLimit}
-        loginTimeout={loginTimeout}
-        extraParameters={extraParameters}
-        onChange={handleChange}
-      />
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="snowflakeSinkSfSchema"
+            name="sfSchema"
+            label="Schema (sfSchema)"
+            tooltip="Target Snowflake schema name (default PUBLIC)."
+            value={sfSchema}
+            placeholder="PUBLIC"
+            onChange={handleChange}
+            mono={true}
+          />
+          <PropertyField
+            id="snowflakeSinkSfRole"
+            name="sfRole"
+            label="Role (sfRole)"
+            tooltip="Snowflake access control role."
+            value={sfRole}
+            placeholder="DATA_ENGINEER"
+            onChange={handleChange}
+            mono={true}
+          />
+        </div>
+      </div>
+
+      {/* Destination Table, Save Mode & Staging */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          <span>Target Table &amp; Write Behavior</span>
+          <InfoTooltip text="Configures destination dbtable, Spark saveMode, ephemeral staging table swaps, and SQL preactions or postactions." />
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="snowflakeSinkDbtable"
+            name="dbtable"
+            label="Destination Table (dbtable)"
+            required="dbtable is required"
+            tooltip="Target Snowflake table name passed to .option('dbtable', ...)."
+            value={dbtable}
+            invalid={isTableEmpty}
+            error={isTableEmpty ? 'dbtable is required' : null}
+            placeholder="AGGREGATED_METRICS"
+            onChange={handleChange}
+            mono={true}
+          />
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="snowflakeSinkSaveMode"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Save Mode</span>
+              <InfoTooltip text="Spark save mode applied when writing to the Snowflake table." />
+            </label>
+            <select
+              id="snowflakeSinkSaveMode"
+              name="saveMode"
+              value={saveMode}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="append">append</option>
+              <option value="overwrite">overwrite</option>
+              <option value="errorifexists">errorifexists</option>
+              <option value="ignore">ignore</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            id="snowflakeSinkUseStagingTable"
+            type="checkbox"
+            name="usestagingtable"
+            checked={usestagingtable}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+          />
+          <label
+            htmlFor="snowflakeSinkUseStagingTable"
+            className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+          >
+            <span>Use Ephemeral Staging Table (usestagingtable=ON)</span>
+            <InfoTooltip text="Writes into a temporary Snowflake table and swaps or merges atomically on completion." />
+          </label>
+        </div>
+
+        {saveMode === 'overwrite' && (
+          <div className="flex items-center gap-2">
+            <input
+              id="snowflakeSinkTruncateTable"
+              type="checkbox"
+              name="truncateTable"
+              checked={truncateTable}
+              onChange={handleChange}
+              className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+            />
+            <label
+              htmlFor="snowflakeSinkTruncateTable"
+              className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+            >
+              <span>Truncate Table on Overwrite (truncate_table=ON)</span>
+              <InfoTooltip text="Truncates the existing Snowflake table on overwrite so grants and clustering definitions survive." />
+            </label>
+          </div>
+        )}
+
+        <PropertyField
+          id="snowflakeSinkPreactions"
+          name="preactions"
+          label="Pre-Actions SQL (preactions)"
+          type="textarea"
+          rows={2}
+          tooltip="Optional SQL statements executed in Snowflake before the connector writes data."
+          value={preactions}
+          placeholder="DELETE FROM AGGREGATED_METRICS WHERE BATCH_DATE = CURRENT_DATE()"
+          onChange={handleChange}
+          mono={true}
+        />
+
+        <PropertyField
+          id="snowflakeSinkPostactions"
+          name="postactions"
+          label="Post-Actions SQL (postactions)"
+          type="textarea"
+          rows={2}
+          tooltip="Optional SQL statements executed in Snowflake after the connector finishes writing."
+          value={postactions}
+          placeholder="GRANT SELECT ON TABLE AGGREGATED_METRICS TO ROLE ANALYST_ROLE"
+          onChange={handleChange}
+          mono={true}
+        />
+      </div>
+
+      {/* Authentication */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="snowflakeSinkSfUser"
+            name="sfUser"
+            label="Snowflake Username (sfUser)"
+            tooltip="Snowflake login user name."
+            value={sfUser}
+            placeholder="SPARK_SVC_USER"
+            onChange={handleChange}
+            mono={true}
+          />
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="snowflakeSinkCredentialType"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Credential Type</span>
+              <InfoTooltip text="Select whether the Secret Manager payload holds sfPassword or a PEM private key (pem_private_key)." />
+            </label>
+            <select
+              id="snowflakeSinkCredentialType"
+              name="credentialType"
+              value={credentialType}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="password">Password (sfPassword)</option>
+              <option value="pem_private_key">PEM Private Key (pem_private_key)</option>
+            </select>
+          </div>
+        </div>
+
+        <SecretManagerAuthFields
+          idPrefix="snowflakeSink"
+          serviceName="Snowflake"
+          authMode={authMode}
+          secretName={secretName}
+          authOptions={SNOWFLAKE_SINK_AUTH_OPTIONS}
+          secretManagerValue="secretManager"
+          datalistId="snowflake-sink-secret-options"
+          secretPlaceholder={
+            credentialType === 'pem_private_key'
+              ? 'e.g. snowflake-rsa-private-key'
+              : 'e.g. snowflake-password'
+          }
+          onChange={handleChange}
+        />
+      </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="snowflakeSinkSystemInstructions"
         value={systemInstructions}
         rows={4}
-        tooltip="Optional custom prompt instructions injected into LLM code generation for this transform."
-        placeholder="Custom prompt instructions for generating the Apache Beam SnowflakeIO sink step..."
+        placeholder="Enter custom instructions for Spark Snowflake sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -738,3 +406,5 @@ export const SnowflakeIOSinkProperties: React.FC<SnowflakeIOSinkPropertiesProps>
     </div>
   );
 };
+
+export const SnowflakeSinkProperties = SnowflakeIOSinkProperties;

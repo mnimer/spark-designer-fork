@@ -1,49 +1,46 @@
 /**
- * BigTableIOSinkProperties Component
+ * @fileoverview Bigtable Sink Properties Component (SNK21).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam BigTableIO Write Sink nodes
- * (org.apache.beam.sdk.io.gcp.bigtable.BigtableIO.write() in Java / WriteToBigTable in Python).
+ * Renders the property configuration panel for Google Cloud Bigtable Sink nodes
+ * in Apache Spark 4.x pipelines (.write.format("bigtable") and streaming foreachBatch
+ * via spark-bigtable_2.13 connector).
  *
  * Architectural Decisions:
- * // NOTE: The Beam Java SDK class is BigtableIO (lower-case 't') while the designer palette/registry identifier
- * // is BigTableIO (capital 'T'). This file and component exports use BigTableIO to match the designer registry keys,
- * // while system_instructions reference org.apache.beam.sdk.io.gcp.bigtable.BigtableIO.
- * // NOTE: BigtableIO.write() consumes PCollection<KV<ByteString, Iterable<Mutation>>>.
- * - Project ID, Instance ID, and Table ID are required with instant validation and aria-invalid flags.
- * - Configures Bigtable write flow control (withFlowControl) and batch/outstanding thresholds:
- *   withMaxBytesPerBatch, withMaxElementsPerBatch, withMaxOutstandingBytes, and withMaxOutstandingElements.
- * - Supports custom error handling / dead-letter routing (withErrorHandler) and submission validation bypass (withoutValidation).
- * - Authentication options: Application Default Credentials (ADC) or GCP Secret Manager service-account reference.
- *   Uses IPC 'getSecrets' to populate datalist with id 'bigtable-sink-secret-options'.
- * - Collapsible Advanced Sink Settings: Bigtable emulator host (withEmulator) and attempt/operation timeouts.
- * - Preserves system_instructions / special_instructions for LLM code generation.
- * - Follows the 8pt grid system (p-2, p-3, p-4, gap-2, gap-4) and Tailwind CSS styling.
+ * - Enforces required projectId, instanceId, tableId, and catalog JSON mapping fields.
+ * - Uses useAssetLoader for live GCP Bigtable instance and table autocomplete.
+ * - Exposes createNewTable, writeRowTimestamp, batchMutateSize, and enableFlowControl
+ *   for Spark Bigtable write tuning, plus Secret Manager authentication and advanced timeouts.
  */
 
 import React, { useState } from 'react';
+import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import {
+  SecretManagerAuthFields,
+  type SecretItem,
+} from '../../components/common/SecretManagerAuthFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
-import { resolveSystemInstructions } from '../../utils/systemInstructions';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
-/**
- * Secret item loaded from Secret Manager for Bigtable authentication.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
 
-/**
- * Props for the BigTableIOSinkProperties component.
- */
+export const DEFAULT_BIGTABLE_JAR_URI = 'gs://spark-lib/bigtable/spark-bigtable_2.13-0.1.0.jar';
+
+const SAMPLE_BIGTABLE_SINK_CATALOG = `{
+  "table": {"name": "user_sessions"},
+  "rowkey": "row_key",
+  "columns": {
+    "row_key": {"cf": "rowkey", "col": "rowkey", "type": "string"},
+    "event_type": {"cf": "events", "col": "event_type", "type": "string"}
+  }
+}`;
+
+/** Props for the {@link BigTableIOSinkProperties} component. */
 export interface BigTableIOSinkPropertiesProps {
   node: {
     data: {
@@ -55,106 +52,120 @@ export interface BigTableIOSinkPropertiesProps {
         projectId?: string;
         instanceId?: string;
         tableId?: string;
+        table?: string;
         appProfileId?: string;
-        flowControl?: boolean;
-        maxBytesPerBatch?: number | string;
+        catalog?: string;
+        createNewTable?: boolean;
+        writeRowTimestamp?: number | string;
+        batchMutateSize?: number | string;
         maxElementsPerBatch?: number | string;
-        maxOutstandingBytes?: number | string;
-        maxOutstandingElements?: number | string;
-        enableErrorHandler?: boolean;
-        errorHandlerDeadLetter?: string;
-        withoutValidation?: boolean;
-        authMode?: 'adc' | 'secret_manager';
+        enableFlowControl?: boolean;
+        flowControl?: boolean;
+        authMode?: string;
+        secretName?: string;
         serviceAccountSecret?: string;
+        jarUri?: string;
         emulatorHost?: string;
         attemptTimeoutMs?: number | string;
         operationTimeoutMs?: number | string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * BigTableIOSinkProperties renders the property configuration form for BigtableIO write operations.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Normalizes legacy authentication mode identifiers for SecretManagerAuthFields.
  */
-export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> = ({ node, onChange }) => {
-  const properties = node?.data?.properties || {};
+function normalizeAuthMode(raw?: string): string {
+  if (raw === 'secretManager' || raw === 'secret_manager') {
+    return 'secretManager';
+  }
+  return 'default';
+}
 
-  // Form field state extracted from node properties
+/**
+ * Configures properties for Apache Spark Cloud Bigtable batch and micro-batch sink nodes.
+ */
+export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> = ({
+  node,
+  onChange,
+}) => {
+  const properties = node?.data?.properties || {};
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const projectId = properties.projectId || '';
   const instanceId = properties.instanceId || '';
-  const tableId = properties.tableId || '';
+  const tableId = String(properties.tableId ?? properties.table ?? '');
   const appProfileId = properties.appProfileId || '';
-  const flowControl = properties.flowControl ?? false;
-  const maxBytesPerBatch = properties.maxBytesPerBatch ?? '';
-  const maxElementsPerBatch = properties.maxElementsPerBatch ?? '';
-  const maxOutstandingBytes = properties.maxOutstandingBytes ?? '';
-  const maxOutstandingElements = properties.maxOutstandingElements ?? '';
-  const enableErrorHandler = properties.enableErrorHandler ?? false;
-  const errorHandlerDeadLetter = properties.errorHandlerDeadLetter || '';
-  const withoutValidation = properties.withoutValidation ?? false;
-  const authMode = properties.authMode || 'adc';
-  const serviceAccountSecret = properties.serviceAccountSecret || '';
+  const catalog = properties.catalog || '';
+  const createNewTable = properties.createNewTable ?? false;
+  const writeRowTimestamp = properties.writeRowTimestamp ?? '';
+  const batchMutateSize = properties.batchMutateSize ?? properties.maxElementsPerBatch ?? '';
+  const enableFlowControl = properties.enableFlowControl ?? properties.flowControl ?? false;
+  const authMode = normalizeAuthMode(properties.authMode);
+  const secretName = properties.secretName || properties.serviceAccountSecret || '';
+  const jarUri = properties.jarUri || '';
   const emulatorHost = properties.emulatorHost || '';
   const attemptTimeoutMs = properties.attemptTimeoutMs ?? '';
   const operationTimeoutMs = properties.operationTimeoutMs ?? '';
 
-  // Local state for dynamically loaded GCP Secret Manager secrets
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const instanceTrimmed = instanceId.trim();
+  const { items: bigtableInstances, loading: instancesLoading } =
+    useAssetLoader<string>('bigtableInstances');
+  const { items: bigtableTables, loading: tablesLoading } = useAssetLoader<string>(
+    'bigtableTables',
+    {
+      params: { instance: instanceTrimmed },
+      enabled: instanceTrimmed.length > 0,
+    }
+  );
 
-  // Field validation
   const isProjectEmpty = !projectId.trim();
-  const isInstanceEmpty = !instanceId.trim();
+  const isInstanceEmpty = !instanceTrimmed;
   const isTableEmpty = !tableId.trim();
+  const isCatalogEmpty = !catalog.trim();
 
-  // Verbatim system instruction fallback chain
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, select, and checkbox input changes.
-   *
-   * @param e Standard React change event
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    if (name === 'tableId') {
+      onChange({ ...properties, tableId: updatedValue, table: updatedValue });
+      return;
     }
+    onChange({ ...properties, [name]: updatedValue });
   };
-
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Target Bigtable Instance & Table Identification */}
+      {/* Connector Header Badge */}
+      <div className="flex flex-col gap-1 p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold text-slate-200">Spark Cloud Bigtable Connector</span>
+          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[11px]">
+            {'.format("bigtable") · foreachBatch'}
+          </span>
+        </div>
+        <span className="text-[11px] text-slate-400 font-mono truncate">
+          {jarUri.trim() || DEFAULT_BIGTABLE_JAR_URI}
+        </span>
+      </div>
+
+      {/* Bigtable Coordinates */}
       <div className="flex flex-col gap-3">
         <PropertyField
           id="bigtableSinkProjectId"
           name="projectId"
           label="Project ID"
           required="Project ID is required"
-          tooltip="Google Cloud Project ID hosting the target Cloud Bigtable instance (withProjectId). Required."
+          tooltip="Google Cloud Project ID hosting the destination Cloud Bigtable instance (spark.bigtable.project.id)."
           value={projectId}
           invalid={isProjectEmpty}
           error={isProjectEmpty ? 'Project ID is required' : null}
@@ -169,11 +180,14 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
             name="instanceId"
             label="Instance ID"
             required="Instance ID is required"
-            tooltip="Cloud Bigtable Instance ID (withInstanceId). Required."
+            tooltip="Cloud Bigtable Instance ID (spark.bigtable.instance.id)."
             value={instanceId}
             invalid={isInstanceEmpty}
             error={isInstanceEmpty ? 'Instance ID is required' : null}
             placeholder="e.g. prod-bigtable-instance"
+            list="bigtable-sink-instance-options"
+            datalist={bigtableInstances}
+            loading={instancesLoading}
             onChange={handleChange}
             mono={true}
           />
@@ -182,11 +196,14 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
             name="tableId"
             label="Table ID"
             required="Table ID is required"
-            tooltip="Cloud Bigtable Table ID to write mutations to (withTableId). Required."
+            tooltip="Destination Cloud Bigtable table name referenced in the catalog JSON mapping."
             value={tableId}
             invalid={isTableEmpty}
             error={isTableEmpty ? 'Table ID is required' : null}
             placeholder="e.g. user_sessions"
+            list="bigtable-sink-table-options"
+            datalist={instanceTrimmed ? bigtableTables : []}
+            loading={instanceTrimmed ? tablesLoading : false}
             onChange={handleChange}
             mono={true}
           />
@@ -195,192 +212,115 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
         <PropertyField
           id="bigtableSinkAppProfileId"
           name="appProfileId"
-          label="App Profile ID"
-          tooltip="Optional Bigtable App Profile ID for routing mutations (withAppProfileId)."
+          label="App Profile ID (Optional)"
+          tooltip="Optional Bigtable App Profile ID for write workload routing (spark.bigtable.app_profile.id)."
           value={appProfileId}
           onChange={handleChange}
-          placeholder="e.g. default-app-profile"
+          placeholder="e.g. batch-writes-profile"
           mono={true}
         />
       </div>
 
-      {/* Flow Control & Batch Tuning */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+      {/* Catalog JSON Schema Mapping */}
+      <PropertyField
+        id="bigtableSinkCatalog"
+        name="catalog"
+        label="Catalog JSON Schema Mapping"
+        type="textarea"
+        rows={6}
+        required="Catalog JSON schema mapping is required"
+        tooltip="Spark Bigtable catalog JSON mapping DataFrame columns to rowkey and column families (.option('catalog', catalogJson))."
+        value={catalog}
+        invalid={isCatalogEmpty}
+        error={isCatalogEmpty ? 'Catalog JSON schema mapping is required' : null}
+        placeholder={SAMPLE_BIGTABLE_SINK_CATALOG}
+        onChange={handleChange}
+        mono={true}
+      />
+
+      {/* Table Creation, Timestamp, and Batch Mutation Tuning */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Flow Control &amp; Batching</span>
-          <InfoTooltip text="Configures Bigtable client flow control rate-limiting and mutation batch sizes to protect Bigtable cluster capacity." />
+          <span>Write Options and Batch Mutation Tuning</span>
+          <InfoTooltip text="Configure table creation, cell write timestamps, batch mutation size, and adaptive flow control." />
         </label>
 
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2">
           <input
-            id="bigtableSinkFlowControl"
+            id="bigtableSinkCreateNewTable"
             type="checkbox"
-            name="flowControl"
-            checked={flowControl}
+            name="createNewTable"
+            checked={createNewTable}
             onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
           />
-          <label htmlFor="bigtableSinkFlowControl" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Enable Adaptive Flow Control</span>
-            <InfoTooltip text="Automatically rate-limits writes to prevent cluster overload while triggering Bigtable Autoscaling when needed (withFlowControl)." />
+          <label
+            htmlFor="bigtableSinkCreateNewTable"
+            className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+          >
+            <span>Create New Table If Missing (spark.bigtable.create.new.table)</span>
+            <InfoTooltip text="Creates the Bigtable table and catalog column families automatically when the table does not exist." />
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mt-1">
+        <div className="grid grid-cols-2 gap-2">
           <PropertyField
-            id="bigtableSinkMaxBytesPerBatch"
-            name="maxBytesPerBatch"
-            label="Max Bytes Per Batch"
+            id="bigtableSinkWriteRowTimestamp"
+            name="writeRowTimestamp"
+            label="Write Row Timestamp (ms)"
             type="number"
-            min={1}
-            value={maxBytesPerBatch}
+            min={0}
+            tooltip="Optional epoch timestamp in milliseconds applied to all written cells (spark.bigtable.write.timestamp.milliseconds)."
+            value={writeRowTimestamp}
             onChange={handleChange}
-            placeholder="e.g. 5242880 (5MB)"
-            tooltip="Maximum payload byte size accumulated before flushing a mutation batch (withMaxBytesPerBatch)."
+            placeholder="e.g. 1735689600000"
             mono={true}
           />
+
           <PropertyField
-            id="bigtableSinkMaxElementsPerBatch"
-            name="maxElementsPerBatch"
-            label="Max Elements Per Batch"
+            id="bigtableSinkBatchMutateSize"
+            name="batchMutateSize"
+            label="Batch Mutate Size"
             type="number"
             min={1}
-            value={maxElementsPerBatch}
+            max={100000}
+            tooltip="Maximum number of row mutations sent per Bigtable batch RPC (spark.bigtable.batch_mutate.size, default 100, max 100000)."
+            value={batchMutateSize}
             onChange={handleChange}
             placeholder="e.g. 1000"
-            tooltip="Maximum number of mutations bundled into a single batch request (withMaxElementsPerBatch)."
             mono={true}
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mt-1">
-          <PropertyField
-            id="bigtableSinkMaxOutstandingBytes"
-            name="maxOutstandingBytes"
-            label="Max Outstanding Bytes"
-            type="number"
-            min={1}
-            value={maxOutstandingBytes}
-            onChange={handleChange}
-            placeholder="e.g. 104857600 (100MB)"
-            tooltip="Upper bound on total in-flight bytes across concurrent write requests before applying backpressure (withMaxOutstandingBytes)."
-            mono={true}
-          />
-          <PropertyField
-            id="bigtableSinkMaxOutstandingElements"
-            name="maxOutstandingElements"
-            label="Max Outstanding Elements"
-            type="number"
-            min={1}
-            value={maxOutstandingElements}
-            onChange={handleChange}
-            placeholder="e.g. 10000"
-            tooltip="Upper bound on total in-flight mutation count before applying backpressure (withMaxOutstandingElements)."
-            mono={true}
-          />
-        </div>
-      </div>
-
-      {/* Error Handling & Validation */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Error Handling &amp; Validation</span>
-          <InfoTooltip text="Route bad mutations to a dead-letter destination and control graph validation." />
-        </label>
-
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2">
           <input
-            id="bigtableSinkEnableErrorHandler"
+            id="bigtableSinkEnableFlowControl"
             type="checkbox"
-            name="enableErrorHandler"
-            checked={enableErrorHandler}
+            name="enableFlowControl"
+            checked={enableFlowControl}
             onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
           />
-          <label htmlFor="bigtableSinkEnableErrorHandler" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Enable Bad Record Error Handler</span>
-            <InfoTooltip text="Routes failed mutations to a dead-letter destination instead of aborting the pipeline (withErrorHandler)." />
-          </label>
-        </div>
-
-        {enableErrorHandler && (
-          <PropertyField
-            id="bigtableSinkErrorHandlerDeadLetter"
-            name="errorHandlerDeadLetter"
-            label="Dead-Letter Sink / Topic"
-            value={errorHandlerDeadLetter}
-            onChange={handleChange}
-            placeholder="projects/my-p/topics/bigtable-write-dlq"
-            tooltip="Target destination or Pub/Sub topic for bad records routed by withErrorHandler."
-            mono={true}
-          />
-        )}
-
-        <div className="flex items-center gap-2 mt-1">
-          <input
-            id="bigtableSinkWithoutValidation"
-            type="checkbox"
-            name="withoutValidation"
-            checked={withoutValidation}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
-          />
-          <label htmlFor="bigtableSinkWithoutValidation" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Disable Pipeline Graph Validation</span>
-            <InfoTooltip text="Bypasses table existence and permission checks during graph submission (withoutValidation)." />
+          <label
+            htmlFor="bigtableSinkEnableFlowControl"
+            className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+          >
+            <span>Enable Batch Mutate Flow Control</span>
+            <InfoTooltip text="Applies client-side flow control to prevent overloading Bigtable tablet servers (spark.bigtable.enable.batch_mutate.flow_control)." />
           </label>
         </div>
       </div>
 
       {/* Authentication */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Authentication</span>
-          <InfoTooltip text="Choose authentication strategy: Google Application Default Credentials (ADC) or GCP Secret Manager service-account reference." />
-        </label>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="adc"
-              checked={authMode === 'adc'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Application Default Credentials (ADC)</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="secret_manager"
-              checked={authMode === 'secret_manager'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Secret Manager</span>
-          </label>
-        </div>
-
-        {authMode === 'secret_manager' && (
-          <div className="flex flex-col gap-2 mt-1">
-            <PropertyField
-              id="bigtableSinkServiceAccountSecret"
-              name="serviceAccountSecret"
-              label="Service Account Key Secret"
-              value={serviceAccountSecret}
-              onChange={handleChange}
-              list="bigtable-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. gcp-bigtable-sa-key"
-              error={secretError}
-              invalid={!!secretError}
-              mono={true}
-            />
-          </div>
-        )}
-      </div>
+      <SecretManagerAuthFields
+        idPrefix="bigtableSink"
+        serviceName="Cloud Bigtable"
+        authMode={authMode}
+        secretName={secretName}
+        datalistId="bigtable-sink-secret-options"
+        secretPlaceholder="e.g. gcp-bigtable-sa-key"
+        onChange={handleChange}
+      />
 
       {/* Collapsible Advanced Sink Settings */}
       <CollapsibleSection
@@ -388,19 +328,28 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
         isOpen={showAdvanced}
         onToggle={() => setShowAdvanced(!showAdvanced)}
       >
-        {/* Emulator Host Override */}
+        <PropertyField
+          id="bigtableSinkJarUri"
+          name="jarUri"
+          label="Connector JAR URI Override (Optional)"
+          tooltip="Optional Cloud Storage JAR URI overriding gs://spark-lib/bigtable/spark-bigtable_2.13-0.1.0.jar."
+          value={jarUri}
+          onChange={handleChange}
+          placeholder={DEFAULT_BIGTABLE_JAR_URI}
+          mono={true}
+        />
+
         <PropertyField
           id="bigtableSinkEmulatorHost"
           name="emulatorHost"
           label="Emulator Host"
-          tooltip="Bigtable emulator host (e.g. localhost:8086) for local integration testing (withEmulator)."
+          tooltip="Optional Bigtable emulator host and port for local testing (for example localhost:8086)."
           value={emulatorHost}
           onChange={handleChange}
           placeholder="localhost:8086"
           mono={true}
         />
 
-        {/* Attempt and Operation Timeouts */}
         <div className="grid grid-cols-2 gap-2">
           <PropertyField
             id="bigtableSinkAttemptTimeoutMs"
@@ -411,7 +360,7 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
             value={attemptTimeoutMs}
             onChange={handleChange}
             placeholder="e.g. 20000"
-            tooltip="Timeout in milliseconds for each individual RPC mutation attempt (withAttemptTimeout)."
+            tooltip="Timeout in milliseconds for each individual Bigtable RPC attempt."
             mono={true}
           />
           <PropertyField
@@ -423,17 +372,18 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
             value={operationTimeoutMs}
             onChange={handleChange}
             placeholder="e.g. 60000"
-            tooltip="Total timeout in milliseconds for the overall Bigtable mutation operation including retries (withOperationTimeout)."
+            tooltip="Total timeout in milliseconds for a Bigtable batch mutation operation including retries."
             mono={true}
           />
         </div>
       </CollapsibleSection>
 
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="bigtableSinkInstructions"
         value={systemInstructions}
-        tooltip="Optional instructions passed to LLM code generator when synthesizing BigtableIO write pipelines (consumes PCollection<KV<ByteString, Iterable<Mutation>>>)."
-        placeholder="e.g. Apply BigtableIO.write().withProjectId(...).withInstanceId(...).withTableId(...) consuming KV<ByteString, Iterable<Mutation>>"
+        tooltip="Optional custom instructions for Spark Bigtable sink code generation."
+        placeholder="Enter custom instructions for Spark Bigtable sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -444,3 +394,5 @@ export const BigTableIOSinkProperties: React.FC<BigTableIOSinkPropertiesProps> =
     </div>
   );
 };
+
+export const BigtableSinkProperties = BigTableIOSinkProperties;

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { PROPERTY_FORM_REGISTRY, loadPropertyForm } from './propertyFormRegistry';
 import { NODE_DOCUMENTATION_REGISTRY } from './documentation';
 import { SOURCE_NODES } from './nodes/sources';
+import { SINK_NODES } from './nodes/sinks';
 
 describe('PROPERTY_FORM_REGISTRY', () => {
   it('has dedicated panel entries matching the documented node catalog count and exact keys', () => {
@@ -22,6 +23,18 @@ describe('PROPERTY_FORM_REGISTRY', () => {
     expect(SOURCE_NODES).toHaveLength(38);
     for (const node of SOURCE_NODES) {
       const qualifiedKey = `SOURCE:${node.sparkTransform}`;
+      expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
+      expect(PROPERTY_FORM_REGISTRY[node.sparkTransform], `Missing direct form for ${node.sparkTransform}`).toBeDefined();
+      expect(PROPERTY_FORM_REGISTRY[qualifiedKey]).toBe(PROPERTY_FORM_REGISTRY[node.sparkTransform]);
+      expect(NODE_DOCUMENTATION_REGISTRY[qualifiedKey], `Missing docs for ${qualifiedKey}`).toBeDefined();
+      expect(NODE_DOCUMENTATION_REGISTRY[node.sparkTransform], `Missing direct docs for ${node.sparkTransform}`).toBeDefined();
+    }
+  });
+
+  it('registers all 37 Phase 6 Spark 4.x SINK_NODES under both SINK:<transform> and direct <transform> keys', () => {
+    expect(SINK_NODES).toHaveLength(37);
+    for (const node of SINK_NODES) {
+      const qualifiedKey = `SINK:${node.sparkTransform}`;
       expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
       expect(PROPERTY_FORM_REGISTRY[node.sparkTransform], `Missing direct form for ${node.sparkTransform}`).toBeDefined();
       expect(PROPERTY_FORM_REGISTRY[qualifiedKey]).toBe(PROPERTY_FORM_REGISTRY[node.sparkTransform]);

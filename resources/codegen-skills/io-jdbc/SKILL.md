@@ -1,12 +1,12 @@
 ---
 name: io-jdbc
-description: Read relational databases (PostgreSQL, MySQL, Oracle, SQL Server, and DB2) in PySpark 4.x using parallel JDBC partitioning, subquery wrapping, and Secret Manager credentials.
+description: Read and write relational databases (PostgreSQL, MySQL, Oracle, SQL Server, and DB2) in PySpark 4.x using JDBC and Secret Manager credentials.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [JdbcSource]
+  transforms: [JdbcSource, JdbcSink]
   preloadWhen: []
   sources:
     - prompt
@@ -14,9 +14,9 @@ metadata:
   validated: true
 ---
 
-# Generic Relational JDBC Source (`JdbcSource`)
+# Generic Relational JDBC Connector (`JdbcSource` and `JdbcSink`)
 
-Use these rules when generating PySpark 4.x code for a `JdbcSource` node across PostgreSQL, MySQL, Oracle, SQL Server, and IBM DB2.
+Use these rules when generating PySpark 4.x code for `JdbcSource` and `JdbcSink` nodes across PostgreSQL, MySQL, Oracle, SQL Server, and IBM DB2.
 
 ## 1. Dialect Driver Class Presets and Runtime Rules
 
@@ -28,12 +28,12 @@ Use these rules when generating PySpark 4.x code for a `JdbcSource` node across 
 | SQL Server | `jdbc:sqlserver://host:1433` | `com.microsoft.sqlserver.jdbc.SQLServerDriver` | `--properties="dataproc.artifacts.remove=conscrypt"` on Managed Spark |
 | IBM DB2 | `jdbc:db2://host:50000/db` | `com.ibm.db2.jcc.DB2Driver` | None |
 
-- Attach the corresponding JDBC driver JAR via `--jars` / `spark.jars`.
-- When the engine is SQL Server (`sqlserver` / `mssql`), include `--properties="dataproc.artifacts.remove=conscrypt"` on Serverless Spark and Dataproc Cluster so TLS handshakes succeed.
+- Attach the corresponding JDBC driver JAR via `--jars` or `spark.jars`.
+- If the engine is SQL Server (`sqlserver` or `mssql`), include `--properties="dataproc.artifacts.remove=conscrypt"` on Serverless Spark and Dataproc Cluster so TLS handshakes succeed.
 
-## 2. Parallel Partitioning and Subquery Wrapping (`read_sources`)
+## 2. Parallel Partitioning and Subquery Wrapping (`JdbcSource` in `read_sources`)
 
-- **Important Spark JDBC Rule (`query` vs `dbtable` with `partitionColumn`)**: Spark JDBC throws an `AnalysisException` if you set both `.option("query", ...)` and `.option("partitionColumn", ...)`. Whenever a user provides a custom SQL `query` AND parallel partitioning (`partitionColumn`), wrap the SQL statement as an aliased subquery in `dbtable`:
+- **Important Spark JDBC Rule (`query` vs `dbtable` with `partitionColumn`)**: Spark JDBC throws an `AnalysisException` if you set both `.option("query", ...)` and `.option("partitionColumn", ...)`. If a user provides both a custom SQL `query` and parallel partitioning (`partitionColumn`), wrap the SQL statement as an aliased subquery in `dbtable`:
   `.option("dbtable", f"({sql_query}) AS subq")`
 - **Dynamic `MIN`/`MAX` Bounds or Explicit Bounds**: Use explicit `lowerBound` and `upperBound` when configured, or query `SELECT MIN(<col>) AS min_v, MAX(<col>) AS max_v` first. Always set `.option("fetchsize", "5000")` (or the configured `fetchsize`) to avoid small row-by-row round-trips.
 - **Credentials**: Resolve `passwordSecret` once on the driver via `get_secret()`.
@@ -119,7 +119,79 @@ def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataF
     return dfs
 ```
 
-## 3. Offline Unit Testing (`tests/test_pipeline.py`)
+## 3. Batch and Streaming Write Patterns (`JdbcSink` in `write_sinks`)
+
+`JdbcSink` writes terminal DataFrames via `.write.format("jdbc")` in batch mode and wraps `.write.format("jdbc")` inside `df.writeStream.foreachBatch(...)` in streaming mode (`streamingSinkMode: "foreachBatch"`).
+
+### Required and Performance Options
+- **Explicit `driver`**: Always pass `.option("driver", driver)` matching the target database preset (`org.postgresql.Driver`, `com.mysql.cj.jdbc.Driver`, `oracle.jdbc.OracleDriver`, `com.microsoft.sqlserver.jdbc.SQLServerDriver`, or `com.ibm.db2.jcc.DB2Driver`).
+- **Batched Statements (`batchsize`)**: Default `.option("batchsize", "5000")` so JDBC `executeBatch()` sends multi-row batches per round-trip. For MySQL, include `rewriteBatchedStatements=true` in the JDBC URL or connection options when high-throughput bulk inserts are needed.
+- **Safe Overwrite (`truncate=true` and `cascadeTruncate`)**: When `saveMode` is `"overwrite"`, set `.option("truncate", "true")` by default so Spark runs `TRUNCATE TABLE` instead of dropping and recreating the table. This preserves indexes, foreign keys, and grants. If `cascadeTruncate` is enabled on PostgreSQL or Oracle, also pass `.option("cascadeTruncate", "true")`.
+- **Connection Cap (`numPartitions`)**: Pass `.option("numPartitions", str(max_connections))` (for example `8` or `16`) to cap concurrent executor JDBC connections and protect the target database connection pool.
+- **Transaction Isolation and DDL (`isolationLevel`, `createTableOptions`)**: Configure `.option("isolationLevel", isolation_level)` (`READ_COMMITTED`, `READ_UNCOMMITTED`, `REPEATABLE_READ`, `SERIALIZABLE`, or `NONE`) and `.option("createTableOptions", create_table_options)` when creating new tables.
+- **Credentials**: Resolve the database password once on the driver via `get_secret()` before starting batch writes or streaming queries. Never fetch secrets per row or inside a task loop.
+
+### Batch Write Example
+
+```python
+def write_jdbc_df(df: DataFrame, config: dict[str, Any], db_password: str) -> None:
+    """Writes a batch or micro-batch DataFrame to a relational table via JDBC."""
+    save_mode = config.get("jdbc_save_mode", "append")
+    writer = (
+        df.write.format("jdbc")
+        .mode(save_mode)
+        .option("driver", config.get("jdbc_driver", "org.postgresql.Driver"))
+        .option("url", config["jdbc_sink_url"])
+        .option("dbtable", config["jdbc_sink_table"])
+        .option("user", config["jdbc_sink_user"])
+        .option("password", db_password)
+        .option("batchsize", str(config.get("jdbc_batchsize", 5000)))
+        .option("isolationLevel", config.get("jdbc_isolation_level", "READ_COMMITTED"))
+    )
+
+    if save_mode == "overwrite" and config.get("jdbc_truncate", True):
+        writer = writer.option("truncate", "true")
+        if config.get("jdbc_cascade_truncate", False):
+            writer = writer.option("cascadeTruncate", "true")
+
+    if config.get("jdbc_num_partitions"):
+        writer = writer.option("numPartitions", str(config["jdbc_num_partitions"]))
+
+    if config.get("jdbc_create_table_options"):
+        writer = writer.option("createTableOptions", config["jdbc_create_table_options"])
+
+    writer.save()
+```
+
+### Streaming `foreachBatch` Write Example
+
+Spark JDBC does not provide a native `DataStreamWriter` sink. Always use `.writeStream.foreachBatch(write_micro_batch)` for streaming branches targeting `JdbcSink`:
+
+```python
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Writes streaming micro-batches to a relational database via foreachBatch."""
+    checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+    db_password = get_secret(config["jdbc_sink_password_secret"])
+
+    def write_micro_batch(batch_df: DataFrame, batch_id: int) -> None:
+        batch_df.cache()
+        try:
+            write_jdbc_df(batch_df, config, db_password)
+        finally:
+            batch_df.unpersist()
+
+    query = (
+        dfs["upstream_stream"]
+        .writeStream.foreachBatch(write_micro_batch)
+        .outputMode(config.get("output_mode", "append"))
+        .option("checkpointLocation", f"{checkpoint_root.rstrip('/')}/jdbc_sink")
+        .trigger(processingTime=config.get("trigger_interval", "10 seconds"))
+        .start()
+    )
+    query.awaitTermination()
+```
+
+## 4. Offline Unit Testing (`tests/test_pipeline.py`)
 
 Test `transform(dfs, config)` offline in `tests/test_pipeline.py` with an in-memory `DataFrame`:
 

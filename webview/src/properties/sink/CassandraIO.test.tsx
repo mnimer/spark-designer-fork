@@ -1,293 +1,135 @@
 /**
- * CassandraIOSinkProperties Unit Tests
+ * @fileoverview Unit Tests for CassandraIOSinkProperties Component (SNK31).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Tests the CassandraIOSinkProperties panel component covering field rendering,
- * hydration from node properties, onChange event dispatch, IPC Secret Manager communication,
- * mutation mode toggling (write vs delete), edge cases (missing properties, 0 values),
- * validation alerts, and instruction fallback chains.
+ * Validates CassandraIOSinkProperties rendering, contactPoints/keyspace/table validation,
+ * connectorBackend ('python_driver' | 'jvm_connector') and consistencyLevel selection,
+ * ttlColumn and writetimeColumn configuration, SecretManagerAuthFields, and system instructions.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { CassandraIOSinkProperties } from './CassandraIO';
+import { CassandraIOSinkProperties, CassandraSinkProperties } from './CassandraIO';
 
 describe('CassandraIOSinkProperties', () => {
   const mockOnChange = vi.fn();
-  let postMessageSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
   });
 
-  afterEach(() => {
-    delete (window as any).vscode;
-  });
-
-  it('renders required fields and shows validation errors when empty', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {}
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('127.0.0.1, 10.0.0.1')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. telemetry')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. device_rollups')).toBeInTheDocument();
-
-    expect(screen.getByText(/Contact points \/ hosts are required/i)).toBeInTheDocument();
-    expect(screen.getByText(/Keyspace is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/Table is required/i)).toBeInTheDocument();
-
-    expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSecrets' });
-  });
-
-  it('hydrates all populated sink properties correctly', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {
-          hosts: 'cassandra.internal:9042',
-          port: 9042,
-          localDc: 'dc2',
-          keyspace: 'analytics_db',
-          table: 'hourly_rollups',
-          mutationType: 'delete',
-          entity: 'com.example.RollupEntity',
-          consistencyLevel: 'QUORUM',
-          authMode: 'default',
-          system_instructions: 'Delete processed records via CassandraIO.delete()'
-        }
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('127.0.0.1, 10.0.0.1')).toHaveValue('cassandra.internal:9042');
-    expect(screen.getByPlaceholderText('9042')).toHaveValue(9042);
-    expect(screen.getByPlaceholderText('datacenter1')).toHaveValue('dc2');
-    expect(screen.getByPlaceholderText('e.g. telemetry')).toHaveValue('analytics_db');
-    expect(screen.getByPlaceholderText('e.g. device_rollups')).toHaveValue('hourly_rollups');
-    expect(screen.getByLabelText(/Delete \(CassandraIO\.delete\(\)\)/i)).toBeChecked();
-    expect(screen.getByRole('combobox', { name: 'Consistency Level' })).toHaveValue('QUORUM');
-    expect(screen.getByPlaceholderText('com.example.CassandraRowEntity')).toHaveValue('com.example.RollupEntity');
-    expect(screen.getByPlaceholderText(/Write mutated Cassandra entities/i)).toHaveValue('Delete processed records via CassandraIO.delete()');
-  });
-
-  it('supports entityStrategy switching between infer, schema editor, and custom class', () => {
-    const { unmount } = render(
-      <CassandraIOSinkProperties
-        node={{ data: { properties: { hosts: '127.0.0.1', keyspace: 'ks', table: 'tbl', entityStrategy: 'infer' } } }}
-        onChange={mockOnChange}
-      />
-    );
-    expect(screen.getByText(/Dynamic Inference:/i)).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('com.example.CassandraRowEntity')).not.toBeInTheDocument();
-    unmount();
-
+  it('exports CassandraSinkProperties alias and validates required contactPoints, keyspace, and table', () => {
+    expect(CassandraSinkProperties).toBe(CassandraIOSinkProperties);
     render(
+      <CassandraIOSinkProperties node={{ data: { properties: {} } }} onChange={mockOnChange} />
+    );
+
+    expect(screen.getByText('Contact points are required')).toBeInTheDocument();
+    expect(screen.getByText('Keyspace is required')).toBeInTheDocument();
+    expect(screen.getByText('Table is required')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('9042')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('100')).toBeInTheDocument();
+  });
+
+  it('hydrates Cassandra sink properties including TTL, writetime, consistencyLevel, and backend', () => {
+    const node = {
+      data: {
+        properties: {
+          contactPoints: '10.0.0.1,10.0.0.2',
+          port: 9042,
+          localDc: 'dc-west1',
+          ssl: true,
+          keyspace: 'telemetry',
+          table: 'device_rollups',
+          connectorBackend: 'jvm_connector' as const,
+          consistencyLevel: 'QUORUM' as const,
+          ttlColumn: '86400',
+          writetimeColumn: 'event_micros',
+          concurrency: 200,
+          username: 'cql_writer',
+          authMode: 'secretManager',
+          secretName: 'cassandra-pass-secret',
+        },
+      },
+    };
+
+    const { container } = render(
+      <CassandraIOSinkProperties node={node} onChange={mockOnChange} />
+    );
+
+    expect(screen.getByDisplayValue('10.0.0.1,10.0.0.2')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('dc-west1')).toBeInTheDocument();
+    expect(container.querySelector('#cassandraSinkSsl')).toBeChecked();
+    expect(screen.getByDisplayValue('telemetry')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('device_rollups')).toBeInTheDocument();
+    expect(container.querySelector('#cassandraSinkConnectorBackend')).toHaveValue('jvm_connector');
+    expect(container.querySelector('#cassandraSinkConsistencyLevel')).toHaveValue('QUORUM');
+    expect(screen.getByDisplayValue('86400')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('event_micros')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('200')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('cql_writer')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('cassandra-pass-secret')).toBeInTheDocument();
+  });
+
+  it('dispatches updates for connectorBackend, consistencyLevel, ttlColumn, and writetimeColumn', () => {
+    const { container } = render(
       <CassandraIOSinkProperties
         node={{
           data: {
             properties: {
-              hosts: '127.0.0.1',
+              contactPoints: '10.0.0.1',
               keyspace: 'ks',
               table: 'tbl',
-              entityStrategy: 'schema',
-              schemaString: 'device_id:STRING:REQUIRED, avg_val:DOUBLE'
-            }
-          }
+            },
+          },
         }}
         onChange={mockOnChange}
       />
     );
-    expect(screen.getByText('Field Builder (2)')).toBeInTheDocument();
-  });
 
-  it('toggles mutation mode from write to delete and dispatches update', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {
-          mutationType: 'write'
-        }
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const writeRadio = screen.getByLabelText(/Write \/ Upsert \(CassandraIO\.write\(\)\)/i);
-    const deleteRadio = screen.getByLabelText(/Delete \(CassandraIO\.delete\(\)\)/i);
-
-    expect(writeRadio).toBeChecked();
-    expect(deleteRadio).not.toBeChecked();
-
-    fireEvent.click(deleteRadio);
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      mutationType: 'delete'
-    }));
-  });
-
-  it('dispatches updates when text and select fields change', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {
-          hosts: 'localhost'
-        }
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const keyspaceInput = screen.getByPlaceholderText('e.g. telemetry');
-    fireEvent.change(keyspaceInput, { target: { name: 'keyspace', value: 'realtime_events' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      hosts: 'localhost',
-      keyspace: 'realtime_events'
+    const backendSelect = container.querySelector(
+      '#cassandraSinkConnectorBackend'
+    ) as HTMLSelectElement;
+    fireEvent.change(backendSelect, {
+      target: { name: 'connectorBackend', value: 'jvm_connector' },
     });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ connectorBackend: 'jvm_connector' })
+    );
 
-    const tableInput = screen.getByPlaceholderText('e.g. device_rollups');
-    fireEvent.change(tableInput, { target: { name: 'table', value: 'aggregated_metrics' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      hosts: 'localhost',
-      table: 'aggregated_metrics'
+    const consistencySelect = container.querySelector(
+      '#cassandraSinkConsistencyLevel'
+    ) as HTMLSelectElement;
+    fireEvent.change(consistencySelect, {
+      target: { name: 'consistencyLevel', value: 'LOCAL_ONE' },
     });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ consistencyLevel: 'LOCAL_ONE' })
+    );
 
-    const consistencySelect = screen.getByRole('combobox', { name: 'Consistency Level' });
-    fireEvent.change(consistencySelect, { target: { name: 'consistencyLevel', value: 'LOCAL_QUORUM' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      hosts: 'localhost',
-      consistencyLevel: 'LOCAL_QUORUM'
+    const ttlInput = container.querySelector('#cassandraSinkTtlColumn') as HTMLInputElement;
+    fireEvent.change(ttlInput, { target: { name: 'ttlColumn', value: 'ttl_sec' } });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ ttlColumn: 'ttl_sec' }));
+
+    const writetimeInput = container.querySelector(
+      '#cassandraSinkWritetimeColumn'
+    ) as HTMLInputElement;
+    fireEvent.change(writetimeInput, { target: { name: 'writetimeColumn', value: 'ts_micros' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ writetimeColumn: 'ts_micros' })
+    );
+
+    const instructionsInput = container.querySelector(
+      '#cassandraSinkInstructions'
+    ) as HTMLTextAreaElement;
+    fireEvent.change(instructionsInput, {
+      target: { value: 'Partition writes by token key' },
     });
-  });
-
-  it('switches to Secret Manager auth mode and loads secrets into sink datalist', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {
-          hosts: 'localhost',
-          authMode: 'secret_manager' as const
-        }
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const usernameSecretInput = screen.getByPlaceholderText('e.g. cassandra-username');
-    const passwordSecretInput = screen.getByPlaceholderText('e.g. cassandra-password');
-    expect(usernameSecretInput).toBeInTheDocument();
-    expect(passwordSecretInput).toBeInTheDocument();
-
-    // Type in secret fields
-    fireEvent.change(passwordSecretInput, { target: { name: 'passwordSecret', value: 'sink-cassandra-pass' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      passwordSecret: 'sink-cassandra-pass'
-    }));
-  });
-
-  it('toggles Advanced Sink Settings and updates parameters', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {
-          maxBatchSize: 150,
-          concurrentAsyncQueries: 25,
-          connectTimeout: 4000,
-          readTimeout: 10000,
-          ssl: false
-        }
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    const batchSizeInput = screen.getByPlaceholderText('100');
-    expect(batchSizeInput).toHaveValue(150);
-
-    const concurrentInput = screen.getByPlaceholderText('50');
-    expect(concurrentInput).toHaveValue(25);
-
-    const sslCheckbox = screen.getByLabelText(/Enable SSL \/ TLS/i);
-    expect(sslCheckbox).not.toBeChecked();
-
-    fireEvent.click(sslCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      ssl: true
-    }));
-
-    fireEvent.change(batchSizeInput, { target: { name: 'maxBatchSize', value: '200' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      maxBatchSize: '200'
-    }));
-  });
-
-  it('handles edge case: numeric fields set to 0', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {
-          port: 0,
-          maxBatchSize: 0,
-          concurrentAsyncQueries: 0,
-          connectTimeout: 0,
-          readTimeout: 0
-        }
-      }
-    };
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('9042')).toHaveValue(0);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    expect(screen.getByPlaceholderText('100')).toHaveValue(0);
-    expect(screen.getByPlaceholderText('50')).toHaveValue(0);
-    expect(screen.getByPlaceholderText('5000')).toHaveValue(0);
-    expect(screen.getByPlaceholderText('12000')).toHaveValue(0);
-  });
-
-  it('handles missing node.data.properties gracefully without crashing', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink'
-      }
-    } as any;
-
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('127.0.0.1, 10.0.0.1')).toHaveValue('');
-    expect(screen.getByPlaceholderText('9042')).toHaveValue(9042);
-  });
-
-  it('respects system_instructions fallback chain', () => {
-    const node = {
-      data: {
-        label: 'Cassandra Sink',
-        properties: {}
-      }
-    };
-    render(<CassandraIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    // Modifying textarea calls onChange with system_instructions
-    const textarea = screen.getByPlaceholderText(/Write mutated Cassandra entities/i);
-    fireEvent.change(textarea, { target: { value: 'New sink instructions' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      system_instructions: 'New sink instructions'
-    }));
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Partition writes by token key' })
+    );
   });
 });

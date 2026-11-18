@@ -1,12 +1,12 @@
 ---
 name: io-redshift
-description: Read Amazon Redshift tables and SQL queries in PySpark 4.x using the Spark Redshift Community connector with S3 staging and Secret Manager credentials.
+description: Read and write Amazon Redshift tables in PySpark 4.x using the Spark Redshift Community connector with S3 staging and Secret Manager credentials.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [RedshiftSource]
+  transforms: [RedshiftSource, RedshiftSink]
   preloadWhen: []
   sources:
     - prompt
@@ -14,20 +14,21 @@ metadata:
   validated: true
 ---
 
-# Amazon Redshift Source (`RedshiftSource`)
+# Amazon Redshift Connector (`RedshiftSource` and `RedshiftSink`)
 
-Use these rules when generating PySpark 4.x code for a `RedshiftSource` node.
+Use these rules when generating PySpark 4.x code for `RedshiftSource` and `RedshiftSink` nodes.
 
 ## 1. Runtime Classpath and Connector Delivery
 
 - Supply the Spark 4.0 Redshift Community connector via `--packages io.github.spark-redshift-community:spark-redshift_2.13:6.3.0-spark_4.0` (`spark.jars.packages`), plus the Redshift JDBC driver JAR if not already on the classpath.
-- Use `.format("io.github.spark_redshift_community.spark.redshift")` in `spark.read`.
+- On Managed Spark (`ServerlessSpark` and `DataprocCluster`), `hadoop-aws` and `gcs-connector` are pre-installed. Never pass `hadoop-aws` or `gcs-connector` to `spark.jars.packages` on Managed Spark.
+- Use `.format("io.github.spark_redshift_community.spark.redshift")` for both `spark.read` and `df.write`.
 
-## 2. Batch Read Patterns and S3 Unload Staging (`read_sources`)
+## 2. Batch Read Patterns and S3 Unload Staging (`RedshiftSource` in `read_sources`)
 
 `RedshiftSource` executes a parallel `UNLOAD` to an Amazon S3 staging path (`s3a://...`) and reads the unloaded Parquet or text splits in `batch` mode.
 
-### Required Options
+### Required Read Options
 - `url`: Redshift JDBC connection URL (`jdbc:redshift://<endpoint>:5439/<database>`). Authenticate with `.option("user", ...)` and `.option("password", get_secret(...))` or embed credentials obtained from `get_secret()`.
 - `dbtable` or `query`: Specify either `.option("dbtable", "<schema>.<table>")` or `.option("query", "<sql_query>")`.
 - `tempdir`: S3 staging URI (`s3a://<bucket>/redshift-temp/`).
@@ -87,7 +88,82 @@ def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataF
     return dfs
 ```
 
-## 3. Offline Unit Testing (`tests/test_pipeline.py`)
+## 3. Batch and Streaming Write Patterns (`RedshiftSink` in `write_sinks`)
+
+`RedshiftSink` stages Spark partitions to `tempdir` (`s3a://...`) and issues a parallel Redshift `COPY` command. In streaming pipelines (`streamingSinkMode: "foreachBatch"`), wrap the batch write inside `df.writeStream.foreachBatch(...)`.
+
+### Required and Optional Write Options
+- **Connection and Staging (`url`, `dbtable`, `tempdir`, `tempformat`)**: Pass `.option("url", jdbc_url)`, `.option("dbtable", "<schema>.<table>")`, `.option("tempdir", "s3a://<bucket>/redshift-temp/")`, and `.option("tempformat", temp_format)` (`"AVRO"` default or `"CSV"` / `"CSV GZIP"`).
+- **IAM Role or Temporary S3 Credentials**: Pass `.option("aws_iam_role", iam_role_arn)` when Redshift assumes an IAM role for `COPY`. Otherwise set `.option("forward_spark_s3_credentials", "true")` and configure temporary or static S3A credentials resolved once via `get_secret()`.
+- **SQL Hooks (`preactions` and `postactions`)**: Pass `.option("preactions", sql_text)` and `.option("postactions", sql_text)` for idempotent staging merges (`DELETE` + `INSERT` in a transaction) or post-load `GRANT` statements.
+- **Physical Table Distribution and Sort Keys (`diststyle`, `distkey`, `sortkeyspec`)**: When creating or overwriting Redshift tables, pass `.option("diststyle", dist_style)` (`"AUTO"`, `"EVEN"`, `"KEY"`, or `"ALL"`), `.option("distkey", dist_key)` when `diststyle == "KEY"`, and `.option("sortkeyspec", sort_key_spec)` (for example `"SORTKEY(sale_date, region)"`).
+
+### Batch Write Example
+
+```python
+def write_redshift_df(df: DataFrame, config: dict[str, Any], rs_password: str) -> None:
+    """Writes a batch or micro-batch DataFrame to Amazon Redshift via S3 COPY."""
+    save_mode = config.get("redshift_save_mode", "append")
+    dist_style = config.get("redshift_diststyle", "AUTO")
+
+    writer = (
+        df.write.format("io.github.spark_redshift_community.spark.redshift")
+        .mode(save_mode)
+        .option("url", config["redshift_sink_url"])
+        .option("user", config["redshift_sink_user"])
+        .option("password", rs_password)
+        .option("dbtable", config["redshift_sink_table"])
+        .option("tempdir", config["redshift_sink_tempdir"])
+        .option("tempformat", config.get("redshift_tempformat", "AVRO"))
+    )
+
+    if config.get("redshift_aws_iam_role"):
+        writer = writer.option("aws_iam_role", config["redshift_aws_iam_role"])
+    else:
+        writer = writer.option("forward_spark_s3_credentials", "true")
+
+    if dist_style and dist_style != "AUTO":
+        writer = writer.option("diststyle", dist_style)
+        if dist_style == "KEY" and config.get("redshift_distkey"):
+            writer = writer.option("distkey", config["redshift_distkey"])
+
+    if config.get("redshift_sortkeyspec"):
+        writer = writer.option("sortkeyspec", config["redshift_sortkeyspec"])
+    if config.get("redshift_preactions"):
+        writer = writer.option("preactions", config["redshift_preactions"])
+    if config.get("redshift_postactions"):
+        writer = writer.option("postactions", config["redshift_postactions"])
+
+    writer.save()
+```
+
+### Streaming `foreachBatch` Write Example
+
+```python
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Writes streaming micro-batches to Amazon Redshift via foreachBatch."""
+    checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+    rs_password = get_secret(config["redshift_sink_password_secret"])
+
+    def write_micro_batch(batch_df: DataFrame, batch_id: int) -> None:
+        batch_df.cache()
+        try:
+            write_redshift_df(batch_df, config, rs_password)
+        finally:
+            batch_df.unpersist()
+
+    query = (
+        dfs["upstream_stream"]
+        .writeStream.foreachBatch(write_micro_batch)
+        .outputMode(config.get("output_mode", "append"))
+        .option("checkpointLocation", f"{checkpoint_root.rstrip('/')}/redshift_sink")
+        .trigger(processingTime=config.get("trigger_interval", "30 seconds"))
+        .start()
+    )
+    query.awaitTermination()
+```
+
+## 4. Offline Unit Testing (`tests/test_pipeline.py`)
 
 Test `transform(dfs, config)` offline in `tests/test_pipeline.py` using an in-memory `DataFrame`:
 

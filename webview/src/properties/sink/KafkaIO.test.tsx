@@ -1,176 +1,185 @@
 /**
- * KafkaIOSinkProperties Test Suite
- * 
+ * @fileoverview Unit tests for KafkaIOSinkProperties (`KafkaSinkProperties`).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Unit tests validating KafkaIOSinkProperties component functionality,
- * form change callbacks, presets, acks options, EOS configuration, and documentation tooltips.
+ * Validates Spark 4.x KafkaSink configuration fields, envelope column mapping,
+ * producer reliability controls, SASL security via Secret Manager, and validation errors.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { KafkaIOSinkProperties } from './KafkaIO';
+import { KafkaIOSinkProperties, KafkaSinkProperties } from './KafkaIO';
 
 describe('KafkaIOSinkProperties', () => {
+  it('exports KafkaSinkProperties as an alias for KafkaIOSinkProperties', () => {
+    expect(KafkaSinkProperties).toBe(KafkaIOSinkProperties);
+  });
 
-  it('populates fields with provided properties and triggers onChange on bootstrapServers and topic change', () => {
+  it('renders Spark 4.x default sink fields and omits legacy Beam serializer classes', () => {
     const mockNode = {
       data: {
-        label: 'Kafka',
-        properties: {
-          bootstrapServers: 'kafka-cluster:9092',
-          topic: 'output-events',
-          acks: '1' as const,
-          producerProperties: 'compression.type=gzip'
-        }
-      }
+        label: 'Kafka Sink',
+        properties: {},
+      },
     };
     const mockOnChange = vi.fn();
 
     render(<KafkaIOSinkProperties node={mockNode} onChange={mockOnChange} />);
 
-    const bootstrapInput = screen.getByLabelText(/Bootstrap Servers/i);
-    expect(bootstrapInput).toHaveValue('kafka-cluster:9092');
+    expect(screen.getByLabelText(/Bootstrap Servers/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Topic/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Value Serialization/i)).toHaveValue('json');
+    expect(screen.getByLabelText(/Key Column/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Value Column/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Acks \(Durability\)/i)).toHaveValue('all');
+    expect(screen.getByLabelText(/Compression Codec/i)).toHaveValue('none');
+    expect(screen.getByLabelText(/Enable Idempotent Producer/i)).toBeChecked();
+    expect(screen.getByLabelText(/Include Kafka Headers/i)).not.toBeChecked();
+    expect(screen.getByLabelText(/Security Protocol/i)).toHaveValue('PLAINTEXT');
+    expect(screen.getByLabelText(/Code Generation Instructions/i)).toBeInTheDocument();
 
-    const topicInput = screen.getByLabelText(/^Topic/i);
-    expect(topicInput).toHaveValue('output-events');
-
-    const acksSelect = screen.getByLabelText(/Acks/i);
-    expect(acksSelect).toHaveValue('1');
-
-    // Change topic
-    fireEvent.change(topicInput, { target: { name: 'topic', value: 'processed-orders' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      topic: 'processed-orders'
-    }));
+    expect(screen.queryByText(/Exactly-Once Semantics \(EOS\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Key Serializer/i)).not.toBeInTheDocument();
   });
 
-  it('selects standard key and value serializers and does not offer Custom Class option or custom class inputs', () => {
+  it('displays required validation errors when bootstrapServers and topic are empty', () => {
     const mockNode = {
       data: {
-        label: 'Kafka',
-        properties: {
-          keySerializer: 'org.apache.kafka.common.serialization.ByteArraySerializer',
-          valueSerializer: 'org.apache.kafka.common.serialization.StringSerializer'
-        }
-      }
-    };
-    const mockOnChange = vi.fn();
-
-    const { container } = render(<KafkaIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const keySelect = container.querySelector('#kafkaKeySerializer') as HTMLSelectElement;
-    const valueSelect = container.querySelector('#kafkaValueSerializer') as HTMLSelectElement;
-
-    expect(keySelect).toHaveValue('org.apache.kafka.common.serialization.ByteArraySerializer');
-    expect(valueSelect).toHaveValue('org.apache.kafka.common.serialization.StringSerializer');
-
-    const keyOptions = Array.from(keySelect.querySelectorAll('option')).map(o => o.textContent);
-    expect(keyOptions.some(t => t?.includes('Custom'))).toBe(false);
-
-    expect(container.querySelector('input[name="customKeySerializer"]')).not.toBeInTheDocument();
-    expect(container.querySelector('input[name="customValueSerializer"]')).not.toBeInTheDocument();
-
-    fireEvent.change(keySelect, {
-      target: { value: 'org.apache.kafka.common.serialization.LongSerializer' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      keySerializer: 'org.apache.kafka.common.serialization.LongSerializer'
-    }));
-
-    fireEvent.change(valueSelect, {
-      target: { value: 'org.apache.kafka.common.serialization.ByteArraySerializer' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      valueSerializer: 'org.apache.kafka.common.serialization.ByteArraySerializer'
-    }));
-  });
-
-  it('toggles EOS configuration inputs when useEOS is enabled', () => {
-    const mockNode = {
-      data: {
-        label: 'Kafka',
-        properties: {
-          useEOS: true,
-          eosNumPartitions: '12',
-          eosSinkGroupId: 'my-eos-group'
-        }
-      }
-    };
-    const mockOnChange = vi.fn();
-
-    render(<KafkaIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    expect(screen.getByLabelText(/^Num Partitions/i)).toHaveValue(12);
-    expect(screen.getByLabelText(/^Sink Group ID/i)).toHaveValue('my-eos-group');
-
-    const partitionsInput = screen.getByLabelText(/^Num Partitions/i);
-    fireEvent.change(partitionsInput, { target: { name: 'eosNumPartitions', value: '16' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      eosNumPartitions: '16'
-    }));
-  });
-
-  it('updates system_instructions when textarea changes', () => {
-    const mockNode = {
-      data: {
-        label: 'Kafka',
-        properties: {}
-      }
-    };
-    const mockOnChange = vi.fn();
-
-    render(<KafkaIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsTextarea = screen.getByPlaceholderText('Enter custom instructions for Kafka write code generation...');
-    fireEvent.change(instructionsTextarea, { target: { value: 'Write with custom timestamp metadata' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      system_instructions: 'Write with custom timestamp metadata'
-    }));
-  });
-
-  it('displays required validation errors when required fields are empty', () => {
-    const mockNode = {
-      data: {
-        label: 'Kafka',
+        label: 'Kafka Sink',
         properties: {
           bootstrapServers: '',
-          topic: ''
-        }
-      }
+          topic: '',
+        },
+      },
     };
-    const mockOnChange = vi.fn();
 
-    render(<KafkaIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    render(<KafkaIOSinkProperties node={mockNode} onChange={vi.fn()} />);
 
     expect(screen.getByText('Bootstrap Servers is required.')).toBeInTheDocument();
     expect(screen.getByText('Topic is required.')).toBeInTheDocument();
-
-    const bootstrapInput = screen.getByPlaceholderText('localhost:9092');
-    expect(bootstrapInput).toHaveAttribute('aria-invalid', 'true');
-    expect(bootstrapInput).toHaveAttribute('aria-required', 'true');
+    expect(screen.getByPlaceholderText('localhost:9092')).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('displays required error for EOS fields when EOS is enabled but partition count or sink group ID is missing', () => {
-    const mockNode = {
-      data: {
-        label: 'Kafka',
-        properties: {
-          bootstrapServers: 'localhost:9092',
-          topic: 'my-topic',
-          useEOS: true,
-          eosNumPartitions: '',
-          eosSinkGroupId: ''
-        }
-      }
-    };
+  it('requires valueColumn when valueFormat is string or binary and clears topic error when topicColumn is set', () => {
     const mockOnChange = vi.fn();
+    render(
+      <KafkaIOSinkProperties
+        node={{
+          data: {
+            label: 'Kafka Sink',
+            properties: {
+              bootstrapServers: 'kafka.internal:9092',
+              topic: '',
+              topicColumn: 'route_topic',
+              valueFormat: 'string',
+              valueColumn: '',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-    render(<KafkaIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    expect(screen.queryByText('Topic is required.')).not.toBeInTheDocument();
+    expect(screen.getByText('Value Column is required.')).toBeInTheDocument();
 
-    expect(screen.getByText('Num Partitions (> 0) is required for EOS.')).toBeInTheDocument();
-    expect(screen.getByText('Sink Group ID is required for EOS.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Value Column/i), {
+      target: { name: 'valueColumn', value: 'payload_json' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        valueColumn: 'payload_json',
+      })
+    );
+  });
+
+  it('updates headers, compression, SASL security options, Secret Manager secret, and system instructions', () => {
+    const mockOnChange = vi.fn();
+    render(
+      <KafkaIOSinkProperties
+        node={{
+          data: {
+            label: 'Kafka Sink',
+            properties: {
+              bootstrapServers: 'kafka.prod:9093',
+              topic: 'orders-out',
+              includeHeaders: true,
+              securityProtocol: 'SASL_SSL',
+              authMode: 'secretManager',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    const headersInput = screen.getByLabelText(/Headers Column/i);
+    fireEvent.change(headersInput, { target: { name: 'headersColumn', value: 'record_headers' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ headersColumn: 'record_headers' })
+    );
+
+    const compressionSelect = screen.getByLabelText(/Compression Codec/i);
+    fireEvent.change(compressionSelect, { target: { name: 'compressionType', value: 'zstd' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ compressionType: 'zstd' })
+    );
+
+    const saslSelect = screen.getByLabelText(/SASL Mechanism/i);
+    fireEvent.change(saslSelect, { target: { name: 'saslMechanism', value: 'SCRAM-SHA-512' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ saslMechanism: 'SCRAM-SHA-512' })
+    );
+
+    const secretInput = screen.getByLabelText(/Secret Manager Secret/i);
+    fireEvent.change(secretInput, { target: { name: 'secretName', value: 'kafka-prod-secret' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ secretName: 'kafka-prod-secret' })
+    );
+
+    const instructions = screen.getByPlaceholderText(
+      'Enter custom instructions for Kafka sink code generation...'
+    );
+    fireEvent.change(instructions, { target: { value: 'Add event_type header' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Add event_type header' })
+    );
+  });
+
+  it('opens Advanced Kafka Producer Options and updates dynamic topic, partition, and producer properties', () => {
+    const mockOnChange = vi.fn();
+    const { container } = render(
+      <KafkaIOSinkProperties
+        node={{
+          data: {
+            label: 'Kafka Sink',
+            properties: {
+              bootstrapServers: 'localhost:9092',
+              topic: 'events',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Advanced Kafka Producer Options'));
+
+    const partitionInput = screen.getByLabelText(/Partition Column/i);
+    fireEvent.change(partitionInput, { target: { name: 'partitionColumn', value: 'part_num' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ partitionColumn: 'part_num' })
+    );
+
+    const producerTextarea = container.querySelector('#kafkaProducerProperties') as HTMLTextAreaElement;
+    fireEvent.change(producerTextarea, {
+      target: { name: 'producerProperties', value: 'kafka.linger.ms=10' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ producerProperties: 'kafka.linger.ms=10' })
+    );
   });
 });

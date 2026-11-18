@@ -1,341 +1,243 @@
 /**
- * Unit Tests for CloudSQLSinkProperties Component (IO74)
+ * @fileoverview Unit Tests for CloudSQLSinkProperties Component (SNK22).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Achieves 100% statement, branch, function, and line coverage for
- * `webview/src/properties/sink/CloudSQL.tsx`, verifying R1 (documented properties + Docs ↗ link),
- * R2 (PubSubIO datalist pattern for sqlInstances and gated sqlDatabases), and
- * R3 (SecretManagerSecretField for passwordSecret + classifyKey allowlist verification).
+ * Verifies Spark CloudSQLSinkProperties rendering, live GCP sqlInstances and gated
+ * sqlDatabases discovery, dbEngine selection (including SQL Server Conscrypt warning),
+ * saveMode with safe truncate=true toggle, batchsize=5000, isolationLevel, IAM vs
+ * Secret Manager authentication, runtime JAR URIs, and credential redaction safety.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import {
-  CloudSQLSinkProperties,
-  CLOUD_SQL_DOC_URL,
-  CLOUD_SQL_DB_DOC_URL,
-  DEFAULT_DB_DRIVER,
-} from './CloudSQL';
+import { CloudSQLSinkProperties, CloudSqlSinkProperties } from './CloudSQL';
 import { classifyKey } from '../../../../src/credentialRedaction';
 
-const ALLOWED_SINK_KEYS = new Set([
-  'cloudSqlInstance',
-  'dbDriver',
-  'database',
-  'username',
-  'passwordSecret',
-  'table',
-  'updateIgnores',
-  'system_instructions',
-]);
-
-describe('CloudSQLSinkProperties (IO74)', () => {
+describe('CloudSQLSinkProperties (SNK22)', () => {
   let postMessageSpy: ReturnType<typeof vi.fn>;
-  const vscodeWindow = window as unknown as { vscode?: { postMessage: ReturnType<typeof vi.fn> } };
 
   beforeEach(() => {
     vi.clearAllMocks();
     postMessageSpy = vi.fn();
-    vscodeWindow.vscode = { postMessage: postMessageSpy };
+    (window as unknown as { vscode?: { postMessage: typeof postMessageSpy } }).vscode = {
+      postMessage: postMessageSpy,
+    };
   });
 
   afterEach(() => {
-    delete vscodeWindow.vscode;
+    delete (window as unknown as { vscode?: unknown }).vscode;
   });
 
-  const dispatchExtMessage = (data: Record<string, unknown>) => {
-    act(() => {
-      window.dispatchEvent(new MessageEvent('message', { data }));
-    });
-  };
+  it('exports CloudSqlSinkProperties alias, requests sqlInstances, and validates required fields', () => {
+    expect(CloudSqlSinkProperties).toBe(CloudSQLSinkProperties);
 
-  const getOptionValues = (datalistId: string) =>
-    Array.from(document.querySelectorAll(`#${datalistId} option`)).map((o) => o.getAttribute('value'));
+    const { container } = render(
+      <CloudSQLSinkProperties node={{ data: { properties: {} } }} onChange={vi.fn()} />
+    );
 
-  it('K1/K2/K3: renders with undefined properties, posts initial discovery requests, and marks required fields invalid', () => {
-    expect(CLOUD_SQL_DB_DOC_URL).toContain('transformations/db.py');
+    expect(screen.getByText('Spark Cloud SQL JDBC + Socket Factory')).toBeInTheDocument();
+    expect(screen.getByText('Instance connection name is required')).toBeInTheDocument();
+    expect(screen.getByText('Database is required')).toBeInTheDocument();
+    expect(screen.getByText('Table name is required')).toBeInTheDocument();
 
-    const { container } = render(<CloudSQLSinkProperties node={{ data: {} }} onChange={vi.fn()} />);
-
-    const driverSelect = container.querySelector('#cloudSqlSinkDriver') as HTMLSelectElement;
-    expect(driverSelect.value).toBe(DEFAULT_DB_DRIVER);
-
-    const instructions = container.querySelector('#cloudSqlSinkSystemInstructions') as HTMLTextAreaElement;
-    expect(instructions.value).toBe('');
-
+    expect(container.querySelector('#cloudSqlSinkBatchsize')).toHaveValue(5000);
     expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSqlInstances' });
-    expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSecrets' });
-    expect(postMessageSpy).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'getSqlDatabases' }));
-
-    expect(container.querySelector('#cloudSqlSinkInstance')).toHaveAttribute('aria-invalid', 'true');
-    expect(container.querySelector('#cloudSqlSinkDatabase')).toHaveAttribute('aria-invalid', 'true');
-    expect(container.querySelector('#cloudSqlSinkUsername')).toHaveAttribute('aria-invalid', 'true');
-    expect(container.querySelector('#cloudSqlSinkPasswordSecret')).toHaveAttribute('aria-invalid', 'true');
-    expect(container.querySelector('#cloudSqlSinkTable')).toHaveAttribute('aria-invalid', 'true');
-    expect(container.querySelector('#cloudSqlSinkUpdateIgnores')).toHaveAttribute('aria-invalid', 'false');
+    expect(postMessageSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'getSqlDatabases' })
+    );
   });
 
-  it('K4: renders with all valid properties without any alert or invalid state', () => {
-    const node = {
-      data: {
-        properties: {
-          cloudSqlInstance: 'my-project:us-central1:analytics-pg',
-          dbDriver: 'postgresql+psycopg2',
-          database: 'analytics',
-          username: 'beam_writer',
-          passwordSecret: 'analytics-pg-pw',
-          table: 'fulfilled_orders',
-          updateIgnores: 'created_at, created_by',
-        },
-      },
-    };
-
-    const { container, rerender } = render(<CloudSQLSinkProperties node={node} onChange={vi.fn()} />);
-
-    expect(screen.queryAllByRole('alert')).toHaveLength(0);
-    expect(container.querySelector('#cloudSqlSinkInstance')).toHaveAttribute('aria-invalid', 'false');
-    expect(container.querySelector('#cloudSqlSinkDatabase')).toHaveAttribute('aria-invalid', 'false');
-    expect(container.querySelector('#cloudSqlSinkUsername')).toHaveAttribute('aria-invalid', 'false');
-    expect(container.querySelector('#cloudSqlSinkPasswordSecret')).toHaveAttribute('aria-invalid', 'false');
-    expect(container.querySelector('#cloudSqlSinkTable')).toHaveAttribute('aria-invalid', 'false');
-    expect(container.querySelector('#cloudSqlSinkUpdateIgnores')).toHaveAttribute('aria-invalid', 'false');
-    expect((container.querySelector('#cloudSqlSinkDriver') as HTMLSelectElement).value).toBe('postgresql+psycopg2');
-
-    // Whitespace-only updateIgnores is also valid
-    rerender(
+  it('gates sqlDatabases discovery on well-formed connection name and surfaces discovery alerts', () => {
+    const { rerender } = render(
       <CloudSQLSinkProperties
-        node={{ data: { properties: { ...node.data.properties, updateIgnores: '   ' } } }}
+        node={{
+          data: {
+            properties: {
+              instanceConnectionName: 'malformed-name',
+              database: 'analytics',
+              table: 'public.orders',
+            },
+          },
+        }}
         onChange={vi.fn()}
       />
     );
-    expect(screen.queryAllByRole('alert')).toHaveLength(0);
-  });
 
-  it('K5/K6: populates sqlInstances datalist on success and displays discovery error on failure', () => {
-    render(<CloudSQLSinkProperties node={{ data: { properties: {} } }} onChange={vi.fn()} />);
-
-    dispatchExtMessage({
-      command: 'sqlInstancesLoaded',
-      sqlInstances: ['p1:us-central1:db1', 'p2:europe-west1:db2'],
-    });
-    expect(getOptionValues('cloudsql-sink-instance-options')).toEqual([
-      'p1:us-central1:db1',
-      'p2:europe-west1:db2',
-    ]);
-
-    dispatchExtMessage({
-      command: 'sqlInstancesLoaded',
-      sqlInstances: [],
-      error: 'Failed to list Cloud SQL instances',
-    });
-    expect(screen.getByRole('alert')).toHaveTextContent('Failed to list Cloud SQL instances');
-  });
-
-  it('K7–K12: gates sqlDatabases on well-formed connection name, refreshes on change, and suppresses stale items', () => {
-    const onChange = vi.fn();
-    const { rerender } = render(
-      <CloudSQLSinkProperties
-        node={{ data: { properties: { cloudSqlInstance: 'my-instance', database: 'analytics' } } }}
-        onChange={onChange}
-      />
-    );
-
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Use the instance connection name PROJECT:REGION:INSTANCE (see gcloud sql instances list).'
-    );
-    expect(postMessageSpy).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'getSqlDatabases' }));
+    expect(
+      screen.getByText('Use the instance connection name PROJECT:REGION:INSTANCE')
+    ).toBeInTheDocument();
 
     rerender(
       <CloudSQLSinkProperties
-        node={{ data: { properties: { cloudSqlInstance: 'p:us-central1:db1', database: 'analytics' } } }}
-        onChange={onChange}
+        node={{
+          data: {
+            properties: {
+              instanceConnectionName: 'my-proj:us-central1:pg-prod',
+              database: 'analytics',
+              table: 'public.orders',
+            },
+          },
+        }}
+        onChange={vi.fn()}
       />
     );
+
     expect(postMessageSpy).toHaveBeenCalledWith({
       command: 'getSqlDatabases',
-      instance: 'p:us-central1:db1',
+      instance: 'my-proj:us-central1:pg-prod',
     });
 
-    dispatchExtMessage({
-      command: 'sqlDatabasesLoaded',
-      sqlDatabases: ['postgres', 'analytics'],
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'sqlDatabasesLoaded',
+            instance: 'my-proj:us-central1:pg-prod',
+            sqlDatabases: ['postgres', 'analytics'],
+          },
+        })
+      );
     });
-    expect(getOptionValues('cloudsql-sink-database-options')).toEqual(['postgres', 'analytics']);
 
-    rerender(
-      <CloudSQLSinkProperties
-        node={{ data: { properties: { cloudSqlInstance: '  example.com:p:us-central1:db2  ', database: 'analytics' } } }}
-        onChange={onChange}
-      />
-    );
-    expect(postMessageSpy).toHaveBeenCalledWith({
-      command: 'getSqlDatabases',
-      instance: 'example.com:p:us-central1:db2',
-    });
-    expect(onChange).not.toHaveBeenCalled();
-
-    dispatchExtMessage({
-      command: 'sqlDatabasesLoaded',
-      sqlDatabases: [],
-      error: "Invalid or missing Cloud SQL instance identifier: 'x'",
-    });
-    expect(screen.getByRole('alert')).toHaveTextContent("Invalid or missing Cloud SQL instance identifier: 'x'");
-
-    rerender(
-      <CloudSQLSinkProperties
-        node={{ data: { properties: { cloudSqlInstance: 'bad', database: 'analytics' } } }}
-        onChange={onChange}
-      />
-    );
-    expect(getOptionValues('cloudsql-sink-database-options')).toEqual([]);
-    expect(screen.queryByText(/Invalid or missing Cloud SQL instance identifier/)).toBeNull();
+    const dbOptions = Array.from(
+      document.querySelectorAll('#cloudsql-sink-database-options option')
+    ).map((opt) => opt.getAttribute('value'));
+    expect(dbOptions).toEqual(['postgres', 'analytics']);
   });
 
-  it('K13–K19: validates database, username, table, updateIgnores and emits onChange with preserved properties', () => {
-    const emitted: Array<Record<string, unknown>> = [];
-    const onChange = vi.fn((p: Record<string, unknown>) => emitted.push(p));
-
+  it('shows safe truncate=true checkbox on overwrite mode and Conscrypt warning on sqlserver', () => {
+    const mockOnChange = vi.fn();
     const { container, rerender } = render(
       <CloudSQLSinkProperties
         node={{
           data: {
             properties: {
-              cloudSqlInstance: 'p:us-central1:db1',
-              database: 'my/db',
-              username: 'bad user',
-              passwordSecret: 'pw-secret',
-              table: 'my table',
-              updateIgnores: 'a,,b',
+              instanceConnectionName: 'my-proj:us-central1:sqlsrv-inst',
+              dbEngine: 'sqlserver',
+              database: 'sales_db',
+              table: 'dbo.Orders',
+              saveMode: 'overwrite',
             },
           },
         }}
-        onChange={onChange}
+        onChange={mockOnChange}
       />
     );
 
-    expect(screen.getByText('Database name cannot contain spaces or / ? # @ :')).toBeInTheDocument();
-    expect(screen.getByText('Username cannot contain whitespace')).toBeInTheDocument();
-    expect(screen.getByText('Table name cannot contain whitespace')).toBeInTheDocument();
-    expect(screen.getByText('Enter comma-separated column names, e.g. created_at, created_by')).toBeInTheDocument();
+    expect(screen.getByText(/dataproc\.artifacts\.remove=conscrypt/i)).toBeInTheDocument();
 
-    // Also test whitespace inside a token in updateIgnores
+    const truncateCheckbox = container.querySelector('#cloudSqlSinkTruncate') as HTMLInputElement;
+    expect(truncateCheckbox).toBeInTheDocument();
+    expect(truncateCheckbox).toBeChecked();
+
+    fireEvent.click(truncateCheckbox);
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ truncate: false }));
+
     rerender(
       <CloudSQLSinkProperties
         node={{
           data: {
             properties: {
-              cloudSqlInstance: 'p:us-central1:db1',
-              database: 'analytics',
-              username: 'beam_writer',
-              passwordSecret: 'pw-secret',
-              table: 'orders',
-              updateIgnores: 'created at',
+              instanceConnectionName: 'my-proj:us-central1:pg-inst',
+              dbEngine: 'postgresql',
+              database: 'sales_db',
+              table: 'public.orders',
+              saveMode: 'append',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    expect(container.querySelector('#cloudSqlSinkTruncate')).not.toBeInTheDocument();
+    expect(screen.queryByText(/dataproc\.artifacts\.remove=conscrypt/i)).not.toBeInTheDocument();
+  });
+
+  it('dispatches updates for saveMode, isolationLevel, batchsize, numPartitions, Secret Manager, JAR URIs, and system_instructions safely', () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    const onChange = vi.fn((p: Record<string, unknown>) => emitted.push(p));
+
+    const { container } = render(
+      <CloudSQLSinkProperties
+        node={{
+          data: {
+            properties: {
+              cloudSqlInstance: 'my-proj:us-central1:mysql-inst',
+              dbEngine: 'mysql',
+              database: 'inventory',
+              table: 'stock_levels',
+              authMode: 'secret_manager',
+              passwordSecret: 'legacy-mysql-pw',
             },
           },
         }}
         onChange={onChange}
       />
     );
-    expect(screen.getByText('Enter comma-separated column names, e.g. created_at, created_by')).toBeInTheDocument();
+
+    expect(container.querySelector('input[type="password"]')).toBeNull();
 
     fireEvent.change(container.querySelector('#cloudSqlSinkInstance')!, {
-      target: { name: 'cloudSqlInstance', value: 'p:us-central1:db2' },
+      target: { name: 'instanceConnectionName', value: 'my-proj:us-central1:mysql-v2' },
     });
     expect(onChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ cloudSqlInstance: 'p:us-central1:db2', passwordSecret: 'pw-secret' })
+      expect.objectContaining({ instanceConnectionName: 'my-proj:us-central1:mysql-v2' })
+    );
+    expect(emitted[emitted.length - 1]).not.toHaveProperty('cloudSqlInstance');
+
+    fireEvent.change(container.querySelector('#cloudSqlSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'overwrite' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ saveMode: 'overwrite' }));
+
+    fireEvent.change(container.querySelector('#cloudSqlSinkIsolationLevel')!, {
+      target: { name: 'isolationLevel', value: 'REPEATABLE_READ' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ isolationLevel: 'REPEATABLE_READ' })
     );
 
-    fireEvent.change(container.querySelector('#cloudSqlSinkDriver')!, {
-      target: { name: 'dbDriver', value: 'postgresql+psycopg2' },
+    fireEvent.change(container.querySelector('#cloudSqlSinkBatchsize')!, {
+      target: { name: 'batchsize', value: '10000' },
     });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ dbDriver: 'postgresql+psycopg2' }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ batchsize: '10000' }));
 
-    fireEvent.change(container.querySelector('#cloudSqlSinkDatabase')!, {
-      target: { name: 'database', value: 'analytics' },
+    fireEvent.change(container.querySelector('#cloudSqlSinkNumPartitions')!, {
+      target: { name: 'numPartitions', value: '8' },
     });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ database: 'analytics' }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ numPartitions: '8' }));
 
-    fireEvent.change(container.querySelector('#cloudSqlSinkUsername')!, {
-      target: { name: 'username', value: 'beam_writer' },
+    fireEvent.change(container.querySelector('#cloudSqlSinkSecretName')!, {
+      target: { name: 'secretName', value: 'mysql-writer-secret' },
     });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'beam_writer' }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ secretName: 'mysql-writer-secret' })
+    );
+    expect(emitted[emitted.length - 1]).not.toHaveProperty('passwordSecret');
 
-    dispatchExtMessage({
-      command: 'secretsLoaded',
-      secrets: ['writer-pw', { id: 'other-pw', name: 'other-pw', value: 'other-pw', fullName: 'projects/1/secrets/other-pw' }],
+    fireEvent.change(container.querySelector('#cloudSqlSinkDriverJarUri')!, {
+      target: { name: 'driverJarUri', value: 'gs://jars/mysql-connector-j.jar' },
     });
-    expect(getOptionValues('cloudsql-sink-secret-options')).toEqual(['writer-pw', 'other-pw']);
+    fireEvent.change(container.querySelector('#cloudSqlSinkSocketFactoryJarUri')!, {
+      target: { name: 'socketFactoryJarUri', value: 'gs://jars/mysql-socket-factory.jar' },
+    });
 
-    fireEvent.change(container.querySelector('#cloudSqlSinkPasswordSecret')!, {
-      target: { name: 'passwordSecret', value: 'writer-pw' },
+    fireEvent.change(container.querySelector('#cloudSqlSinkSystemInstructions')!, {
+      target: { value: 'Coalesce to 4 partitions before writing' },
     });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ passwordSecret: 'writer-pw' }));
-
-    fireEvent.change(container.querySelector('#cloudSqlSinkTable')!, {
-      target: { name: 'table', value: 'orders' },
-    });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ table: 'orders' }));
-
-    fireEvent.change(container.querySelector('#cloudSqlSinkUpdateIgnores')!, {
-      target: { name: 'updateIgnores', value: 'created_at' },
-    });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ updateIgnores: 'created_at' }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        system_instructions: 'Coalesce to 4 partitions before writing',
+      })
+    );
 
     for (const payload of emitted) {
       for (const key of Object.keys(payload)) {
-        expect(ALLOWED_SINK_KEYS.has(key)).toBe(true);
         expect(['safe', 'reference']).toContain(classifyKey(key));
-      }
-    }
-  });
-
-  it('K20: honours the 4-level system_instructions fallback chain and emits updates', () => {
-    const onChange = vi.fn();
-
-    const { container } = render(
-      <CloudSQLSinkProperties
-        node={{
-          data: {
-            properties: {},
-          },
-        }}
-        onChange={onChange}
-      />
-    );
-    const textarea = container.querySelector('#cloudSqlSinkSystemInstructions') as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: 'custom sink instructions' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ system_instructions: 'custom sink instructions' }));
-  });
-
-  it('K21/K22/K23: opens external documentation via Docs ↗ button and enforces R3 credential security', () => {
-    const { container } = render(<CloudSQLSinkProperties node={{ data: { properties: {} } }} onChange={vi.fn()} />);
-
-    const docsBtn = screen.getByRole('button', { name: /Open Cloud SQL connector documentation/i });
-    expect(docsBtn).toHaveTextContent('Docs ↗');
-    fireEvent.click(docsBtn);
-    expect(postMessageSpy).toHaveBeenCalledWith({
-      command: 'openExternal',
-      url: CLOUD_SQL_DOC_URL,
-    });
-
-    expect(container.querySelector('input[type="password"]')).toBeNull();
-    expect(container.querySelector('[name="password"]')).toBeNull();
-    expect(container.querySelector('[name="dbUrl"]')).toBeNull();
-    expect(container.querySelector('[name="passwordSecret"]')).toHaveAttribute(
-      'data-list',
-      'cloudsql-sink-secret-options'
-    );
-
-    for (const key of ALLOWED_SINK_KEYS) {
-      const classification = classifyKey(key);
-      expect(['safe', 'reference']).toContain(classification);
-      if (key === 'passwordSecret') {
-        expect(classification).toBe('reference');
-      } else {
-        expect(classification).toBe('safe');
       }
     }
   });

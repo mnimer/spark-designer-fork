@@ -1,252 +1,172 @@
 /**
- * Unit Tests for ParquetIO Sink Properties Component
- * 
+ * @fileoverview Unit tests for the ParquetSink / ParquetIO sink properties panel (SNK11).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Validates rendering, input handling, bucket auto-discovery messaging,
- * validation indicators, compression codec selection, sample schema insertion,
- * advanced row group buffer sizing, and custom instructions for ParquetIOSinkProperties.
+ * Validates default rendering, required URI validation, StorageBackendFields multi-cloud
+ * and Secret Manager integration, saveMode, compression codec normalization, partitionBy,
+ * maxRecordsPerFile, advanced rebase modes, and SystemInstructionsField updates.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { ParquetIOSinkProperties } from './ParquetIO';
+import { ParquetIOSinkProperties, ParquetSinkProperties } from './ParquetIO';
 
-describe('ParquetIOSinkProperties', () => {
+describe('ParquetIOSinkProperties (SNK11 ParquetSink)', () => {
   const mockOnChange = vi.fn();
   let originalVscode: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders with empty properties and flags validation error for missing destination (.to)', () => {
-    const mockNode: any = {
-      data: {
-        label: 'ParquetIO',
-        spark_transform: 'ParquetIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#parquetSinkTo') as HTMLInputElement;
-    expect(toInput).toBeInTheDocument();
-    expect(toInput).toHaveValue('');
-    expect(toInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Destination Directory is required.')).toBeInTheDocument();
+  it('exports ParquetSinkProperties as an alias for ParquetIOSinkProperties', () => {
+    expect(ParquetSinkProperties).toBe(ParquetIOSinkProperties);
   });
 
-
-  it('renders with populated properties and no validation error', () => {
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'ParquetIO',
-        spark_transform: 'ParquetIO',
+        label: 'ParquetSink',
+        type: 'SINK',
+        spark_transform: 'ParquetSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
+    };
+
+    const { container } = render(
+      <ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    const pathInput = container.querySelector('#parquetSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output Parquet URI / Path is required.')).toBeInTheDocument();
+
+    expect(container.querySelector('#parquetSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#parquetSinkCompression')).toHaveValue('snappy');
+    expect(container.querySelector('#parquetSinkPathGlobFilter')).not.toBeInTheDocument();
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
+  });
+
+  it('renders populated S3A properties with Secret Manager auth and legacy codec normalization', () => {
+    const mockNode: any = {
+      data: {
+        label: 'ParquetSink',
+        spark_transform: 'ParquetSink',
         properties: {
-          to: 's3://my-lakehouse/output/records',
-          suffix: '.snappy.parquet',
+          path: 's3a://analytics-lake/curated/orders/',
+          authMode: 'secretManager',
+          secretName: 'projects/my-proj/secrets/aws-creds/versions/latest',
+          saveMode: 'overwrite',
           codec: 'ZSTD',
-          schemaFields: [
-            { name: 'id', type: 'STRING', mode: 'REQUIRED' }
-          ],
-          numShards: 5,
-          shardTemplate: '-SSSSS-of-NNNNN',
-          rowGroupBufferSize: 134217728,
-          recordBatchSize: 2000,
-          useCompliantNestedType: true,
-          useDeprecatedInt96Timestamps: true,
-          system_instructions: 'Sink LLM instructions'
-        }
-      }
+          partitionBy: ['event_date', 'region'],
+          maxRecordsPerFile: 500000,
+          datetimeRebaseMode: 'CORRECTED',
+          int96RebaseMode: 'LEGACY',
+          system_instructions: 'Coalesce partitions per date',
+        },
+      },
     };
 
-    const { container } = render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const toInput = container.querySelector('#parquetSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#parquetSinkSuffix') as HTMLInputElement;
-    const codecSelect = container.querySelector('#parquetSinkCodec') as HTMLSelectElement;
-    const numShardsInput = container.querySelector('#parquetSinkNumShards') as HTMLInputElement;
-    const shardTemplateInput = container.querySelector('#parquetSinkShardTemplate') as HTMLInputElement;
-    const instructionsTextarea = container.querySelector('#parquetSinkInstructions') as HTMLTextAreaElement;
+    expect(container.querySelector('#parquetSinkStorageBackend')).toHaveValue('s3a');
+    expect(container.querySelector('#parquetSinkPath')).toHaveValue(
+      's3a://analytics-lake/curated/orders/'
+    );
+    expect(container.querySelector('#parquetSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#parquetSinkCompression')).toHaveValue('zstd');
+    expect(container.querySelector('#parquetSinkPartitionBy')).toHaveValue('event_date, region');
+    expect(container.querySelector('#parquetSinkMaxRecordsPerFile')).toHaveValue(500000);
+    expect(container.querySelector('#parquetSinkInstructions')).toHaveValue(
+      'Coalesce partitions per date'
+    );
 
-    expect(toInput).toHaveValue('s3://my-lakehouse/output/records');
-    expect(toInput).toHaveAttribute('aria-invalid', 'false');
-    expect(suffixInput).toHaveValue('.snappy.parquet');
-    expect(codecSelect).toHaveValue('ZSTD');
-    expect(screen.getByRole('button', { name: /Field Builder Tab/i })).toBeInTheDocument();
-    expect(screen.getByLabelText('Field #1 Name')).toHaveValue('id');
-    expect(numShardsInput).toHaveValue(5);
-    expect(shardTemplateInput).toHaveValue('-SSSSS-of-NNNNN');
-    expect(instructionsTextarea).toHaveValue('Sink LLM instructions');
-    expect(screen.queryByText('Destination Directory is required.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Advanced Parquet Write Settings'));
+    expect(container.querySelector('#parquetSinkDatetimeRebaseMode')).toHaveValue('CORRECTED');
+    expect(container.querySelector('#parquetSinkInt96RebaseMode')).toHaveValue('LEGACY');
   });
 
-  it('supports multi-cloud destination paths (GCS, S3, HDFS, local)', () => {
+  it('propagates changes for path, saveMode, compression, partitionBy, maxRecordsPerFile, rebase modes, and system_instructions', () => {
     const mockNode: any = {
       data: {
-        properties: {}
-      }
+        properties: {
+          path: 'gs://my-bucket/out/',
+        },
+      },
     };
 
-    const { container } = render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#parquetSinkTo') as HTMLInputElement;
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 's3://my-analytics-bucket/output/daily/' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 's3://my-analytics-bucket/output/daily/'
-      })
+    const { container } = render(
+      <ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />
     );
-  });
 
-  it('handles field changes for destination path, suffix, and codec', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#parquetSinkTo') as HTMLInputElement;
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 'gs://my-bucket/target/' }
+    fireEvent.change(container.querySelector('#parquetSinkPath')!, {
+      target: { name: 'path', value: 'gs://my-bucket/curated/' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'gs://my-bucket/target/'
-      })
+      expect.objectContaining({ path: 'gs://my-bucket/curated/' })
     );
 
-    const suffixInput = container.querySelector('#parquetSinkSuffix') as HTMLInputElement;
-    fireEvent.change(suffixInput, {
-      target: { name: 'suffix', value: '.pq' }
+    fireEvent.change(container.querySelector('#parquetSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'errorifexists' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        suffix: '.pq'
-      })
+      expect.objectContaining({ saveMode: 'errorifexists' })
     );
 
-    const codecSelect = container.querySelector('#parquetSinkCodec') as HTMLSelectElement;
-    fireEvent.change(codecSelect, {
-      target: { name: 'codec', value: 'GZIP' }
+    fireEvent.change(container.querySelector('#parquetSinkCompression')!, {
+      target: { name: 'compression', value: 'gzip' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ compression: 'gzip' }));
+
+    fireEvent.change(container.querySelector('#parquetSinkPartitionBy')!, {
+      target: { name: 'partitionBy', value: 'dt, country' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        codec: 'GZIP'
-      })
+      expect.objectContaining({ partitionBy: 'dt, country' })
     );
-  });
 
-  it('renders 3-tab SchemaEditor and updates schemaFields, schema, and schemaString', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    expect(screen.getByRole('button', { name: /Field Builder Tab/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /JSON Schema Tab/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Schema String Tab/i })).toBeInTheDocument();
-
-    const addFieldBtn = screen.getByRole('button', { name: /Add Schema Field/i });
-    fireEvent.click(addFieldBtn);
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        schemaFields: [
-          expect.objectContaining({ name: '', type: 'STRING', mode: 'NULLABLE' })
-        ],
-        schema: expect.any(String),
-        schemaString: expect.any(String)
-      })
-    );
-  });
-
-  it('toggles advanced settings and handles row group buffer size, record batch size, and checkboxes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Open Advanced Accordion
-    const advancedToggle = screen.getByText('Advanced Parquet Settings');
-    fireEvent.click(advancedToggle);
-
-    const rowGroupInput = container.querySelector('#parquetSinkRowGroupBufferSize') as HTMLInputElement;
-    expect(rowGroupInput).toBeInTheDocument();
-    fireEvent.change(rowGroupInput, {
-      target: { name: 'rowGroupBufferSize', value: '33554432' }
+    fireEvent.change(container.querySelector('#parquetSinkMaxRecordsPerFile')!, {
+      target: { name: 'maxRecordsPerFile', value: '250000' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rowGroupBufferSize: '33554432'
-      })
+      expect.objectContaining({ maxRecordsPerFile: '250000' })
     );
 
-    const recordBatchInput = container.querySelector('#parquetSinkRecordBatchSize') as HTMLInputElement;
-    fireEvent.change(recordBatchInput, {
-      target: { name: 'recordBatchSize', value: '500' }
+    fireEvent.click(screen.getByText('Advanced Parquet Write Settings'));
+    fireEvent.change(container.querySelector('#parquetSinkDatetimeRebaseMode')!, {
+      target: { name: 'datetimeRebaseMode', value: 'CORRECTED' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recordBatchSize: '500'
-      })
+      expect.objectContaining({ datetimeRebaseMode: 'CORRECTED' })
     );
 
-    const compliantCheckbox = container.querySelector('#parquetSinkCompliantNested') as HTMLInputElement;
-    fireEvent.click(compliantCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        useCompliantNestedType: true
-      })
-    );
-
-    const int96Checkbox = container.querySelector('#parquetSinkInt96') as HTMLInputElement;
-    fireEvent.click(int96Checkbox);
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        useDeprecatedInt96Timestamps: true
-      })
-    );
-  });
-
-  it('updates system_instructions when instructions textarea changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<ParquetIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsTextarea = container.querySelector('#parquetSinkInstructions') as HTMLTextAreaElement;
-    fireEvent.change(instructionsTextarea, {
-      target: { value: 'Use snappy compression and 10 shards' }
+    fireEvent.change(container.querySelector('#parquetSinkInt96RebaseMode')!, {
+      target: { name: 'int96RebaseMode', value: 'LEGACY' },
     });
-
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'Use snappy compression and 10 shards'
-      })
+      expect.objectContaining({ int96RebaseMode: 'LEGACY' })
+    );
+
+    fireEvent.change(container.querySelector('#parquetSinkInstructions')!, {
+      target: { value: 'Sort within partitions before writing' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Sort within partitions before writing' })
     );
   });
 });

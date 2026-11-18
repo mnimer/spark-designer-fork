@@ -1,209 +1,170 @@
 /**
- * TFRecordIO Sink Properties Test Suite
- * 
+ * @fileoverview Unit tests for the TFRecordSink / TFRecordIO sink properties panel (SNK18).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Unit tests validating TFRecordIOSinkProperties component functionality,
- * form change callbacks, validation states, sharding accordion toggling,
- * dynamic extension GCS bucket discovery IPC, and code generation instructions.
- * 
- * Architectural Decisions:
- * - Uses Vitest and @testing-library/react for component testing.
- * - Mocks window.vscode and listens for extension message dispatch events.
- * - Validates required field states, default fallbacks, and error boundaries.
+ * Validates default rendering, required URI validation, StorageBackendFields multi-cloud
+ * and Secret Manager integration, saveMode, compression codecs, partitionBy,
+ * maxRecordsPerFile, recordType, writeLocality, and SystemInstructionsField updates.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TFRecordIOSinkProperties } from './TFRecordIO';
+import { TFRecordIOSinkProperties, TFRecordSinkProperties } from './TFRecordIO';
 
-describe('TFRecordIOSinkProperties', () => {
-  let originalVscode: any;
+describe('TFRecordIOSinkProperties (SNK18 TFRecordSink)', () => {
   const mockOnChange = vi.fn();
+  let originalVscode: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders with empty properties and flags validation error for missing destination (.to)', () => {
-    const mockNode: any = {
-      data: {
-        label: 'TFRecordIO',
-        spark_transform: 'TFRecordIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#tfrecordSinkTo') as HTMLInputElement;
-    expect(toInput).toBeInTheDocument();
-    expect(toInput).toHaveValue('');
-    expect(toInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Destination Directory is required.')).toBeInTheDocument();
+  it('exports TFRecordSinkProperties as an alias for TFRecordIOSinkProperties', () => {
+    expect(TFRecordSinkProperties).toBe(TFRecordIOSinkProperties);
   });
 
-  it('renders with populated properties and no validation error', () => {
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'TFRecordIO',
-        spark_transform: 'TFRecordIO',
+        label: 'TFRecordSink',
+        type: 'SINK',
+        spark_transform: 'TFRecordSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
+    };
+
+    const { container } = render(
+      <TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    const pathInput = container.querySelector('#tfrecordSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output TFRecord URI / Path is required.')).toBeInTheDocument();
+
+    expect(container.querySelector('#tfrecordSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#tfrecordSinkCompression')).toHaveValue('none');
+    expect(container.querySelector('#tfrecordSinkRecordType')).toHaveValue('Example');
+    expect(container.querySelector('#tfrecordSinkWriteLocality')).toHaveValue('distributed');
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
+  });
+
+  it('renders populated properties including legacy compressionType normalization and SequenceExample', () => {
+    const mockNode: any = {
+      data: {
+        label: 'TFRecordSink',
+        spark_transform: 'TFRecordSink',
         properties: {
-          to: 'gs://my-bucket/output/records',
-          suffix: '.gz.tfrecord',
+          path: 'gs://vertex-ai-datasets/seq_examples/',
+          saveMode: 'overwrite',
           compressionType: 'GZIP',
-          numShards: 8,
-          shardTemplate: '-SSSSS-of-NNNNN',
-          system_instructions: 'Sink LLM instructions'
-        }
-      }
+          partitionBy: ['split'],
+          maxRecordsPerFile: 50000,
+          recordType: 'SequenceExample',
+          writeLocality: 'local',
+          system_instructions: 'Convert VectorUDT with vector_to_array first',
+        },
+      },
     };
 
-    const { container } = render(<TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const toInput = container.querySelector('#tfrecordSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#tfrecordSinkSuffix') as HTMLInputElement;
-    const compressionSelect = container.querySelector('#tfrecordSinkCompressionType') as HTMLSelectElement;
-    const instructionsTextarea = container.querySelector('#tfrecordSinkInstructions') as HTMLTextAreaElement;
-
-    expect(toInput).toHaveValue('gs://my-bucket/output/records');
-    expect(toInput).toHaveAttribute('aria-invalid', 'false');
-    expect(suffixInput).toHaveValue('.gz.tfrecord');
-    expect(compressionSelect).toHaveValue('GZIP');
-    expect(container.querySelector('#tfrecordSinkCoder')).not.toBeInTheDocument();
-    expect(instructionsTextarea).toHaveValue('Sink LLM instructions');
-    expect(screen.queryByText('Destination Directory is required.')).not.toBeInTheDocument();
+    expect(container.querySelector('#tfrecordSinkStorageBackend')).toHaveValue('gcs');
+    expect(container.querySelector('#tfrecordSinkPath')).toHaveValue(
+      'gs://vertex-ai-datasets/seq_examples/'
+    );
+    expect(container.querySelector('#tfrecordSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#tfrecordSinkCompression')).toHaveValue('gzip');
+    expect(container.querySelector('#tfrecordSinkPartitionBy')).toHaveValue('split');
+    expect(container.querySelector('#tfrecordSinkMaxRecordsPerFile')).toHaveValue(50000);
+    expect(container.querySelector('#tfrecordSinkRecordType')).toHaveValue('SequenceExample');
+    expect(container.querySelector('#tfrecordSinkWriteLocality')).toHaveValue('local');
+    expect(container.querySelector('#tfrecordSinkInstructions')).toHaveValue(
+      'Convert VectorUDT with vector_to_array first'
+    );
   });
 
-  it('handles field changes for destination path, suffix, and compressionType', () => {
+  it('propagates changes across all TFRecord sink fields and system_instructions', () => {
     const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#tfrecordSinkTo') as HTMLInputElement;
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 's3://output-lakehouse/daily/' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 's3://output-lakehouse/daily/'
-      })
-    );
-
-    const suffixInput = container.querySelector('#tfrecordSinkSuffix') as HTMLInputElement;
-    fireEvent.change(suffixInput, {
-      target: { name: 'suffix', value: '.tfrecords' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        suffix: '.tfrecords'
-      })
-    );
-
-    const compressionSelect = container.querySelector('#tfrecordSinkCompressionType') as HTMLSelectElement;
-    fireEvent.change(compressionSelect, {
-      target: { name: 'compressionType', value: 'DEFLATE' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        compressionType: 'DEFLATE'
-      })
-    );
-  });
-
-  it('toggles sharding accordion and updates numShards and shardTemplate', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Open Sharding Accordion
-    const accordionToggle = screen.getByText('Sharding & Shard Template Options');
-    fireEvent.click(accordionToggle);
-
-    const numShardsInput = container.querySelector('#tfrecordSinkNumShards') as HTMLInputElement;
-    expect(numShardsInput).toBeInTheDocument();
-    fireEvent.change(numShardsInput, {
-      target: { name: 'numShards', value: '12' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        numShards: '12'
-      })
-    );
-
-    const shardTemplateInput = container.querySelector('#tfrecordSinkShardTemplate') as HTMLInputElement;
-    expect(shardTemplateInput).toBeInTheDocument();
-    fireEvent.change(shardTemplateInput, {
-      target: { name: 'shardTemplate', value: '-SSS-of-NNN' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        shardTemplate: '-SSS-of-NNN'
-      })
-    );
-
-    // Toggle accordion closed again
-    fireEvent.click(accordionToggle);
-    expect(container.querySelector('#tfrecordSinkNumShards')).not.toBeInTheDocument();
-  });
-
-  it('updates system_instructions when instructions textarea changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsTextarea = container.querySelector('#tfrecordSinkInstructions') as HTMLTextAreaElement;
-    fireEvent.change(instructionsTextarea, {
-      target: { value: 'Configure TFRecordIO sink to write 10 shards with DEFLATE compression' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'Configure TFRecordIO sink to write 10 shards with DEFLATE compression'
-      })
-    );
-  });
-
-  it('never renders coder or offers AUTO or ZLIB compression on sink, and defaults AUTO to UNCOMPRESSED', () => {
-    const mockLegacyNode: any = {
       data: {
         properties: {
-          to: 'gs://bucket/output/records',
-          coder: 'ProtoCoder',
-          compressionType: 'AUTO'
-        }
-      }
+          path: 'gs://my-bucket/tfrecords/',
+        },
+      },
     };
 
-    const { container } = render(<TFRecordIOSinkProperties node={mockLegacyNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <TFRecordIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    expect(container.querySelector('#tfrecordSinkCoder')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Record Coder/i)).not.toBeInTheDocument();
+    fireEvent.change(container.querySelector('#tfrecordSinkPath')!, {
+      target: { name: 'path', value: 'gs://my-bucket/tfrecords_v2/' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'gs://my-bucket/tfrecords_v2/' })
+    );
 
-    const compressionSelect = container.querySelector('#tfrecordSinkCompressionType') as HTMLSelectElement;
-    expect(compressionSelect).toHaveValue('UNCOMPRESSED');
-    const compressionValues = Array.from(compressionSelect.options).map((o) => o.value);
-    expect(compressionValues).toEqual(['UNCOMPRESSED', 'GZIP', 'DEFLATE']);
-    expect(compressionValues).not.toContain('AUTO');
-    expect(compressionValues).not.toContain('ZLIB');
+    fireEvent.change(container.querySelector('#tfrecordSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'errorifexists' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ saveMode: 'errorifexists' })
+    );
+
+    fireEvent.change(container.querySelector('#tfrecordSinkCompression')!, {
+      target: { name: 'compression', value: 'deflate' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ compression: 'deflate' })
+    );
+
+    fireEvent.change(container.querySelector('#tfrecordSinkPartitionBy')!, {
+      target: { name: 'partitionBy', value: 'split, dt' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ partitionBy: 'split, dt' })
+    );
+
+    fireEvent.change(container.querySelector('#tfrecordSinkMaxRecordsPerFile')!, {
+      target: { name: 'maxRecordsPerFile', value: '25000' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRecordsPerFile: '25000' })
+    );
+
+    fireEvent.change(container.querySelector('#tfrecordSinkRecordType')!, {
+      target: { name: 'recordType', value: 'SequenceExample' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ recordType: 'SequenceExample' })
+    );
+
+    fireEvent.change(container.querySelector('#tfrecordSinkWriteLocality')!, {
+      target: { name: 'writeLocality', value: 'local' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ writeLocality: 'local' })
+    );
+
+    fireEvent.change(container.querySelector('#tfrecordSinkInstructions')!, {
+      target: { value: 'Shuffle rows evenly across shards' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Shuffle rows evenly across shards' })
+    );
   });
 });

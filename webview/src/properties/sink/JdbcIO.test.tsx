@@ -1,196 +1,228 @@
-import { describe, it, expect, vi } from 'vitest';
+/**
+ * Unit Tests for JdbcIOSinkProperties Component (SNK24)
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ *
+ * Purpose:
+ * Validates JdbcIOSinkProperties rendering, database engine presets, SQL Server TLS banner,
+ * saveMode overwrite truncate/cascadeTruncate toggles, batchsize default 5000, numPartitions,
+ * isolationLevel, createTableOptions, SecretManagerAuthFields, legacy alias cleanup, and
+ * system instructions.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { JdbcIOSinkProperties } from './JdbcIO';
+import { JdbcIOSinkProperties, JdbcSinkProperties } from './JdbcIO';
 
 describe('JdbcIOSinkProperties', () => {
   const mockOnChange = vi.fn();
 
-  it('renders all default input fields and handles updates', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        spark_transform: 'JdbcIO',
-        properties: {
-          driverClassName: 'com.mysql.cj.jdbc.Driver',
-          url: 'jdbc:mysql://localhost:3306/mydb',
-          username: 'writer',
-          statement: 'INSERT INTO sink_table (id, name) VALUES (?, ?)',
-          batchSize: 500,
-          autosharding: true
-        }
-      }
-    };
-
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const driverSelect = container.querySelector('#jdbcSinkDriverClassName') as HTMLSelectElement;
-    const urlInput = container.querySelector('#jdbcSinkUrl') as HTMLInputElement;
-    const userInput = container.querySelector('#jdbcSinkUsername') as HTMLInputElement;
-    const selectTypeSelect = container.querySelector('#jdbcSinkSelectType') as HTMLSelectElement;
-    const statementInput = container.querySelector('#jdbcSinkStatement') as HTMLTextAreaElement;
-    const batchInput = container.querySelector('#jdbcSinkBatchSize') as HTMLInputElement;
-    const autoCheckbox = container.querySelector('#jdbcSinkAutosharding') as HTMLInputElement;
-
-    expect(driverSelect).toHaveValue('com.mysql.cj.jdbc.Driver');
-    expect(urlInput).toHaveValue('jdbc:mysql://localhost:3306/mydb');
-    expect(userInput).toHaveValue('writer');
-    expect(selectTypeSelect).toHaveValue('statement');
-    expect(statementInput).toHaveValue('INSERT INTO sink_table (id, name) VALUES (?, ?)');
-    expect(batchInput).toHaveValue(500);
-    expect(autoCheckbox).toBeChecked();
-
-    // Test statement change
-    fireEvent.change(statementInput, {
-      target: { name: 'statement', value: 'INSERT INTO orders (id, total) VALUES (?, ?)' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      statement: 'INSERT INTO orders (id, total) VALUES (?, ?)'
-    }));
-
-    // Test batch size change
-    fireEvent.change(batchInput, {
-      target: { name: 'batchSize', value: 2000 }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      batchSize: '2000'
-    }));
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('switches between SQL Statement and Table Name when changing Select Type', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        spark_transform: 'JdbcIO',
-        properties: {
-          selectType: 'table',
-          tableName: 'sink_table_name'
-        }
-      }
-    };
+  it('exports JdbcSinkProperties alias and validates required jdbcUrl and table when empty', () => {
+    expect(JdbcSinkProperties).toBe(JdbcIOSinkProperties);
 
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <JdbcIOSinkProperties node={{ data: { properties: {} } }} onChange={mockOnChange} />
+    );
 
-    const selectTypeSelect = container.querySelector('#jdbcSinkSelectType') as HTMLSelectElement;
-    const tableNameInput = container.querySelector('#jdbcSinkTableName') as HTMLInputElement;
-
-    expect(selectTypeSelect).toHaveValue('table');
-    expect(tableNameInput).toHaveValue('sink_table_name');
-    expect(container.querySelector('#jdbcSinkStatement')).not.toBeInTheDocument();
-
-    fireEvent.change(tableNameInput, {
-      target: { name: 'tableName', value: 'new_sink_table' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      tableName: 'new_sink_table'
-    }));
+    expect(screen.getByText('JDBC Connection URL is required')).toBeInTheDocument();
+    expect(screen.getByText('Destination table is required')).toBeInTheDocument();
+    expect(container.querySelector('#jdbcSinkDriverClass')).toHaveValue('org.postgresql.Driver');
+    expect(container.querySelector('#jdbcSinkBatchsize')).toHaveValue(5000);
+    expect(container.querySelector('#jdbcSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#jdbcSinkIsolationLevel')).toHaveValue('READ_COMMITTED');
   });
 
-  it('handles code generation instructions editing', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        spark_transform: 'JdbcIO',
-        system_instructions: 'Handle deadlock retries',
-        properties: {}
-      }
-    };
+  it('switches dbEngine preset, auto-populates driverClass, and displays SQL Server Conscrypt note', () => {
+    const { container, rerender } = render(
+      <JdbcIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              dbEngine: 'postgresql',
+              jdbcUrl: 'jdbc:postgresql://localhost:5432/analytics',
+              table: 'public.orders_summary',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsArea = container.querySelector('#jdbcSinkSystemInstructions') as HTMLTextAreaElement;
-    expect(instructionsArea).toHaveValue('Handle deadlock retries');
-
-    fireEvent.change(instructionsArea, {
-      target: { name: 'system_instructions', value: 'Custom sink instructions' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      system_instructions: 'Custom sink instructions'
-    }));
-  });
-
-  it('renders driver select dropdown with friendly labels and class values for sink', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-    const select = container.querySelector('#jdbcSinkDriverClassName') as HTMLSelectElement;
-    expect(select).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'PostgreSQL' })).toHaveValue('org.postgresql.Driver');
-    expect(screen.getByRole('option', { name: 'MySQL' })).toHaveValue('com.mysql.cj.jdbc.Driver');
-  });
-
-  it('renders username and password secret inputs without authMode dropdown or plaintext password', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        properties: {},
-      },
-    };
-
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    expect(container.querySelector('#jdbcSinkUsername')).toBeInTheDocument();
-    expect(container.querySelector('#jdbcSinkPasswordSecret')).toBeInTheDocument();
-    expect(container.querySelector('#jdbc-sink-secrets-list')).toBeInTheDocument();
-
-    // Verify authMode dropdown and plaintext password fields are removed
-    expect(container.querySelector('select[name="authMode"]')).not.toBeInTheDocument();
-    expect(container.querySelector('input[name="password"]')).not.toBeInTheDocument();
-    expect(screen.queryByText(/cleartext/i)).not.toBeInTheDocument();
-  });
-
-  it('choosing or typing a secret writes passwordSecret and does NOT write password', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        properties: {},
-      },
-    };
-
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const secretInput = container.querySelector('#jdbcSinkPasswordSecret') as HTMLInputElement;
-    expect(secretInput).toBeInTheDocument();
-
-    fireEvent.change(secretInput, { target: { name: 'passwordSecret', value: 'db-sink-secret-id' } });
+    const engineSelect = container.querySelector('#jdbcSinkDbEngine') as HTMLSelectElement;
+    fireEvent.change(engineSelect, { target: { name: 'dbEngine', value: 'sqlserver' } });
 
     expect(mockOnChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        passwordSecret: 'db-sink-secret-id',
+        dbEngine: 'sqlserver',
+        driverClass: 'com.microsoft.sqlserver.jdbc.SQLServerDriver',
       })
     );
-    expect(mockOnChange.mock.calls[0][0].password).toBeUndefined();
+
+    rerender(
+      <JdbcIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              dbEngine: 'sqlserver',
+              driverClass: 'com.microsoft.sqlserver.jdbc.SQLServerDriver',
+              jdbcUrl: 'jdbc:sqlserver://localhost:1433;databaseName=analytics',
+              table: 'dbo.orders_summary',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    expect(
+      screen.getByText(/SQL Server TLS note: sets dataproc\.artifacts\.remove=conscrypt/i)
+    ).toBeInTheDocument();
   });
 
-  it('cleans up legacy plaintext password if present when updating properties', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JdbcIO',
-        properties: {
-          username: 'sinkuser',
-          password: 'old-cleartext-sink-password',
-        },
-      },
-    };
+  it('renders truncate and cascadeTruncate controls when saveMode is overwrite', () => {
+    const { container, rerender } = render(
+      <JdbcIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              jdbcUrl: 'jdbc:postgresql://localhost:5432/db',
+              table: 'public.daily_totals',
+              saveMode: 'append',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-    const { container } = render(<JdbcIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    expect(container.querySelector('#jdbcSinkTruncate')).not.toBeInTheDocument();
 
-    // Plaintext password field is not shown
+    const saveModeSelect = container.querySelector('#jdbcSinkSaveMode') as HTMLSelectElement;
+    fireEvent.change(saveModeSelect, { target: { name: 'saveMode', value: 'overwrite' } });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ saveMode: 'overwrite' }));
+
+    rerender(
+      <JdbcIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              jdbcUrl: 'jdbc:postgresql://localhost:5432/db',
+              table: 'public.daily_totals',
+              saveMode: 'overwrite',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    const truncateCheckbox = container.querySelector('#jdbcSinkTruncate') as HTMLInputElement;
+    const cascadeCheckbox = container.querySelector('#jdbcSinkCascadeTruncate') as HTMLInputElement;
+    expect(truncateCheckbox).toBeChecked();
+    expect(cascadeCheckbox).not.toBeChecked();
+
+    fireEvent.click(cascadeCheckbox);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ cascadeTruncate: true })
+    );
+  });
+
+  it('updates batchsize, numPartitions, isolationLevel, createTableOptions, and driverJarUri', () => {
+    const { container } = render(
+      <JdbcIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              dbEngine: 'mysql',
+              jdbcUrl: 'jdbc:mysql://localhost:3306/db',
+              table: 'events',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    fireEvent.change(container.querySelector('#jdbcSinkBatchsize') as HTMLInputElement, {
+      target: { name: 'batchsize', value: '10000' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ batchsize: '10000' }));
+
+    fireEvent.change(container.querySelector('#jdbcSinkNumPartitions') as HTMLInputElement, {
+      target: { name: 'numPartitions', value: '12' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ numPartitions: '12' }));
+
+    fireEvent.change(container.querySelector('#jdbcSinkIsolationLevel') as HTMLSelectElement, {
+      target: { name: 'isolationLevel', value: 'SERIALIZABLE' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ isolationLevel: 'SERIALIZABLE' })
+    );
+
+    fireEvent.change(container.querySelector('#jdbcSinkCreateTableOptions') as HTMLInputElement, {
+      target: { name: 'createTableOptions', value: 'ENGINE=InnoDB' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ createTableOptions: 'ENGINE=InnoDB' })
+    );
+
+    fireEvent.change(container.querySelector('#jdbcSinkDriverJarUri') as HTMLInputElement, {
+      target: { name: 'driverJarUri', value: 'gs://jars/mysql-connector.jar' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ driverJarUri: 'gs://jars/mysql-connector.jar' })
+    );
+  });
+
+  it('hydrates legacy aliases, strips plaintext password on edit, and updates system_instructions', () => {
+    const { container } = render(
+      <JdbcIOSinkProperties
+        node={{
+          data: {
+            system_instructions: 'Use connection pooling cap',
+            properties: {
+              driverClassName: 'oracle.jdbc.OracleDriver',
+              url: 'jdbc:oracle:thin:@//localhost:1521/ORCL',
+              tableName: 'FINANCE.LEDGER',
+              batchSize: 2500,
+              passwordSecret: 'oracle-pw-secret',
+              password: 'legacy-cleartext-password',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    expect(container.querySelector('#jdbcSinkDbEngine')).toHaveValue('oracle');
+    expect(container.querySelector('#jdbcSinkDriverClass')).toHaveValue('oracle.jdbc.OracleDriver');
+    expect(container.querySelector('#jdbcSinkJdbcUrl')).toHaveValue(
+      'jdbc:oracle:thin:@//localhost:1521/ORCL'
+    );
+    expect(container.querySelector('#jdbcSinkTable')).toHaveValue('FINANCE.LEDGER');
+    expect(container.querySelector('#jdbcSinkBatchsize')).toHaveValue(2500);
+    expect(container.querySelector('#jdbcSinkSecretName')).toHaveValue('oracle-pw-secret');
     expect(container.querySelector('input[name="password"]')).not.toBeInTheDocument();
 
-    const userInput = container.querySelector('#jdbcSinkUsername') as HTMLInputElement;
-    fireEvent.change(userInput, { target: { name: 'username', value: 'newsinkuser' } });
+    fireEvent.change(container.querySelector('#jdbcSinkTable') as HTMLInputElement, {
+      target: { name: 'table', value: 'FINANCE.LEDGER_V2' },
+    });
+    const updatedProps = mockOnChange.mock.calls[0][0];
+    expect(updatedProps.table).toBe('FINANCE.LEDGER_V2');
+    expect(updatedProps.tableName).toBeUndefined();
+    expect(updatedProps.password).toBeUndefined();
 
+    const sysTextarea = container.querySelector('#jdbcSinkSystemInstructions') as HTMLTextAreaElement;
+    expect(sysTextarea).toHaveValue('Use connection pooling cap');
+    fireEvent.change(sysTextarea, { target: { value: 'Set queryTimeout=60' } });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        username: 'newsinkuser',
-      })
+      expect.objectContaining({ system_instructions: 'Set queryTimeout=60' })
     );
-    expect(mockOnChange.mock.calls[0][0].password).toBeUndefined();
   });
 });

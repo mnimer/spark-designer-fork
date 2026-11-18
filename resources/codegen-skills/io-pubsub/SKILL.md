@@ -1,12 +1,12 @@
 ---
 name: io-pubsub
-description: Read batch and streaming messages from Google Cloud Pub/Sub subscriptions in PySpark 4.x using the Python DataSource API.
+description: Read and write batch and streaming messages with Google Cloud Pub/Sub in PySpark 4.x using the Python DataSource API and PublisherClient.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [PubSubSource]
+  transforms: [PubSubSource, PubSubSink]
   preloadWhen: []
   sources:
     - prompt
@@ -222,4 +222,207 @@ def test_pubsub_pipeline_transform(spark: SparkSession) -> None:
     result_dfs = transform({"src_pubsub": input_df}, {})
     assert "src_pubsub" in result_dfs
     assert result_dfs["src_pubsub"].count() == 1
+```
+
+---
+
+# Google Cloud Pub/Sub Sink (`PubSubSink`)
+
+Use these rules when generating PySpark {{spark_version}} code for a Google Cloud Pub/Sub sink node (`PubSubSink` or `SINK:PubSubIO`).
+
+## 1. Runtime Delivery Mechanism (`DataSourceWriter` and `foreachBatch`)
+
+`PubSubSink` has `streamingSinkMode: "foreachBatch"` and publishes messages through `google-cloud-pubsub` (`pubsub_v1.PublisherClient`):
+- Include `google-cloud-pubsub>=2.21.0` in `requirements.txt` and `Dockerfile`.
+- **Batch mode**: Implement and register a Spark 4.0 `DataSourceWriter` (`PubSubBatchWriter` on `PubSubDataSource` via `df.write.format("pubsub").mode("append").options(...).save()`).
+- **Streaming mode**: Wrap micro-batch writes inside `.writeStream.foreachBatch(write_micro_batch)` following `ExecutionPlan.streamingSinkGroups`. Inside `write_micro_batch(batch_df, batch_id)`, write `batch_df` via `PubSubDataSource` (`batch_df.write.format("pubsub").mode("append").option("batchId", str(batch_id)).options(...).save()`) or `batch_df.foreachPartition(...)`.
+
+## 2. `PublisherClient` Batching, Ordering Keys, Attributes, and Idempotency
+
+Instantiate `pubsub_v1.PublisherClient` lazily once per executor partition inside `write(self, iterator)`:
+- **Publisher Batch Settings (`BatchSettings`)**: Configure `pubsub_v1.types.BatchSettings(max_messages=max_messages, max_bytes=max_bytes, max_latency=max_latency_ms / 1000.0)` from `batchMaxMessages` (default `100`), `batchMaxBytes` (default `1048576`), and `batchMaxLatencyMs` (default `10`).
+- **Ordering Keys (`PublisherOptions`)**: If `enableMessageOrdering` is true or `orderingKeyColumn` is configured, pass `pubsub_v1.types.PublisherOptions(enable_message_ordering=True)` to `PublisherClient` and supply `ordering_key=str(row_dict[ordering_key_col])` on each `publisher.publish(...)` call.
+- **Message Attributes (`attributeColumns`)**: If `attributeColumns` lists comma-separated column names, pass each non-null column value as a `str` keyword argument to `publisher.publish(topic_path, payload_bytes, **attributes)` because Pub/Sub attributes require UTF-8 string values.
+- **Micro-Batch Idempotency (`idempotencyKeyColumn`)**: Attach deterministic deduplication metadata (`event_id` from `idempotencyKeyColumn` and `spark_batch_id` from `batch_id`) as Pub/Sub message attributes so downstream subscribers or Pub/Sub snapshot consumers can deduplicate retried micro-batches.
+- **Await All Futures**: Collect publish futures per partition and call `future.result(timeout=60.0)` for every published message before returning `WriterCommitMessage` so transient publish failures trigger Spark task retries instead of silent message drops.
+
+## 3. Reference Sink Implementation (`src/pipeline.py`)
+
+```python
+import json
+from dataclasses import dataclass
+from typing import Any, Iterator
+from pyspark.sql import DataFrame
+from pyspark.sql.datasource import DataSource, DataSourceWriter, WriterCommitMessage
+from pyspark.sql.types import StructType
+
+
+@dataclass
+class PubSubCommitMessage(WriterCommitMessage):
+    """Commit summary returned from each executor partition after Pub/Sub publish."""
+
+    published_count: int
+
+
+def _resolve_topic_path(publisher: Any, project_id: str, topic: str) -> str:
+    """Returns a fully qualified Cloud Pub/Sub topic resource path."""
+    if topic.startswith("projects/"):
+        return topic
+    return publisher.topic_path(project_id, topic)
+
+
+class PubSubBatchWriter(DataSourceWriter):
+    """Spark 4.0 DataSourceWriter publishing partition batches to Cloud Pub/Sub."""
+
+    def __init__(self, options: dict[str, str]) -> None:
+        self.options = dict(options)
+
+    def write(self, iterator: Iterator[Any]) -> WriterCommitMessage:
+        from google.cloud import pubsub_v1
+
+        max_messages = int(self.options.get("batchMaxMessages", "100"))
+        max_bytes = int(self.options.get("batchMaxBytes", "1048576"))
+        max_latency_s = float(self.options.get("batchMaxLatencyMs", "10")) / 1000.0
+        ordering_col = self.options.get("orderingKeyColumn", "").strip()
+        enable_ordering = (
+            self.options.get("enableMessageOrdering", "false").lower() == "true"
+            or bool(ordering_col)
+        )
+        payload_format = self.options.get("payloadFormat", "json")
+        payload_col = self.options.get("payloadColumn", "").strip()
+        idempotency_col = self.options.get("idempotencyKeyColumn", "").strip()
+        batch_id = self.options.get("batchId", "")
+        attr_cols = [
+            c.strip()
+            for c in self.options.get("attributeColumns", "").split(",")
+            if c.strip()
+        ]
+
+        batch_settings = pubsub_v1.types.BatchSettings(
+            max_messages=max_messages,
+            max_bytes=max_bytes,
+            max_latency=max_latency_s,
+        )
+        publisher_options = pubsub_v1.types.PublisherOptions(
+            enable_message_ordering=enable_ordering
+        )
+        publisher = pubsub_v1.PublisherClient(
+            batch_settings=batch_settings,
+            publisher_options=publisher_options,
+        )
+        topic_path = _resolve_topic_path(
+            publisher,
+            self.options.get("projectId", ""),
+            self.options["topic"],
+        )
+
+        futures = []
+        for row in iterator:
+            row_dict = row.asDict(recursive=True)
+            if payload_format == "binary" and payload_col and row_dict.get(payload_col) is not None:
+                raw_val = row_dict[payload_col]
+                payload_bytes = bytes(raw_val) if isinstance(raw_val, (bytes, bytearray)) else str(raw_val).encode("utf-8")
+            elif payload_format == "string" and payload_col:
+                payload_bytes = str(row_dict.get(payload_col, "")).encode("utf-8")
+            elif payload_col and payload_col in row_dict and payload_format != "json":
+                payload_bytes = str(row_dict[payload_col]).encode("utf-8")
+            else:
+                payload_bytes = json.dumps(row_dict, default=str).encode("utf-8")
+
+            attrs: dict[str, str] = {}
+            for col_name in attr_cols:
+                if row_dict.get(col_name) is not None:
+                    attrs[col_name] = str(row_dict[col_name])
+            if idempotency_col and row_dict.get(idempotency_col) is not None:
+                attrs["event_id"] = str(row_dict[idempotency_col])
+            if batch_id:
+                attrs["spark_batch_id"] = batch_id
+
+            ordering_key = (
+                str(row_dict[ordering_col])
+                if enable_ordering and ordering_col and row_dict.get(ordering_col) is not None
+                else ""
+            )
+            futures.append(
+                publisher.publish(
+                    topic_path,
+                    payload_bytes,
+                    ordering_key=ordering_key,
+                    **attrs,
+                )
+            )
+
+        for fut in futures:
+            fut.result(timeout=60.0)
+        return PubSubCommitMessage(published_count=len(futures))
+
+    def commit(self, messages: list[WriterCommitMessage | None]) -> None:
+        pass
+
+    def abort(self, messages: list[WriterCommitMessage | None]) -> None:
+        pass
+
+
+class PubSubSinkDataSource(DataSource):
+    """Spark 4.0 DataSource registering PubSubBatchWriter under format 'pubsub_sink'."""
+
+    @classmethod
+    def name(cls) -> str:
+        return "pubsub_sink"
+
+    def writer(self, schema: StructType, overwrite: bool) -> DataSourceWriter:
+        return PubSubBatchWriter(self.options)
+
+
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Publishes DataFrame records to Cloud Pub/Sub in batch or streaming foreachBatch mode."""
+    target_df = dfs["step_out"]
+    spark = target_df.sparkSession
+    spark.dataSource.register(PubSubSinkDataSource)
+
+    writer_opts = {
+        "topic": config["pubsub_sink_topic"],
+        "projectId": config.get("pubsub_sink_project_id", ""),
+        "payloadFormat": config.get("pubsub_sink_payload_format", "json"),
+        "payloadColumn": config.get("pubsub_sink_payload_column", ""),
+        "attributeColumns": config.get("pubsub_sink_attribute_columns", ""),
+        "orderingKeyColumn": config.get("pubsub_sink_ordering_key_column", ""),
+        "idempotencyKeyColumn": config.get("pubsub_sink_idempotency_key_column", ""),
+        "enableMessageOrdering": str(
+            config.get("pubsub_sink_enable_ordering", False)
+        ).lower(),
+        "batchMaxMessages": str(config.get("pubsub_sink_batch_max_messages", 100)),
+        "batchMaxBytes": str(config.get("pubsub_sink_batch_max_bytes", 1048576)),
+        "batchMaxLatencyMs": str(config.get("pubsub_sink_batch_max_latency_ms", 10)),
+    }
+
+    if target_df.isStreaming:
+        checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+        checkpoint_loc = config.get("pubsub_sink_checkpoint") or (
+            f"{checkpoint_root.rstrip('/')}/snk_pubsub"
+        )
+
+        def write_micro_batch(batch_df: DataFrame, batch_id: int) -> None:
+            batch_df.cache()
+            try:
+                (
+                    batch_df.write.format("pubsub_sink")
+                    .mode("append")
+                    .options(**writer_opts)
+                    .option("batchId", str(batch_id))
+                    .save()
+                )
+            finally:
+                batch_df.unpersist()
+
+        query = (
+            target_df.writeStream.foreachBatch(write_micro_batch)
+            .outputMode(config.get("pubsub_sink_output_mode", "append"))
+            .option("checkpointLocation", checkpoint_loc)
+            .trigger(processingTime=config.get("trigger_interval", "10 seconds"))
+            .start()
+        )
+        spark.streams.awaitAnyTermination()
+    else:
+        target_df.write.format("pubsub_sink").mode("append").options(**writer_opts).save()
 ```

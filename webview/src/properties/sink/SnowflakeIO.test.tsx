@@ -1,268 +1,136 @@
 /**
- * Unit Tests for SnowflakeIOSinkProperties Component
+ * Unit Tests for SnowflakeIOSinkProperties Component (SNK25)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Validates SnowflakeIOSinkProperties form rendering, hydration, property change dispatching,
- * destination table, staging bucket/integration validation, write/create dispositions,
- * auth mode switching, IPC callbacks for GCP Secret Manager, and system instructions fallback chain.
+ * Validates SnowflakeIOSinkProperties rendering, required sfURL/sfWarehouse/sfDatabase/dbtable
+ * validation, saveMode and truncateTable controls, usestagingtable toggle, preactions and
+ * postactions SQL hooks, password vs pem_private_key Secret Manager auth, legacy alias cleanup,
+ * and system instructions.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { SnowflakeIOSinkProperties } from './SnowflakeIO';
+import { SnowflakeIOSinkProperties, SnowflakeSinkProperties } from './SnowflakeIO';
 
 describe('SnowflakeIOSinkProperties', () => {
   const mockOnChange = vi.fn();
-  let postMessageSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
   });
 
-  afterEach(() => {
-    delete (window as any).vscode;
-  });
+  it('exports SnowflakeSinkProperties alias and validates required Snowflake sink fields when empty', () => {
+    expect(SnowflakeSinkProperties).toBe(SnowflakeIOSinkProperties);
 
-  it('renders required connection, staging, and table fields and alerts when empty', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {}
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(
-      screen.getByPlaceholderText('e.g. xy12345.us-central1.gcp.snowflakecomputing.com')
-    ).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. ANALYTICS_DB')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. AGGREGATED_METRICS')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('gs://my-bucket/staging-path/')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. GCS_STORAGE_INT')).toBeInTheDocument();
-
-    expect(screen.getByText('Snowflake account/server name is required')).toBeInTheDocument();
-    expect(screen.getByText('Snowflake database is required')).toBeInTheDocument();
-    expect(screen.getByText('Destination table name is required')).toBeInTheDocument();
-    expect(screen.getByText('Staging bucket name is required')).toBeInTheDocument();
-    expect(screen.getByText('Storage integration name is required')).toBeInTheDocument();
-
-    const tableInput = screen.getByPlaceholderText('e.g. AGGREGATED_METRICS');
-    expect(tableInput).toHaveAttribute('aria-invalid', 'true');
-    expect(tableInput).toHaveAttribute('aria-required', 'true');
-
-    expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSecrets' });
-  });
-
-  it('renders hydrated values from node.data.properties', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {
-          serverName: 'xy12345.snowflakecomputing.com',
-          database: 'DATA_WAREHOUSE',
-          schema: 'PUBLIC',
-          warehouse: 'BATCH_WH',
-          role: 'WRITER_ROLE',
-          table: 'DAILY_SUMMARIES',
-          stagingBucketName: 'gs://snowflake-write-staging/',
-          storageIntegrationName: 'GCS_WRITE_INT',
-          writeDisposition: 'TRUNCATE' as const,
-          createDisposition: 'CREATE_IF_NEEDED' as const,
-          userDataMapper: 'com.example.SummaryUserDataMapper',
-          tableSchema: 'com.example.SummaryTableSchema',
-          quotationMark: '"',
-          fileNameTemplate: 'shard-%s.csv',
-          authMode: 'username_password' as const,
-          usernameSecret: 'WRITER_USER_SECRET',
-          passwordSecret: 'writer-password'
-        }
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByDisplayValue('xy12345.snowflakecomputing.com')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('DATA_WAREHOUSE')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('BATCH_WH')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('DAILY_SUMMARIES')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('gs://snowflake-write-staging/')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('GCS_WRITE_INT')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('TRUNCATE (Truncate table before writing)')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('CREATE_IF_NEEDED')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('com.example.SummaryTableSchema')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('shard-%s.csv')).toBeInTheDocument();
-  });
-
-  it('updates table, database, and staging bucket inputs and dispatches changes', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {
-          serverName: 'xy12345'
-        }
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const tableInput = screen.getByPlaceholderText('e.g. AGGREGATED_METRICS');
-    fireEvent.change(tableInput, { target: { name: 'table', value: 'SENSOR_SUMMARIES' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      serverName: 'xy12345',
-      table: 'SENSOR_SUMMARIES'
-    });
-
-    const bucketInput = screen.getByPlaceholderText('gs://my-bucket/staging-path/');
-    fireEvent.change(bucketInput, { target: { name: 'stagingBucketName', value: 'gs://new-bucket/stage/' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      serverName: 'xy12345',
-      stagingBucketName: 'gs://new-bucket/stage/'
-    });
-  });
-
-  it('updates writeDisposition and createDisposition', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {
-          serverName: 'xy12345',
-          writeDisposition: 'APPEND' as const,
-          createDisposition: 'CREATE_IF_NEEDED' as const
-        }
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const writeDispSelect = screen.getByRole('combobox', { name: /^Write Disposition/i });
-    fireEvent.change(writeDispSelect, { target: { name: 'writeDisposition', value: 'EMPTY' } });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        writeDisposition: 'EMPTY'
-      })
+    const { container } = render(
+      <SnowflakeIOSinkProperties node={{ data: { properties: {} } }} onChange={mockOnChange} />
     );
 
-    const createDispSelect = screen.getByRole('combobox', { name: /^Create Disposition/i });
-    fireEvent.change(createDispSelect, { target: { name: 'createDisposition', value: 'CREATE_NEVER' } });
+    expect(screen.getByText('sfURL is required')).toBeInTheDocument();
+    expect(screen.getByText('sfWarehouse is required')).toBeInTheDocument();
+    expect(screen.getByText('sfDatabase is required')).toBeInTheDocument();
+    expect(screen.getByText('dbtable is required')).toBeInTheDocument();
+    expect(container.querySelector('#snowflakeSinkSfSchema')).toHaveValue('PUBLIC');
+    expect(container.querySelector('#snowflakeSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#snowflakeSinkUseStagingTable')).toBeChecked();
+  });
+
+  it('hydrates Spark Snowflake options and dispatches updates for staging, preactions, and postactions', () => {
+    const { container } = render(
+      <SnowflakeIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              sfURL: 'xy12345.us-central1.gcp.snowflakecomputing.com',
+              sfWarehouse: 'COMPUTE_WH',
+              sfDatabase: 'ANALYTICS_DB',
+              sfSchema: 'MART',
+              sfRole: 'DATA_ENGINEER',
+              sfUser: 'SPARK_WRITER',
+              dbtable: 'DAILY_REVENUE',
+              saveMode: 'overwrite',
+              usestagingtable: true,
+              truncateTable: true,
+              preactions: 'DELETE FROM DAILY_REVENUE WHERE DT = CURRENT_DATE()',
+              postactions: 'GRANT SELECT ON TABLE DAILY_REVENUE TO ROLE BI_READER',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    expect(container.querySelector('#snowflakeSinkSfUrl')).toHaveValue(
+      'xy12345.us-central1.gcp.snowflakecomputing.com'
+    );
+    expect(container.querySelector('#snowflakeSinkSfWarehouse')).toHaveValue('COMPUTE_WH');
+    expect(container.querySelector('#snowflakeSinkSfDatabase')).toHaveValue('ANALYTICS_DB');
+    expect(container.querySelector('#snowflakeSinkSfSchema')).toHaveValue('MART');
+    expect(container.querySelector('#snowflakeSinkSfRole')).toHaveValue('DATA_ENGINEER');
+    expect(container.querySelector('#snowflakeSinkDbtable')).toHaveValue('DAILY_REVENUE');
+    expect(container.querySelector('#snowflakeSinkTruncateTable')).toBeChecked();
+
+    fireEvent.click(container.querySelector('#snowflakeSinkUseStagingTable') as HTMLInputElement);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ usestagingtable: false })
+    );
+
+    fireEvent.change(container.querySelector('#snowflakeSinkPreactions') as HTMLTextAreaElement, {
+      target: { name: 'preactions', value: 'TRUNCATE TABLE STAGE_REV' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ preactions: 'TRUNCATE TABLE STAGE_REV' })
+    );
+
+    fireEvent.change(container.querySelector('#snowflakeSinkPostactions') as HTMLTextAreaElement, {
+      target: { name: 'postactions', value: 'ALTER TABLE DAILY_REVENUE SWAP WITH STAGE_REV' },
+    });
     expect(mockOnChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        createDisposition: 'CREATE_NEVER'
+        postactions: 'ALTER TABLE DAILY_REVENUE SWAP WITH STAGE_REV',
       })
     );
   });
 
-  it('supports Key Pair and OAuth authentication modes in sink', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {
-          authMode: 'key_pair' as const,
-          usernameSecret: 'KEY_USER_SECRET',
-          privateKeySecret: 'sink-pk-secret'
-        }
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('e.g. snowflake-rsa-private-key')).toHaveValue('sink-pk-secret');
-
-    const authSelect = screen.getByRole('combobox', { name: /^Authentication Strategy/i });
-    fireEvent.change(authSelect, { target: { name: 'authMode', value: 'oauth' } });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authMode: 'oauth'
-      })
+  it('supports switching credentialType between password and pem_private_key and cleans legacy aliases', () => {
+    const { container } = render(
+      <SnowflakeIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              serverName: 'legacy.snowflakecomputing.com',
+              warehouse: 'LEGACY_WH',
+              database: 'LEGACY_DB',
+              table: 'LEGACY_TBL',
+              privateKeySecret: 'sf-rsa-key-secret',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
     );
-  });
 
-  it('supports Secret Manager authentication mode in sink', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {
-          authMode: 'username_password' as const,
-          passwordSecret: 'snowflake-sink-pw'
-        }
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('e.g. snowflake-password')).toHaveValue('snowflake-sink-pw');
-  });
-
-  it('toggles Advanced Sink Settings and updates flush row limit and login timeout', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {
-          flushRowLimit: 5000,
-          loginTimeout: 30,
-          extraParameters: 'AUTOCOMMIT=TRUE'
-        }
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    const flushInput = screen.getByPlaceholderText('e.g. 10000');
-    expect(flushInput).toHaveValue(5000);
-
-    const timeoutInput = screen.getByPlaceholderText('e.g. 60');
-    expect(timeoutInput).toHaveValue(30);
-
-    fireEvent.change(flushInput, { target: { name: 'flushRowLimit', value: '25000' } });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flushRowLimit: '25000'
-      })
+    expect(container.querySelector('#snowflakeSinkSfUrl')).toHaveValue(
+      'legacy.snowflakecomputing.com'
     );
-  });
+    expect(container.querySelector('#snowflakeSinkCredentialType')).toHaveValue('pem_private_key');
+    expect(container.querySelector('#snowflakeSinkSecretName')).toHaveValue('sf-rsa-key-secret');
 
-  it('handles edge case of missing properties object cleanly', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink'
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node as any} onChange={mockOnChange} />);
-
-    expect(screen.getByText('Snowflake account/server name is required')).toBeInTheDocument();
-    expect(screen.getByText('Snowflake database is required')).toBeInTheDocument();
-    expect(screen.getByText('Destination table name is required')).toBeInTheDocument();
-  });
-
-
-  it('updates system_instructions when textarea changes', () => {
-    const node = {
-      data: {
-        label: 'Snowflake Sink',
-        properties: {}
-      }
-    };
-
-    render(<SnowflakeIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const textarea = screen.getByPlaceholderText(
-      'Custom prompt instructions for generating the Apache Beam SnowflakeIO sink step...'
-    );
-    fireEvent.change(textarea, {
-      target: { value: 'Write records to Snowflake table using user data mapper and staging bucket.' }
+    fireEvent.change(container.querySelector('#snowflakeSinkDbtable') as HTMLInputElement, {
+      target: { name: 'dbtable', value: 'CANONICAL_TBL' },
     });
+    const updated = mockOnChange.mock.calls[0][0];
+    expect(updated.dbtable).toBe('CANONICAL_TBL');
+    expect(updated.table).toBeUndefined();
 
-    expect(mockOnChange).toHaveBeenCalledWith({
-      system_instructions: 'Write records to Snowflake table using user data mapper and staging bucket.'
+    fireEvent.change(container.querySelector('#snowflakeSinkSystemInstructions') as HTMLTextAreaElement, {
+      target: { value: 'Use MERGE INTO postaction' },
     });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Use MERGE INTO postaction' })
+    );
   });
 });

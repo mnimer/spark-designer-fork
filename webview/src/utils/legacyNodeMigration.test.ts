@@ -13,6 +13,7 @@ import {
   inferBeamTransform,
   migrateLegacyNodes,
   resolveCanonicalSourceTransform,
+  resolveCanonicalSinkTransform,
 } from './legacyNodeMigration';
 
 describe('legacyNodeMigration', () => {
@@ -149,5 +150,46 @@ nodes:
     expect(resolveCanonicalSourceTransform('Neo4jIO')).toBe('Neo4jSource');
     expect(resolveCanonicalSourceTransform('HCatalogIO')).toBe('HiveSource');
     expect(resolveCanonicalSourceTransform('Create')).toBe('CreateDataFrameSource');
+  });
+
+  it('resolves legacy Beam sink transforms to canonical Spark 4.x sink transforms (SNK1-SNK37)', () => {
+    expect(resolveCanonicalSinkTransform('KafkaIO')).toBe('KafkaSink');
+    expect(resolveCanonicalSinkTransform('WriteToKafka')).toBe('KafkaSink');
+    expect(resolveCanonicalSinkTransform('SINK:PubSubIO')).toBe('PubSubSink');
+    expect(resolveCanonicalSinkTransform('BigQueryIO')).toBe('BigQuerySink');
+    expect(resolveCanonicalSinkTransform('WriteToBigQuery')).toBe('BigQuerySink');
+    expect(resolveCanonicalSinkTransform('IcebergIO')).toBe('IcebergSink');
+    expect(resolveCanonicalSinkTransform('HCatalogIO')).toBe('HiveSink');
+    expect(resolveCanonicalSinkTransform('ParquetIO')).toBe('ParquetSink');
+    expect(resolveCanonicalSinkTransform('WriteToParquet')).toBe('ParquetSink');
+    expect(resolveCanonicalSinkTransform('CsvIO')).toBe('CsvSink');
+    expect(resolveCanonicalSinkTransform('WriteToCsv')).toBe('CsvSink');
+    expect(resolveCanonicalSinkTransform('JsonIO')).toBe('JsonSink');
+    expect(resolveCanonicalSinkTransform('WriteToJson')).toBe('JsonSink');
+    expect(resolveCanonicalSinkTransform('AvroIO')).toBe('AvroSink');
+    expect(resolveCanonicalSinkTransform('WriteToAvro')).toBe('AvroSink');
+    expect(resolveCanonicalSinkTransform('TextIO')).toBe('TextSink');
+    expect(resolveCanonicalSinkTransform('WriteToText')).toBe('TextSink');
+    expect(resolveCanonicalSinkTransform('XmlIO')).toBe('XmlSink');
+    expect(resolveCanonicalSinkTransform('TFRecordIO')).toBe('TFRecordSink');
+    expect(resolveCanonicalSinkTransform('SpannerIO')).toBe('SpannerSink');
+    expect(resolveCanonicalSinkTransform('BigTableIO')).toBe('BigtableSink');
+    expect(resolveCanonicalSinkTransform('CloudSQL')).toBe('CloudSqlSink');
+    expect(resolveCanonicalSinkTransform('JdbcIO')).toBe('JdbcSink');
+    expect(resolveCanonicalSinkTransform('SnowflakeIO')).toBe('SnowflakeSink');
+    expect(resolveCanonicalSinkTransform('ClickHouseIO')).toBe('ClickHouseSink');
+    expect(resolveCanonicalSinkTransform('SingleStoreDBIO')).toBe('SingleStoreSink');
+    expect(resolveCanonicalSinkTransform('MongoDbIO')).toBe('MongoDbSink');
+    expect(resolveCanonicalSinkTransform('FirestoreIO')).toBe('FirestoreSink');
+    expect(resolveCanonicalSinkTransform('CassandraIO')).toBe('CassandraSink');
+    expect(resolveCanonicalSinkTransform('RedisIO')).toBe('RedisSink');
+    expect(resolveCanonicalSinkTransform('ElasticsearchIO')).toBe('ElasticsearchSink');
+    expect(resolveCanonicalSinkTransform('Neo4jIO')).toBe('Neo4jSink');
+    expect(resolveCanonicalSinkTransform('LogMessage')).toBe('ConsoleSink');
+    expect(resolveCanonicalSinkTransform('SINK:LogMessage')).toBe('ConsoleSink');
+    expect(resolveCanonicalSinkTransform('DatadogIO')).toBe('ForeachBatchSink');
+    expect(resolveCanonicalSinkTransform('SplunkIO')).toBe('ForeachBatchSink');
+    expect(resolveCanonicalSinkTransform('RequestResponseIO')).toBe('ForeachBatchSink');
+    expect(resolveCanonicalSinkTransform('DeltaSink')).toBe('DeltaSink');
   });
 });

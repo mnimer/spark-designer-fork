@@ -123,36 +123,44 @@ const ElasticsearchIOSourceProperties = lazyForm(() => import('../properties/sou
 const Neo4jIOSourceProperties = lazyForm(() => import('../properties/source/Neo4jIO').then((m) => m.Neo4jIOSourceProperties));
 const CreateProperties = lazyForm(() => import('../properties/source/CreateIO').then((m) => m.CreateProperties));
 
-// Sink Property Forms
-const BigQuerySinkProperties = lazyForm(() => import('../properties/sink/BigQueryIO').then((m) => m.BigQuerySinkProperties));
-const PubSubSinkProperties = lazyForm(() => import('../properties/sink/PubSubIO').then((m) => m.PubSubSinkProperties));
-const TextIOSinkProperties = lazyForm(() => import('../properties/sink/TextIO').then((m) => m.TextIOSinkProperties));
-const JdbcIOSinkProperties = lazyForm(() => import('../properties/sink/JdbcIO').then((m) => m.JdbcIOSinkProperties));
+// Phase 6 — Sink Property Forms (SNK1-SNK37)
 const KafkaIOSinkProperties = lazyForm(() => import('../properties/sink/KafkaIO').then((m) => m.KafkaIOSinkProperties));
+const PubSubSinkProperties = lazyForm(() => import('../properties/sink/PubSubIO').then((m) => m.PubSubSinkProperties));
 const KinesisIOSinkProperties = lazyForm(() => import('../properties/sink/KinesisIO').then((m) => m.KinesisIOSinkProperties));
-const ParquetIOSinkProperties = lazyForm(() => import('../properties/sink/ParquetIO').then((m) => m.ParquetIOSinkProperties));
-const AvroIOSinkProperties = lazyForm(() => import('../properties/sink/AvroIO').then((m) => m.AvroIOSinkProperties));
-const MqttIOSinkProperties = lazyForm(() => import('../properties/sink/MqttIO').then((m) => m.MqttIOSinkProperties));
-const CassandraIOSinkProperties = lazyForm(() => import('../properties/sink/CassandraIO').then((m) => m.CassandraIOSinkProperties));
-const MongoDbIOSinkProperties = lazyForm(() => import('../properties/sink/MongoDbIO').then((m) => m.MongoDbIOSinkProperties));
-const RedisIOSinkProperties = lazyForm(() => import('../properties/sink/RedisIO').then((m) => m.RedisIOSinkProperties));
-const BigTableIOSinkProperties = lazyForm(() => import('../properties/sink/BigTableIO').then((m) => m.BigTableIOSinkProperties));
-const ClickHouseIOSinkProperties = lazyForm(() => import('../properties/sink/ClickHouseIO').then((m) => m.ClickHouseIOSinkProperties));
-const ElasticsearchIOSinkProperties = lazyForm(() => import('../properties/sink/ElasticsearchIO').then((m) => m.ElasticsearchIOSinkProperties));
-const FirestoreIOSinkProperties = lazyForm(() => import('../properties/sink/FirestoreIO').then((m) => m.FirestoreIOSinkProperties));
-const Neo4jIOSinkProperties = lazyForm(() => import('../properties/sink/Neo4jIO').then((m) => m.Neo4jIOSinkProperties));
-const SingleStoreDBIOSinkProperties = lazyForm(() => import('../properties/sink/SingleStoreDBIO').then((m) => m.SingleStoreDBIOSinkProperties));
-const SnowflakeIOSinkProperties = lazyForm(() => import('../properties/sink/SnowflakeIO').then((m) => m.SnowflakeIOSinkProperties));
-const SpannerIOSinkProperties = lazyForm(() => import('../properties/sink/SpannerIO').then((m) => m.SpannerIOSinkProperties));
-const HCatalogIOSinkProperties = lazyForm(() => import('../properties/sink/HCatalogIO').then((m) => m.HCatalogIOSinkProperties));
-const ArrowFlightIOSinkProperties = lazyForm(() => import('../properties/sink/ArrowFlightIO').then((m) => m.ArrowFlightIOSinkProperties));
 const PulsarIOSinkProperties = lazyForm(() => import('../properties/sink/PulsarIO').then((m) => m.PulsarIOSinkProperties));
-const TFRecordIOSinkProperties = lazyForm(() => import('../properties/sink/TFRecordIO').then((m) => m.TFRecordIOSinkProperties));
-const CsvIOSinkProperties = lazyForm(() => import('../properties/sink/CsvIO').then((m) => m.CsvIOSinkProperties));
-const XmlIOSinkProperties = lazyForm(() => import('../properties/sink/XmlIO').then((m) => m.XmlIOSinkProperties));
-const JsonIOSinkProperties = lazyForm(() => import('../properties/sink/JsonIO').then((m) => m.JsonIOSinkProperties));
+const EventHubsSinkProperties = lazyForm(() => import('../properties/sink/EventHubsSink').then((m) => m.EventHubsSinkProperties));
+const MqttIOSinkProperties = lazyForm(() => import('../properties/sink/MqttIO').then((m) => m.MqttIOSinkProperties));
 const IcebergIOSinkProperties = lazyForm(() => import('../properties/sink/IcebergIO').then((m) => m.IcebergIOSinkProperties));
+const DeltaSinkProperties = lazyForm(() => import('../properties/sink/DeltaSink').then((m) => m.DeltaSinkProperties));
+const HudiSinkProperties = lazyForm(() => import('../properties/sink/HudiSink').then((m) => m.HudiSinkProperties));
+const HCatalogIOSinkProperties = lazyForm(() => import('../properties/sink/HCatalogIO').then((m) => m.HCatalogIOSinkProperties));
+const ParquetIOSinkProperties = lazyForm(() => import('../properties/sink/ParquetIO').then((m) => m.ParquetIOSinkProperties));
+const OrcSinkProperties = lazyForm(() => import('../properties/sink/OrcSink').then((m) => m.OrcSinkProperties));
+const AvroIOSinkProperties = lazyForm(() => import('../properties/sink/AvroIO').then((m) => m.AvroIOSinkProperties));
+const CsvIOSinkProperties = lazyForm(() => import('../properties/sink/CsvIO').then((m) => m.CsvIOSinkProperties));
+const JsonIOSinkProperties = lazyForm(() => import('../properties/sink/JsonIO').then((m) => m.JsonIOSinkProperties));
+const TextIOSinkProperties = lazyForm(() => import('../properties/sink/TextIO').then((m) => m.TextIOSinkProperties));
+const XmlIOSinkProperties = lazyForm(() => import('../properties/sink/XmlIO').then((m) => m.XmlIOSinkProperties));
+const TFRecordIOSinkProperties = lazyForm(() => import('../properties/sink/TFRecordIO').then((m) => m.TFRecordIOSinkProperties));
+const BigQuerySinkProperties = lazyForm(() => import('../properties/sink/BigQueryIO').then((m) => m.BigQuerySinkProperties));
+const SpannerIOSinkProperties = lazyForm(() => import('../properties/sink/SpannerIO').then((m) => m.SpannerIOSinkProperties));
+const BigTableIOSinkProperties = lazyForm(() => import('../properties/sink/BigTableIO').then((m) => m.BigTableIOSinkProperties));
 const CloudSQLSinkProperties = lazyForm(() => import('../properties/sink/CloudSQL').then((m) => m.CloudSQLSinkProperties));
+const AlloyDbSinkProperties = lazyForm(() => import('../properties/sink/AlloyDbSink').then((m) => m.AlloyDbSinkProperties));
+const JdbcIOSinkProperties = lazyForm(() => import('../properties/sink/JdbcIO').then((m) => m.JdbcIOSinkProperties));
+const SnowflakeIOSinkProperties = lazyForm(() => import('../properties/sink/SnowflakeIO').then((m) => m.SnowflakeIOSinkProperties));
+const RedshiftSinkProperties = lazyForm(() => import('../properties/sink/RedshiftSink').then((m) => m.RedshiftSinkProperties));
+const ClickHouseIOSinkProperties = lazyForm(() => import('../properties/sink/ClickHouseIO').then((m) => m.ClickHouseIOSinkProperties));
+const SingleStoreDBIOSinkProperties = lazyForm(() => import('../properties/sink/SingleStoreDBIO').then((m) => m.SingleStoreDBIOSinkProperties));
+const MongoDbIOSinkProperties = lazyForm(() => import('../properties/sink/MongoDbIO').then((m) => m.MongoDbIOSinkProperties));
+const FirestoreIOSinkProperties = lazyForm(() => import('../properties/sink/FirestoreIO').then((m) => m.FirestoreIOSinkProperties));
+const CassandraIOSinkProperties = lazyForm(() => import('../properties/sink/CassandraIO').then((m) => m.CassandraIOSinkProperties));
+const RedisIOSinkProperties = lazyForm(() => import('../properties/sink/RedisIO').then((m) => m.RedisIOSinkProperties));
+const ElasticsearchIOSinkProperties = lazyForm(() => import('../properties/sink/ElasticsearchIO').then((m) => m.ElasticsearchIOSinkProperties));
+const Neo4jIOSinkProperties = lazyForm(() => import('../properties/sink/Neo4jIO').then((m) => m.Neo4jIOSinkProperties));
+const ConsoleSinkProperties = lazyForm(() => import('../properties/sink/ConsoleSink').then((m) => m.ConsoleSinkProperties));
+const MemorySinkProperties = lazyForm(() => import('../properties/sink/MemorySink').then((m) => m.MemorySinkProperties));
+const ForeachBatchSinkProperties = lazyForm(() => import('../properties/sink/ForeachBatchSink').then((m) => m.ForeachBatchSinkProperties));
 
 // Step Property Forms
 const ParseMessageProperties = lazyForm(() => import('../properties/step/ParseMessage').then((m) => m.ParseMessageProperties));
@@ -293,7 +301,83 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'ReadFromMqtt': MqttIOSourceProperties,
   'Create': CreateProperties,
 
-  // Sink IOs (qualified by SINK:)
+  // Phase 6 — Canonical Spark 4.x Sinks (SNK1-SNK37, qualified by SINK: and direct)
+  'SINK:KafkaSink': KafkaIOSinkProperties,
+  'KafkaSink': KafkaIOSinkProperties,
+  'SINK:PubSubSink': PubSubSinkProperties,
+  'PubSubSink': PubSubSinkProperties,
+  'SINK:KinesisSink': KinesisIOSinkProperties,
+  'KinesisSink': KinesisIOSinkProperties,
+  'SINK:PulsarSink': PulsarIOSinkProperties,
+  'PulsarSink': PulsarIOSinkProperties,
+  'SINK:EventHubsSink': EventHubsSinkProperties,
+  'EventHubsSink': EventHubsSinkProperties,
+  'SINK:MqttSink': MqttIOSinkProperties,
+  'MqttSink': MqttIOSinkProperties,
+  'SINK:IcebergSink': IcebergIOSinkProperties,
+  'IcebergSink': IcebergIOSinkProperties,
+  'SINK:DeltaSink': DeltaSinkProperties,
+  'DeltaSink': DeltaSinkProperties,
+  'SINK:HudiSink': HudiSinkProperties,
+  'HudiSink': HudiSinkProperties,
+  'SINK:HiveSink': HCatalogIOSinkProperties,
+  'HiveSink': HCatalogIOSinkProperties,
+  'SINK:ParquetSink': ParquetIOSinkProperties,
+  'ParquetSink': ParquetIOSinkProperties,
+  'SINK:OrcSink': OrcSinkProperties,
+  'OrcSink': OrcSinkProperties,
+  'SINK:AvroSink': AvroIOSinkProperties,
+  'AvroSink': AvroIOSinkProperties,
+  'SINK:CsvSink': CsvIOSinkProperties,
+  'CsvSink': CsvIOSinkProperties,
+  'SINK:JsonSink': JsonIOSinkProperties,
+  'JsonSink': JsonIOSinkProperties,
+  'SINK:TextSink': TextIOSinkProperties,
+  'TextSink': TextIOSinkProperties,
+  'SINK:XmlSink': XmlIOSinkProperties,
+  'XmlSink': XmlIOSinkProperties,
+  'SINK:TFRecordSink': TFRecordIOSinkProperties,
+  'TFRecordSink': TFRecordIOSinkProperties,
+  'SINK:BigQuerySink': BigQuerySinkProperties,
+  'BigQuerySink': BigQuerySinkProperties,
+  'SINK:SpannerSink': SpannerIOSinkProperties,
+  'SpannerSink': SpannerIOSinkProperties,
+  'SINK:BigtableSink': BigTableIOSinkProperties,
+  'BigtableSink': BigTableIOSinkProperties,
+  'SINK:CloudSqlSink': CloudSQLSinkProperties,
+  'CloudSqlSink': CloudSQLSinkProperties,
+  'SINK:AlloyDbSink': AlloyDbSinkProperties,
+  'AlloyDbSink': AlloyDbSinkProperties,
+  'SINK:JdbcSink': JdbcIOSinkProperties,
+  'JdbcSink': JdbcIOSinkProperties,
+  'SINK:SnowflakeSink': SnowflakeIOSinkProperties,
+  'SnowflakeSink': SnowflakeIOSinkProperties,
+  'SINK:RedshiftSink': RedshiftSinkProperties,
+  'RedshiftSink': RedshiftSinkProperties,
+  'SINK:ClickHouseSink': ClickHouseIOSinkProperties,
+  'ClickHouseSink': ClickHouseIOSinkProperties,
+  'SINK:SingleStoreSink': SingleStoreDBIOSinkProperties,
+  'SingleStoreSink': SingleStoreDBIOSinkProperties,
+  'SINK:MongoDbSink': MongoDbIOSinkProperties,
+  'MongoDbSink': MongoDbIOSinkProperties,
+  'SINK:FirestoreSink': FirestoreIOSinkProperties,
+  'FirestoreSink': FirestoreIOSinkProperties,
+  'SINK:CassandraSink': CassandraIOSinkProperties,
+  'CassandraSink': CassandraIOSinkProperties,
+  'SINK:RedisSink': RedisIOSinkProperties,
+  'RedisSink': RedisIOSinkProperties,
+  'SINK:ElasticsearchSink': ElasticsearchIOSinkProperties,
+  'ElasticsearchSink': ElasticsearchIOSinkProperties,
+  'SINK:Neo4jSink': Neo4jIOSinkProperties,
+  'Neo4jSink': Neo4jIOSinkProperties,
+  'SINK:ConsoleSink': ConsoleSinkProperties,
+  'ConsoleSink': ConsoleSinkProperties,
+  'SINK:MemorySink': MemorySinkProperties,
+  'MemorySink': MemorySinkProperties,
+  'SINK:ForeachBatchSink': ForeachBatchSinkProperties,
+  'ForeachBatchSink': ForeachBatchSinkProperties,
+
+  // Legacy Sink aliases (backwards compatibility)
   'SINK:PubSubIO': PubSubSinkProperties,
   'SINK:PubSub': PubSubSinkProperties,
   'SINK:BigQueryIO': BigQuerySinkProperties,
@@ -324,18 +408,22 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'SINK:SnowflakeIO': SnowflakeIOSinkProperties,
   'SINK:SpannerIO': SpannerIOSinkProperties,
   'SINK:HCatalogIO': HCatalogIOSinkProperties,
-  'SINK:ArrowFlightIO': ArrowFlightIOSinkProperties,
   'SINK:PulsarIO': PulsarIOSinkProperties,
   'SINK:CloudSQL': CloudSQLSinkProperties,
-
-  // Direct Sink transforms (Python Beam transforms / unique names)
+  'SINK:LogMessage': ConsoleSinkProperties,
+  'LogMessage': ConsoleSinkProperties,
+  'SINK:DatadogIO': ForeachBatchSinkProperties,
+  'SINK:SplunkIO': ForeachBatchSinkProperties,
+  'SINK:RequestResponseIO': ForeachBatchSinkProperties,
   'WriteToAvro': AvroIOSinkProperties,
+  'WriteToBigQuery': BigQuerySinkProperties,
   'WriteToKafka': KafkaIOSinkProperties,
   'WriteToKinesis': KinesisIOSinkProperties,
   'WriteToParquet': ParquetIOSinkProperties,
   'WriteToTFRecord': TFRecordIOSinkProperties,
   'WriteToCsv': CsvIOSinkProperties,
   'WriteToJson': JsonIOSinkProperties,
+  'WriteToText': TextIOSinkProperties,
   'WriteToMqtt': MqttIOSinkProperties,
 
   // Steps & Core Transforms (with and without STEP: prefix)

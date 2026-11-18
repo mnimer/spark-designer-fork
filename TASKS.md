@@ -162,43 +162,43 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 
 | # | Category | `sparkTransform` | Streaming Mode | Write Mechanism (Batch / Streaming) | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [SNK1](#snk1) | Streaming | `KafkaSink` | `native` | `.write.format("kafka")` / `.writeStream.format("kafka")` | ⬜ Not Started |
-| [SNK2](#snk2) | Streaming | `PubSubSink` | `foreachBatch` | Spark 4.0 Python `DataSourceWriter` / `foreachBatch` (`google-cloud-pubsub`) | ⬜ Not Started |
-| [SNK3](#snk3) | Streaming | `KinesisSink` | `foreachBatch` | `foreachBatch` (`boto3` `put_records`) | ⬜ Not Started |
-| [SNK4](#snk4) | Streaming | `PulsarSink` | `native` | `.write.format("pulsar")` / `.writeStream.format("pulsar")` | ⬜ Not Started |
-| [SNK5](#snk5) | Streaming | `EventHubsSink` | `native` | `.write.format("kafka")` / `.writeStream.format("kafka")` (Event Hubs endpoint) | ⬜ Not Started |
-| [SNK6](#snk6) | Streaming | `MqttSink` | `foreachBatch` | `foreachBatch` (`paho-mqtt` publisher) | ⬜ Not Started |
-| [SNK7](#snk7) | Lakehouse | `IcebergSink` | `native` | `df.writeTo("`<catalog>`.<ns>.<table>").using("iceberg")` (`createOrReplace`, `append`, `MERGE INTO`, `overwritePartitions`) / `.writeStream.format("iceberg")` | ⬜ Not Started |
-| [SNK8](#snk8) | Lakehouse | `DeltaSink` | `native` | `.write.format("delta")` / `.writeStream.format("delta")` / `DeltaTable.merge` | ⬜ Not Started |
-| [SNK9](#snk9) | Lakehouse | `HudiSink` | `native` | `.write.format("hudi")` / `.writeStream.format("hudi")` (`upsert`, `insert`, `bulk_insert`) | ⬜ Not Started |
-| [SNK10](#snk10) | Lakehouse | `HiveSink` | `foreachBatch` | `df.write.mode(...).saveAsTable("<db>.<table>")` | ⬜ Not Started |
-| [SNK11](#snk11) | File Format | `ParquetSink` | `native` | `.write.parquet(uri)` / `.writeStream.format("parquet")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK12](#snk12) | File Format | `OrcSink` | `native` | `.write.orc(uri)` / `.writeStream.format("orc")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK13](#snk13) | File Format | `AvroSink` | `native` | `.write.format("avro")` / `.writeStream.format("avro")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK14](#snk14) | File Format | `CsvSink` | `native` | `.write.csv(uri)` / `.writeStream.format("csv")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK15](#snk15) | File Format | `JsonSink` | `native` | `.write.json(uri)` / `.writeStream.format("json")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK16](#snk16) | File Format | `TextSink` | `native` | `.write.text(uri)` / `.writeStream.format("text")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK17](#snk17) | File Format | `XmlSink` | `foreachBatch` | `.write.format("xml")` (built-in Spark 4.0) + `StorageBackendFields` | ⬜ Not Started |
-| [SNK18](#snk18) | File Format | `TFRecordSink` | `foreachBatch` | `.write.format("tfrecords")` + `StorageBackendFields` | ⬜ Not Started |
-| [SNK19](#snk19) | Warehouse/DB | `BigQuerySink` | `native` | `.write.format("bigquery")` (`direct` / `indirect`) / `.writeStream.format("bigquery")` | ⬜ Not Started |
-| [SNK20](#snk20) | Warehouse/DB | `SpannerSink` | `foreachBatch` | `.write.format("cloud-spanner")` / `foreachBatch` | ⬜ Not Started |
-| [SNK21](#snk21) | Warehouse/DB | `BigtableSink` | `foreachBatch` | `.write.format("bigtable")` / `foreachBatch` | ⬜ Not Started |
-| [SNK22](#snk22) | Warehouse/DB | `CloudSqlSink` | `foreachBatch` | `.write.format("jdbc")` (`truncate=true`, `batchsize=5000`, Socket Factory) / `foreachBatch` | ⬜ Not Started |
-| [SNK23](#snk23) | Warehouse/DB | `AlloyDbSink` | `foreachBatch` | `.write.format("jdbc")` (`truncate=true`, `batchsize=5000`, AlloyDB Socket Factory) / `foreachBatch` | ⬜ Not Started |
-| [SNK24](#snk24) | Warehouse/DB | `JdbcSink` | `foreachBatch` | `.write.format("jdbc")` (`truncate=true`, `batchsize=5000`) / `foreachBatch` | ⬜ Not Started |
-| [SNK25](#snk25) | Warehouse/DB | `SnowflakeSink` | `foreachBatch` | `.write.format("net.snowflake.spark.snowflake")` / `foreachBatch` | ⬜ Not Started |
-| [SNK26](#snk26) | Warehouse/DB | `RedshiftSink` | `foreachBatch` | `.write.format("io.github.spark_redshift_community.spark.redshift")` / `foreachBatch` | ⬜ Not Started |
-| [SNK27](#snk27) | Warehouse/DB | `ClickHouseSink` | `foreachBatch` | `.write.format("jdbc")` / `foreachBatch` | ⬜ Not Started |
-| [SNK28](#snk28) | Warehouse/DB | `SingleStoreSink` | `foreachBatch` | `.write.format("singlestore")` / `foreachBatch` | ⬜ Not Started |
-| [SNK29](#snk29) | NoSQL/Graph | `MongoDbSink` | `native` | `.write.format("mongodb")` / `.writeStream.format("mongodb")` | ⬜ Not Started |
-| [SNK30](#snk30) | NoSQL/Graph | `FirestoreSink` | `foreachBatch` | Spark 4.0 Python `DataSourceWriter` / `foreachBatch` (`google-cloud-firestore` `Batch`) | ⬜ Not Started |
-| [SNK31](#snk31) | NoSQL/Graph | `CassandraSink` | `native` | `.write.format("org.apache.spark.sql.cassandra")` / `foreachBatch` | ⬜ Not Started |
-| [SNK32](#snk32) | NoSQL/Graph | `RedisSink` | `foreachBatch` | Spark 4.0 Python `DataSourceWriter` / `foreachBatch` (`redis-py` pipeline) | ⬜ Not Started |
-| [SNK33](#snk33) | NoSQL/Graph | `ElasticsearchSink` | `native` | `.write.format("org.elasticsearch.spark.sql")` / `.writeStream.format("org.elasticsearch.spark.sql")` | ⬜ Not Started |
-| [SNK34](#snk34) | NoSQL/Graph | `Neo4jSink` | `native` | `.write.format("org.neo4j.spark.DataSource")` / `.writeStream.format("org.neo4j.spark.DataSource")` | ⬜ Not Started |
-| [SNK35](#snk35) | Debug/Custom | `ConsoleSink` | `native` | `logging.info` summary (Batch) / `.writeStream.format("console")` (Streaming) | ⬜ Not Started |
-| [SNK36](#snk36) | Debug/Custom | `MemorySink` | `native` | `df.createOrReplaceTempView(name)` (Batch) / `.writeStream.format("memory")` (Streaming) | ⬜ Not Started |
-| [SNK37](#snk37) | Debug/Custom | `ForeachBatchSink` | `foreachBatch` | Custom Python sink function or batched HTTP webhook (`Datadog`, `Splunk HEC`, REST) | ⬜ Not Started |
+| [SNK1](#snk1) | Streaming | `KafkaSink` | `native` | `.write.format("kafka")` / `.writeStream.format("kafka")` | ✅ Done |
+| [SNK2](#snk2) | Streaming | `PubSubSink` | `foreachBatch` | Spark 4.0 Python `DataSourceWriter` / `foreachBatch` (`google-cloud-pubsub`) | ✅ Done |
+| [SNK3](#snk3) | Streaming | `KinesisSink` | `foreachBatch` | `foreachBatch` (`boto3` `put_records`) | ✅ Done |
+| [SNK4](#snk4) | Streaming | `PulsarSink` | `native` | `.write.format("pulsar")` / `.writeStream.format("pulsar")` | ✅ Done |
+| [SNK5](#snk5) | Streaming | `EventHubsSink` | `native` | `.write.format("kafka")` / `.writeStream.format("kafka")` (Event Hubs endpoint) | ✅ Done |
+| [SNK6](#snk6) | Streaming | `MqttSink` | `foreachBatch` | `foreachBatch` (`paho-mqtt` publisher) | ✅ Done |
+| [SNK7](#snk7) | Lakehouse | `IcebergSink` | `native` | `df.writeTo("`<catalog>`.<ns>.<table>").using("iceberg")` (`createOrReplace`, `append`, `MERGE INTO`, `overwritePartitions`) / `.writeStream.format("iceberg")` | ✅ Done |
+| [SNK8](#snk8) | Lakehouse | `DeltaSink` | `native` | `.write.format("delta")` / `.writeStream.format("delta")` / `DeltaTable.merge` | ✅ Done |
+| [SNK9](#snk9) | Lakehouse | `HudiSink` | `native` | `.write.format("hudi")` / `.writeStream.format("hudi")` (`upsert`, `insert`, `bulk_insert`) | ✅ Done |
+| [SNK10](#snk10) | Lakehouse | `HiveSink` | `foreachBatch` | `df.write.mode(...).saveAsTable("<db>.<table>")` | ✅ Done |
+| [SNK11](#snk11) | File Format | `ParquetSink` | `native` | `.write.parquet(uri)` / `.writeStream.format("parquet")` + `StorageBackendFields` | ✅ Done |
+| [SNK12](#snk12) | File Format | `OrcSink` | `native` | `.write.orc(uri)` / `.writeStream.format("orc")` + `StorageBackendFields` | ✅ Done |
+| [SNK13](#snk13) | File Format | `AvroSink` | `native` | `.write.format("avro")` / `.writeStream.format("avro")` + `StorageBackendFields` | ✅ Done |
+| [SNK14](#snk14) | File Format | `CsvSink` | `native` | `.write.csv(uri)` / `.writeStream.format("csv")` + `StorageBackendFields` | ✅ Done |
+| [SNK15](#snk15) | File Format | `JsonSink` | `native` | `.write.json(uri)` / `.writeStream.format("json")` + `StorageBackendFields` | ✅ Done |
+| [SNK16](#snk16) | File Format | `TextSink` | `native` | `.write.text(uri)` / `.writeStream.format("text")` + `StorageBackendFields` | ✅ Done |
+| [SNK17](#snk17) | File Format | `XmlSink` | `foreachBatch` | `.write.format("xml")` (built-in Spark 4.0) + `StorageBackendFields` | ✅ Done |
+| [SNK18](#snk18) | File Format | `TFRecordSink` | `foreachBatch` | `.write.format("tfrecords")` + `StorageBackendFields` | ✅ Done |
+| [SNK19](#snk19) | Warehouse/DB | `BigQuerySink` | `native` | `.write.format("bigquery")` (`direct` / `indirect`) / `.writeStream.format("bigquery")` | ✅ Done |
+| [SNK20](#snk20) | Warehouse/DB | `SpannerSink` | `foreachBatch` | `.write.format("cloud-spanner")` / `foreachBatch` | ✅ Done |
+| [SNK21](#snk21) | Warehouse/DB | `BigtableSink` | `foreachBatch` | `.write.format("bigtable")` / `foreachBatch` | ✅ Done |
+| [SNK22](#snk22) | Warehouse/DB | `CloudSqlSink` | `foreachBatch` | `.write.format("jdbc")` (`truncate=true`, `batchsize=5000`, Socket Factory) / `foreachBatch` | ✅ Done |
+| [SNK23](#snk23) | Warehouse/DB | `AlloyDbSink` | `foreachBatch` | `.write.format("jdbc")` (`truncate=true`, `batchsize=5000`, AlloyDB Socket Factory) / `foreachBatch` | ✅ Done |
+| [SNK24](#snk24) | Warehouse/DB | `JdbcSink` | `foreachBatch` | `.write.format("jdbc")` (`truncate=true`, `batchsize=5000`) / `foreachBatch` | ✅ Done |
+| [SNK25](#snk25) | Warehouse/DB | `SnowflakeSink` | `foreachBatch` | `.write.format("net.snowflake.spark.snowflake")` / `foreachBatch` | ✅ Done |
+| [SNK26](#snk26) | Warehouse/DB | `RedshiftSink` | `foreachBatch` | `.write.format("io.github.spark_redshift_community.spark.redshift")` / `foreachBatch` | ✅ Done |
+| [SNK27](#snk27) | Warehouse/DB | `ClickHouseSink` | `foreachBatch` | `.write.format("jdbc")` / `foreachBatch` | ✅ Done |
+| [SNK28](#snk28) | Warehouse/DB | `SingleStoreSink` | `foreachBatch` | `.write.format("singlestore")` / `foreachBatch` | ✅ Done |
+| [SNK29](#snk29) | NoSQL/Graph | `MongoDbSink` | `native` | `.write.format("mongodb")` / `.writeStream.format("mongodb")` | ✅ Done |
+| [SNK30](#snk30) | NoSQL/Graph | `FirestoreSink` | `foreachBatch` | Spark 4.0 Python `DataSourceWriter` / `foreachBatch` (`google-cloud-firestore` `Batch`) | ✅ Done |
+| [SNK31](#snk31) | NoSQL/Graph | `CassandraSink` | `native` | `.write.format("org.apache.spark.sql.cassandra")` / `foreachBatch` | ✅ Done |
+| [SNK32](#snk32) | NoSQL/Graph | `RedisSink` | `foreachBatch` | Spark 4.0 Python `DataSourceWriter` / `foreachBatch` (`redis-py` pipeline) | ✅ Done |
+| [SNK33](#snk33) | NoSQL/Graph | `ElasticsearchSink` | `native` | `.write.format("org.elasticsearch.spark.sql")` / `.writeStream.format("org.elasticsearch.spark.sql")` | ✅ Done |
+| [SNK34](#snk34) | NoSQL/Graph | `Neo4jSink` | `native` | `.write.format("org.neo4j.spark.DataSource")` / `.writeStream.format("org.neo4j.spark.DataSource")` | ✅ Done |
+| [SNK35](#snk35) | Debug/Custom | `ConsoleSink` | `native` | `logging.info` summary (Batch) / `.writeStream.format("console")` (Streaming) | ✅ Done |
+| [SNK36](#snk36) | Debug/Custom | `MemorySink` | `native` | `df.createOrReplaceTempView(name)` (Batch) / `.writeStream.format("memory")` (Streaming) | ✅ Done |
+| [SNK37](#snk37) | Debug/Custom | `ForeachBatchSink` | `foreachBatch` | Custom Python sink function or batched HTTP webhook (`Datadog`, `Splunk HEC`, REST) | ✅ Done |
 
 ### Phase 7 — Steps / Transformations Catalog, Property Forms & Skills (`OP1`–`OP29`)
 

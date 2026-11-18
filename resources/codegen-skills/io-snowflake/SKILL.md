@@ -1,12 +1,12 @@
 ---
 name: io-snowflake
-description: Read Snowflake tables and SQL queries in PySpark 4.x using the Spark Snowflake connector and Secret Manager password or PEM private key credentials.
+description: Read and write Snowflake tables in PySpark 4.x using the Spark Snowflake connector and Secret Manager password or PEM private key credentials.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [SnowflakeSource]
+  transforms: [SnowflakeSource, SnowflakeSink]
   preloadWhen: []
   sources:
     - prompt
@@ -14,20 +14,20 @@ metadata:
   validated: true
 ---
 
-# Snowflake Source (`SnowflakeSource`)
+# Snowflake Connector (`SnowflakeSource` and `SnowflakeSink`)
 
-Use these rules when generating PySpark 4.x code for a `SnowflakeSource` node.
+Use these rules when generating PySpark 4.x code for `SnowflakeSource` and `SnowflakeSink` nodes.
 
 ## 1. Runtime Classpath and Connector Delivery
 
 - Supply the Snowflake Spark connector (Scala 2.13) via `--packages net.snowflake:spark-snowflake_2.13:3.1.0` (`spark.jars.packages`).
-- Use `.format("net.snowflake.spark.snowflake")` in `spark.read`.
+- Use `.format("net.snowflake.spark.snowflake")` for both `spark.read` and `df.write`.
 
-## 2. Batch Read Patterns and Authentication (`read_sources`)
+## 2. Batch Read Patterns and Authentication (`SnowflakeSource` in `read_sources`)
 
 `SnowflakeSource` runs in `batch` mode and supports both password authentication (`sfPassword`) and key-pair authentication (`pem_private_key`).
 
-### Required and Optional Options
+### Required and Optional Read Options
 - `sfURL`: Snowflake account endpoint (for example `<account>.snowflakecomputing.com`).
 - `sfWarehouse`: Snowflake virtual warehouse name.
 - `sfDatabase`: Database name.
@@ -104,7 +104,94 @@ def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataF
     return dfs
 ```
 
-## 3. Offline Unit Testing (`tests/test_pipeline.py`)
+## 3. Batch and Streaming Write Patterns (`SnowflakeSink` in `write_sinks`)
+
+`SnowflakeSink` writes DataFrames via `.write.format("net.snowflake.spark.snowflake")` in batch mode and wraps that batch write inside `df.writeStream.foreachBatch(...)` in streaming mode (`streamingSinkMode: "foreachBatch"`).
+
+### Required and Optional Write Options
+- **Connection Coordinates**: Pass `sfURL`, `sfUser`, `sfDatabase`, `sfSchema`, `sfWarehouse`, and optional `sfRole`.
+- **Authentication**: Resolve `sfPassword` or `pem_private_key` once on the driver via `get_secret()`. Strip PEM headers, footers, and line breaks when setting `pem_private_key`.
+- **Target Table and Save Mode**: Pass `.option("dbtable", "<table_name>")` and `.mode(save_mode)` (`"append"`, `"overwrite"`, `"errorifexists"`, or `"ignore"`). When `save_mode == "overwrite"` and `truncate_table` is enabled, set `.option("truncate_table", "ON")` to preserve Snowflake table grants and clustering metadata.
+- **Staging Table (`usestagingtable`)**: Pass `.option("usestagingtable", "ON")` (default `"ON"`) so the connector loads into an ephemeral Snowflake table and commits atomically. Set `"OFF"` only when direct target loading is explicitly requested.
+- **SQL Hooks (`preactions` and `postactions`)**: Pass `.option("preactions", sql_text)` or `.option("postactions", sql_text)` when pre-write cleanup, `MERGE INTO` upserts from a staging table, or post-write grants are configured.
+
+### Batch Write Example
+
+```python
+def build_snowflake_sink_options(config: dict[str, Any], secret_payload: str) -> dict[str, str]:
+    """Builds Spark Snowflake connector write options with resolved credentials."""
+    sf_options: dict[str, str] = {
+        "sfURL": config["sf_sink_url"],
+        "sfWarehouse": config["sf_sink_warehouse"],
+        "sfDatabase": config["sf_sink_database"],
+        "sfSchema": config.get("sf_sink_schema", "PUBLIC"),
+        "sfUser": config["sf_sink_user"],
+        "dbtable": config["sf_sink_table"],
+        "usestagingtable": "ON" if config.get("sf_use_staging_table", True) else "OFF",
+    }
+    if config.get("sf_sink_role"):
+        sf_options["sfRole"] = config["sf_sink_role"]
+
+    if config.get("sf_credential_type") == "pem_private_key":
+        sf_options["pem_private_key"] = (
+            secret_payload.replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replace("\n", "")
+            .strip()
+        )
+    else:
+        sf_options["sfPassword"] = secret_payload
+
+    if config.get("sf_preactions"):
+        sf_options["preactions"] = config["sf_preactions"]
+    if config.get("sf_postactions"):
+        sf_options["postactions"] = config["sf_postactions"]
+    if config.get("sf_save_mode") == "overwrite" and config.get("sf_truncate_table", False):
+        sf_options["truncate_table"] = "ON"
+    return sf_options
+
+
+def write_snowflake_df(df: DataFrame, config: dict[str, Any], secret_payload: str) -> None:
+    """Writes a batch or micro-batch DataFrame to Snowflake."""
+    save_mode = config.get("sf_save_mode", "append")
+    sf_options = build_snowflake_sink_options(config, secret_payload)
+    (
+        df.write.format("net.snowflake.spark.snowflake")
+        .mode(save_mode)
+        .options(**sf_options)
+        .save()
+    )
+```
+
+### Streaming `foreachBatch` Write Example
+
+Because the Spark Snowflake connector does not expose a native `DataStreamWriter`, wrap micro-batch writes in `.writeStream.foreachBatch(write_micro_batch)`:
+
+```python
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Writes streaming micro-batches to Snowflake via foreachBatch."""
+    checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+    secret_payload = get_secret(config["sf_sink_secret"])
+
+    def write_micro_batch(batch_df: DataFrame, batch_id: int) -> None:
+        batch_df.cache()
+        try:
+            write_snowflake_df(batch_df, config, secret_payload)
+        finally:
+            batch_df.unpersist()
+
+    query = (
+        dfs["upstream_stream"]
+        .writeStream.foreachBatch(write_micro_batch)
+        .outputMode(config.get("output_mode", "append"))
+        .option("checkpointLocation", f"{checkpoint_root.rstrip('/')}/snowflake_sink")
+        .trigger(processingTime=config.get("trigger_interval", "30 seconds"))
+        .start()
+    )
+    query.awaitTermination()
+```
+
+## 4. Offline Unit Testing (`tests/test_pipeline.py`)
 
 Test `transform(dfs, config)` offline in `tests/test_pipeline.py` using an in-memory `DataFrame` without connecting to Snowflake:
 

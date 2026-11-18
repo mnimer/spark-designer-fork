@@ -1,12 +1,12 @@
 ---
 name: io-pulsar
-description: Read batch and streaming messages from Apache Pulsar topics in PySpark 4.x using the StreamNative Pulsar Spark connector.
+description: Read and write batch and streaming messages with Apache Pulsar topics in PySpark 4.x using the StreamNative Pulsar Spark connector.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [PulsarSource]
+  transforms: [PulsarSource, PulsarSink]
   preloadWhen: []
   sources:
     - prompt
@@ -136,4 +136,148 @@ def test_pulsar_pipeline_transform(spark: SparkSession) -> None:
     result_dfs = transform({"src_pulsar": input_df}, {})
     assert "src_pulsar" in result_dfs
     assert result_dfs["src_pulsar"].count() == 1
+```
+
+---
+
+# Apache Pulsar Sink (`PulsarSink`)
+
+Use these rules when generating PySpark {{spark_version}} code for an Apache Pulsar sink node (`PulsarSink` or `SINK:PulsarIO`).
+
+## 1. Batch and Native Streaming Write Modes
+
+`PulsarSink` supports native Structured Streaming and bounded batch execution using `io.streamnative.connectors:pulsar-spark-connector_2.13:4.0.0.1`:
+- **Batch mode**: Write bounded DataFrames in `write_sinks(dfs, config)` with `pulsar_df.write.format("pulsar").options(...).save()`.
+- **Native streaming mode (`mode == "native"` in `ExecutionPlan.streamingSinkGroups`)**: Start the streaming query with `pulsar_df.writeStream.format("pulsar").options(...)` along with `outputMode`, `trigger`, and `checkpointLocation`.
+- **Grouped `foreachBatch` mode (`mode == "foreachBatch"`)**: If `ExecutionPlan.streamingSinkGroups` groups `PulsarSink` with other sinks, write inside `write_micro_batch(batch_df, batch_id)` using `batch_df.write.format("pulsar").options(...).save()`.
+
+## 2. Metadata Columns (`__key`, `__eventTime`, `__topic`) and Payload Modes
+
+Project DataFrame columns to match the StreamNative Pulsar Spark sink conventions before writing:
+- **`__key` (optional, `STRING` or `BINARY`)**: If `keyColumn` is set, project `F.col(key_col).cast("string").alias("__key")` for Pulsar partition routing and topic compaction.
+- **`__eventTime` (optional, `TIMESTAMP`)**: If `eventTimeColumn` is set, project `F.col(event_time_col).cast("timestamp").alias("__eventTime")`.
+- **`topic` vs `__topic`**: Pass `.option("topic", config["pulsar_sink_topic"])` for a fixed destination topic, or project `F.col(topic_col).cast("string").alias("__topic")` when routing rows dynamically across Pulsar topics.
+- **Payload Serialization (`payloadMode`)**:
+  - `"json"` (default): Serialize non-metadata columns into a single UTF-8 JSON `value` column with `F.to_json(F.struct(*payload_cols)).alias("value")`.
+  - `"schema"`: Keep typed DataFrame columns alongside `__key` and `__eventTime` so the Pulsar Spark connector registers and writes a structured Pulsar schema.
+  - `"string"` or `"binary"`: Cast `valueColumn` to `"string"` or `"binary"` aliased as `"value"`.
+
+## 3. JWT Token and OAuth2 Authentication via `get_secret()`
+
+Resolve Pulsar credentials once on the driver in `write_sinks(dfs, config)` via `get_secret()`:
+- **JWT Token (`authMode == "token"`)**:
+  - `.option("pulsar.client.authPluginClassName", "org.apache.pulsar.client.impl.auth.AuthenticationToken")`
+  - `.option("pulsar.client.authParams", f"token:{jwt_token}")`
+- **OAuth2 (`authMode == "oauth2"`)**:
+  - Fetch the service account key JSON via `get_secret()`, base64-encode it into an inline JSON data URI so no cleartext key file touches disk, and pass:
+  - `.option("pulsar.client.authPluginClassName", "org.apache.pulsar.client.impl.auth.oauth2.AuthenticationOAuth2")`
+  - `.option("pulsar.client.authParams", json.dumps({"type": "client_credentials", "issuerUrl": issuer_url, "audience": audience, "privateKey": data_uri}))`
+
+## 4. Reference Sink Implementation (`src/pipeline.py`)
+
+```python
+import base64
+import json
+from typing import Any
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+
+
+def prepare_pulsar_sink_df(df: DataFrame, config: dict[str, Any]) -> DataFrame:
+    """Projects __key, __eventTime, __topic, and payload columns for PulsarSink."""
+    payload_mode = config.get("pulsar_sink_payload_mode", "json")
+    key_col = config.get("pulsar_sink_key_column", "")
+    value_col = config.get("pulsar_sink_value_column", "")
+    event_time_col = config.get("pulsar_sink_event_time_column", "")
+    topic_col = config.get("pulsar_sink_topic_column", "")
+
+    meta_exprs = []
+    if key_col and key_col in df.columns:
+        meta_exprs.append(F.col(key_col).cast("string").alias("__key"))
+    if event_time_col and event_time_col in df.columns:
+        meta_exprs.append(F.col(event_time_col).cast("timestamp").alias("__eventTime"))
+    if topic_col and topic_col in df.columns:
+        meta_exprs.append(F.col(topic_col).cast("string").alias("__topic"))
+
+    if payload_mode == "schema":
+        excluded = {c for c in (key_col, event_time_col, topic_col) if c}
+        data_exprs = [F.col(c) for c in df.columns if c not in excluded]
+        return df.select(*meta_exprs, *data_exprs)
+
+    if payload_mode == "binary" and value_col:
+        val_expr = F.col(value_col).cast("binary").alias("value")
+    elif payload_mode == "string" and value_col:
+        val_expr = F.col(value_col).cast("string").alias("value")
+    else:
+        excluded = {c for c in (topic_col,) if c}
+        struct_cols = [F.col(c) for c in df.columns if c not in excluded]
+        val_expr = F.to_json(F.struct(*struct_cols)).alias("value")
+
+    return df.select(*meta_exprs, val_expr)
+
+
+def build_pulsar_sink_options(config: dict[str, Any]) -> dict[str, str]:
+    """Builds Pulsar service.url, topic, producer tuning, and authentication options."""
+    opts: dict[str, str] = {
+        "service.url": config["pulsar_sink_service_url"],
+    }
+    if config.get("pulsar_sink_admin_url"):
+        opts["admin.url"] = config["pulsar_sink_admin_url"]
+    if config.get("pulsar_sink_topic"):
+        opts["topic"] = config["pulsar_sink_topic"]
+
+    compression = config.get("pulsar_sink_compression_type", "NONE")
+    if compression and compression != "NONE":
+        opts["pulsar.producer.compressionType"] = compression
+    opts["pulsar.producer.batchingEnabled"] = str(
+        config.get("pulsar_sink_batching_enabled", True)
+    ).lower()
+
+    auth_mode = config.get("pulsar_sink_auth_mode", "none")
+    secret_name = config.get("pulsar_sink_secret_name", "")
+    if auth_mode == "token" and secret_name:
+        token = get_secret(secret_name)
+        opts["pulsar.client.authPluginClassName"] = (
+            "org.apache.pulsar.client.impl.auth.AuthenticationToken"
+        )
+        opts["pulsar.client.authParams"] = f"token:{token}"
+    elif auth_mode == "oauth2" and secret_name:
+        key_json = get_secret(secret_name)
+        encoded_key = base64.b64encode(key_json.encode("utf-8")).decode("ascii")
+        auth_params = json.dumps(
+            {
+                "type": "client_credentials",
+                "issuerUrl": config["pulsar_sink_oauth_issuer_url"],
+                "audience": config["pulsar_sink_oauth_audience"],
+                "privateKey": f"data:application/json;base64,{encoded_key}",
+            }
+        )
+        opts["pulsar.client.authPluginClassName"] = (
+            "org.apache.pulsar.client.impl.auth.oauth2.AuthenticationOAuth2"
+        )
+        opts["pulsar.client.authParams"] = auth_params
+    return opts
+
+
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Writes output DataFrame records to Apache Pulsar in batch or streaming mode."""
+    pulsar_df = prepare_pulsar_sink_df(dfs["step_out"], config)
+    pulsar_opts = build_pulsar_sink_options(config)
+
+    if pulsar_df.isStreaming:
+        checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+        checkpoint_loc = config.get("pulsar_sink_checkpoint") or (
+            f"{checkpoint_root.rstrip('/')}/snk_pulsar"
+        )
+        (
+            pulsar_df.writeStream.format("pulsar")
+            .options(**pulsar_opts)
+            .outputMode(config.get("pulsar_sink_output_mode", "append"))
+            .option("checkpointLocation", checkpoint_loc)
+            .trigger(processingTime=config.get("trigger_interval", "10 seconds"))
+            .start()
+        )
+        pulsar_df.sparkSession.streams.awaitAnyTermination()
+    else:
+        pulsar_df.write.format("pulsar").options(**pulsar_opts).save()
 ```

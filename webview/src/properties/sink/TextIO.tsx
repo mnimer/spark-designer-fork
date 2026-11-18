@@ -1,221 +1,290 @@
 /**
- * TextIO Sink Properties Component
- * 
+ * @fileoverview Text Sink (SNK16 TextSink / TextIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property panel for Apache Beam TextIO Write Sink nodes (TextIO.write().to(...)).
- * 
- * Architectural Decisions:
- * - In Apache Beam, TextIO.write() requires a destination output file prefix or path (`.to(...)`).
- * - Enforces required field indicators, error messages, and aria attributes on `to`.
- * - Integrates InfoTooltip components explaining sharding, compression formats, and file naming templates.
- * - Provides Code Generation Instructions textarea for custom LLM prompts.
+ * Renders the property configuration panel for Apache Spark Text sink nodes
+ * using df.write.text(uri) or df.writeStream.format("text").start(uri).
+ * Embeds the shared StorageBackendFields component alongside Spark 4.x saveMode,
+ * compression codecs, partitionBy columns, maxRecordsPerFile, single-string-column
+ * projection strategy (valueColumn, F.concat_ws, or F.to_json), lineSep, and
+ * SystemInstructionsField.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
-import { InfoTooltip } from '../../components/InfoTooltip';
-
-const BEAM_WRITE_COMPRESSION_TYPES = ['UNCOMPRESSED', 'GZIP', 'BZIP2', 'ZSTD', 'DEFLATE'] as const;
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /**
- * Node definition for TextIO sink configuration.
+ * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-interface TextIOSinkNode {
+export const TEXT_SAVE_MODES: SelectFieldOption[] = [
+  { value: 'append', label: 'append (Append rows to existing path)' },
+  { value: 'overwrite', label: 'overwrite (Replace existing data)' },
+  { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
+  { value: 'ignore', label: 'ignore (Skip write if destination exists)' },
+];
+
+/**
+ * Supported Spark 4.x Text output compression codecs.
+ */
+export const TEXT_COMPRESSION_CODECS: SelectFieldOption[] = [
+  { value: 'none', label: 'none (Uncompressed plain text)' },
+  { value: 'gzip', label: 'gzip (.txt.gz)' },
+  { value: 'zstd', label: 'zstd (.txt.zst)' },
+  { value: 'bzip2', label: 'bzip2 (.txt.bz2)' },
+  { value: 'lz4', label: 'lz4 (.txt.lz4)' },
+  { value: 'snappy', label: 'snappy (.txt.snappy)' },
+  { value: 'deflate', label: 'deflate (.txt.deflate)' },
+];
+
+/**
+ * Supported strategies for satisfying Spark Text writer's single StringType column requirement.
+ */
+export const TEXT_SERIALIZATION_STRATEGIES: SelectFieldOption[] = [
+  { value: 'column', label: 'Project Single Column as String (F.col(name).cast("string"))' },
+  { value: 'concat_ws', label: 'Concatenate Columns (F.concat_ws)' },
+  { value: 'to_json', label: 'Serialize Row as JSON Line (F.to_json(F.struct(*cols)))' },
+];
+
+/**
+ * React Flow node shape for the Text sink panel.
+ */
+export interface TextIOSinkNode {
   data: {
     label: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      storageBackend?: string;
+      path?: string;
       to?: string;
-      suffix?: string;
-      numShards?: string | number;
-      withoutSharding?: boolean;
-      withCompression?: boolean;
-      compression?: string;
-      header?: string;
-      footer?: string;
+      uri?: string;
+      authMode?: string;
+      secretName?: string;
+      saveMode?: 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+      mode?: string;
+      compression?: 'none' | 'gzip' | 'zstd' | 'bzip2' | 'lz4' | 'snappy' | 'deflate' | string;
+      partitionBy?: string | string[];
+      maxRecordsPerFile?: string | number;
+      serializationStrategy?: 'column' | 'concat_ws' | 'to_json';
+      valueColumn?: string;
+      concatDelimiter?: string;
+      lineSep?: string;
       system_instructions?: string;
       special_instructions?: string;
-      codeGenerationPrompt?: string;
-      prompt?: string;
       [key: string]: any;
     };
   };
 }
 
 /**
- * Props for the TextIOSinkProperties component.
+ * Props for the {@link TextIOSinkProperties} component.
  */
-interface TextIOSinkPropertiesProps {
+export interface TextIOSinkPropertiesProps {
   node: TextIOSinkNode;
   onChange: (properties: any) => void;
 }
 
 /**
- * TextIOSinkProperties renders the property configuration form for TextIO writes.
+ * Normalizes a raw Text compression codec value to a canonical Spark codec name.
+ */
+function normalizeTextCompression(raw?: string): string {
+  const lower = (raw ?? '').trim().toLowerCase();
+  if (!lower || lower === 'uncompressed' || lower === 'auto' || lower === 'zip') {
+    return 'none';
+  }
+  if (TEXT_COMPRESSION_CODECS.some((opt) => opt.value === lower)) {
+    return lower;
+  }
+  return 'none';
+}
+
+/**
+ * Formats a partitionBy property value as a comma-separated column list string.
+ */
+function resolvePartitionByValue(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.join(', ');
+  }
+  return typeof raw === 'string' ? raw : '';
+}
+
+/**
+ * Dedicated property panel for Apache Spark TextSink / TextIO sink nodes.
+ *
+ * @param props Selected node and change callback.
+ * @returns Rendered Text sink property panel.
  */
 export const TextIOSinkProperties: React.FC<TextIOSinkPropertiesProps> = ({ node, onChange }) => {
   const properties = node.data.properties || {};
-  const to = properties.to || '';
-  const suffix = properties.suffix || '';
-  const numShards = properties.numShards ?? '';
-  const withoutSharding = properties.withoutSharding ?? false;
-  const withCompression = properties.withCompression ?? false;
-  const rawCompression = properties.compression || 'UNCOMPRESSED';
-  const compression = (rawCompression === 'AUTO' || rawCompression === 'ZIP') ? 'UNCOMPRESSED' : rawCompression;
-  const header = properties.header || '';
-  const footer = properties.footer || '';
+  const storageProperties =
+    properties.path === undefined && typeof properties.to === 'string' && properties.to.length > 0
+      ? { ...properties, path: properties.to }
+      : properties;
 
-  const isToInvalid = !to.trim();
-
-  // System instructions text with fallback
+  const rawSaveMode = (properties.saveMode || properties.mode || 'append').toLowerCase();
+  const saveMode = TEXT_SAVE_MODES.some((opt) => opt.value === rawSaveMode)
+    ? rawSaveMode
+    : 'append';
+  const compression = normalizeTextCompression(properties.compression);
+  const partitionBy = resolvePartitionByValue(properties.partitionBy);
+  const maxRecordsPerFile = properties.maxRecordsPerFile ?? '';
+  const serializationStrategy =
+    properties.serializationStrategy === 'concat_ws' ||
+    properties.serializationStrategy === 'to_json'
+      ? properties.serializationStrategy
+      : 'column';
+  const valueColumn = properties.valueColumn ?? 'value';
+  const concatDelimiter = properties.concatDelimiter ?? ',';
+  const lineSep = properties.lineSep ?? '';
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles text, number, and select input updates.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: isCheckbox ? checked : value,
     });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Destination File Prefix / Path */}
-      <PropertyField
-        id="textSinkTo"
-        name="to"
-        label="Destination File Prefix (.to)"
-        required={true}
-        tooltip="File prefix or path where output shards will be written (e.g. gs://my-bucket/output/data or /local/path/output). Required."
-        value={to}
-        invalid={isToInvalid}
-        error={isToInvalid ? 'Destination file prefix is required.' : null}
-        onChange={handleChange}
-        placeholder="gs://my-bucket/output/results or /local/out/file"
-        helperText={
-          isToInvalid ? undefined : 'Output prefix for shards (e.g. gs://bucket/output/data)'
-        }
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={storageProperties}
+        onChange={onChange}
+        idPrefix="textSink"
+        pathLabel="Output Text URI / Path"
+        pathPlaceholder="gs://my-bucket/output/text/"
+        showGlobAndRecursive={false}
       />
 
-      {/* Suffix */}
-      <PropertyField
-        id="textSinkSuffix"
-        name="suffix"
-        label="File Suffix / Extension"
-        tooltip="File extension or suffix added to each output shard (e.g. .txt, .csv, .json)."
-        value={suffix}
-        onChange={handleChange}
-        placeholder=".txt, .csv, .json"
-      />
+      {/* Text Writer Save Mode, Compression & Partitioning */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          Text Writer Options
+        </span>
 
-      {/* Sharding */}
-      <div className="flex flex-col gap-3 p-3 bg-slate-800/40 rounded border border-slate-700/50">
-        <label htmlFor="textSinkWithoutSharding" className="flex items-center gap-2 cursor-pointer">
-          <input
-            id="textSinkWithoutSharding"
-            type="checkbox"
-            name="withoutSharding"
-            checked={withoutSharding}
-            onChange={handleChange}
-            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
-          />
-          <span className="text-sm font-medium text-slate-300">Without Sharding (Single File)</span>
-          <InfoTooltip text="Forces the runner to collect all elements and write into a single un-sharded file. Caution: limits write throughput." />
-        </label>
-
-        {!withoutSharding && (
-          <div className="flex flex-col gap-1 mt-1">
-            <PropertyField
-              id="textSinkNumShards"
-              name="numShards"
-              label="Number of Shards"
-              tooltip="Fixed number of shards to write. Set to 0 or leave empty for runner-determined sharding."
-              type="number"
-              min="0"
-              value={numShards}
-              onChange={handleChange}
-              placeholder="0 (Runner Determined)"
-              mono={false}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Compression Row */}
-      <div className="flex flex-col gap-2 p-3 bg-slate-800/40 rounded border border-slate-700/50">
-        <label htmlFor="textSinkWithCompression" className="flex items-center gap-2 cursor-pointer">
-          <input
-            id="textSinkWithCompression"
-            type="checkbox"
-            name="withCompression"
-            checked={withCompression}
-            onChange={handleChange}
-            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
-          />
-          <span className="text-sm font-medium text-slate-300">With Compression</span>
-          <InfoTooltip text="Compresses output files using specified algorithm (e.g. GZIP, BZIP2)." />
-        </label>
-
-        {withCompression && (
-          <div className="flex flex-col gap-1 mt-2">
-            <label htmlFor="textSinkCompression" className="flex items-center text-xs font-semibold text-slate-400">
-              <span>Compression Algorithm</span>
-              <InfoTooltip text="Compression codec to apply when writing output files." />
-            </label>
-            <select
-              id="textSinkCompression"
-              name="compression"
-              value={compression}
-              onChange={handleChange}
-              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-            >
-              {BEAM_WRITE_COMPRESSION_TYPES.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-
-      {/* Header and Footer */}
-      <div className="flex flex-col gap-3">
-        <PropertyField
-          id="textSinkHeader"
-          name="header"
-          label="Header Line (Optional)"
-          tooltip="Text written once at the beginning of each output file shard (e.g. CSV header line)."
-          value={header}
+        <SelectField
+          id="textSinkSaveMode"
+          name="saveMode"
+          label="Save Mode (mode)"
+          tooltip="Controls how Spark handles existing data at the destination URI in batch writes. Structured Streaming writes use append mode."
+          value={saveMode}
+          options={TEXT_SAVE_MODES}
           onChange={handleChange}
-          placeholder="id,name,timestamp"
         />
-        <PropertyField
-          id="textSinkFooter"
-          name="footer"
-          label="Footer Line (Optional)"
-          tooltip="Text written once at the end of each output file shard."
-          value={footer}
+
+        <SelectField
+          id="textSinkCompression"
+          name="compression"
+          label="Compression Codec (compression)"
+          tooltip="Compression codec applied to output text files."
+          value={compression}
+          options={TEXT_COMPRESSION_CODECS}
           onChange={handleChange}
-          placeholder="EOF"
+        />
+
+        <PropertyField
+          id="textSinkPartitionBy"
+          name="partitionBy"
+          label="Partition Columns (partitionBy)"
+          tooltip="Optional comma-separated column names used to partition output directories in Hive layout (excluded from single-column check)."
+          value={partitionBy}
+          onChange={handleChange}
+          placeholder="e.g. log_date, service"
+          mono={true}
+        />
+
+        <PropertyField
+          id="textSinkMaxRecordsPerFile"
+          type="number"
+          name="maxRecordsPerFile"
+          label="Max Records Per File (maxRecordsPerFile)"
+          tooltip="Optional maximum number of lines written per output text part-file."
+          value={maxRecordsPerFile}
+          onChange={handleChange}
+          placeholder="e.g. 500000"
+          min="1"
+          mono={true}
+        />
+      </div>
+
+      {/* Single String Column Projection & Line Separator */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          Single String Column Projection (Required by Spark Text Writer)
+        </span>
+
+        <SelectField
+          id="textSinkSerializationStrategy"
+          name="serializationStrategy"
+          label="Row-to-Text Projection"
+          tooltip="Spark .write.text() requires a single StringType non-partition column. Select how upstream columns map to that string column."
+          value={serializationStrategy}
+          options={TEXT_SERIALIZATION_STRATEGIES}
+          onChange={handleChange}
+        />
+
+        {serializationStrategy === 'column' && (
+          <PropertyField
+            id="textSinkValueColumn"
+            name="valueColumn"
+            label="Source Text Column (valueColumn)"
+            tooltip="Column projected and cast to StringType as the text output line."
+            value={valueColumn}
+            onChange={handleChange}
+            placeholder="value"
+            mono={true}
+          />
+        )}
+
+        {serializationStrategy === 'concat_ws' && (
+          <PropertyField
+            id="textSinkConcatDelimiter"
+            name="concatDelimiter"
+            label="Concatenation Separator (F.concat_ws)"
+            tooltip="Separator string inserted between non-partition columns in F.concat_ws."
+            value={concatDelimiter}
+            onChange={handleChange}
+            placeholder=","
+            mono={true}
+          />
+        )}
+
+        <PropertyField
+          id="textSinkLineSep"
+          name="lineSep"
+          label="Line Separator (lineSep)"
+          tooltip="Line separator written after each text record (default '\\n')."
+          value={lineSep}
+          onChange={handleChange}
+          placeholder="\n"
+          mono={true}
         />
       </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
-        id="textSinkSystemInstructions"
+        id="textSinkInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for TextIO sink code generation..."
+        placeholder="e.g. Format log entries as '[LEVEL] timestamp message' into value before writing."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark Text writer code."
+        helperText="Additional guidance appended to the prompt when generating PySpark code."
+        wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
+        textareaClassName="h-24"
         onChange={(value) =>
           onChange({
             ...properties,
@@ -226,3 +295,5 @@ export const TextIOSinkProperties: React.FC<TextIOSinkPropertiesProps> = ({ node
     </div>
   );
 };
+
+export const TextSinkProperties = TextIOSinkProperties;
