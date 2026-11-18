@@ -362,6 +362,7 @@ jobConfig:
             'runner-serverless-spark',
             'io-iceberg',
             'io-pubsub',
+            'transform-watermark',
             'core-catalyst-optimization',
             'core-python-datasource',
             'core-streaming',
@@ -370,6 +371,7 @@ jobConfig:
         expect(built.prompt).toContain('## Pipeline YAML');
         expect(built.prompt).toContain('## Execution Plan');
         expect(built.prompt).toContain('## Skill: core-pyspark');
+        expect(built.prompt).toContain('## Skill: transform-watermark');
         expect(built.prompt).toContain('## Skill: core-catalyst-optimization');
         expect(built.prompt).toContain('## Skill: core-streaming');
         expect(built.prompt).toContain('## Skill: core-python-datasource');

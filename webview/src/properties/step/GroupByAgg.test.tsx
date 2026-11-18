@@ -155,11 +155,23 @@ describe('GroupByAggProperties', () => {
       'min',
       'max',
       'countDistinct',
+      'approx_count_distinct',
+      'stddev',
+      'variance',
       'first',
       'last',
       'collect_list',
       'collect_set',
     ]);
+
+    fireEvent.change(fnSelect, { target: { value: 'approx_count_distinct' } });
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aggregations: [
+          { column: 'amount', fn: 'approx_count_distinct', alias: 'total_amount' },
+        ],
+      })
+    );
 
     fireEvent.change(fnSelect, { target: { value: 'countDistinct' } });
     expect(handleChange).toHaveBeenCalledWith(
@@ -195,6 +207,39 @@ describe('GroupByAggProperties', () => {
     expect(handleChange).toHaveBeenCalledWith(
       expect.objectContaining({
         aggregations: [{ column: 'user_id', fn: 'countDistinct', alias: 'unique_users' }],
+      })
+    );
+  });
+
+  it('toggles flattenWindowStruct when an event-time window is active and supports stddev and variance', () => {
+    const handleChange = vi.fn();
+    render(
+      <GroupByAggProperties
+        node={createNode({
+          windowType: 'Tumbling',
+          timeColumn: 'event_ts',
+          windowDuration: '5 minutes',
+          flattenWindowStruct: false,
+          aggregations: [
+            { column: 'latency_ms', fn: 'stddev', alias: 'latency_stddev' },
+            { column: 'latency_ms', fn: 'variance', alias: 'latency_variance' },
+          ],
+        })}
+        onChange={handleChange}
+      />
+    );
+
+    expect(screen.getByLabelText('Aggregation 1 function')).toHaveValue('stddev');
+    expect(screen.getByLabelText('Aggregation 2 function')).toHaveValue('variance');
+
+    const flattenCheckbox = screen.getByLabelText(/Flatten Window Struct/i, {
+      selector: 'input',
+    });
+    expect(flattenCheckbox).not.toBeChecked();
+    fireEvent.click(flattenCheckbox);
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flattenWindowStruct: true,
       })
     );
   });

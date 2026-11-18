@@ -9,6 +9,8 @@ import { PROPERTY_FORM_REGISTRY, loadPropertyForm } from './propertyFormRegistry
 import { NODE_DOCUMENTATION_REGISTRY } from './documentation';
 import { SOURCE_NODES } from './nodes/sources';
 import { SINK_NODES } from './nodes/sinks';
+import { STEP_NODES } from './nodes/steps';
+import { SPARK_NODE_CAPABILITIES } from '../../../src/shared/sparkNodeCapabilities';
 
 describe('PROPERTY_FORM_REGISTRY', () => {
   it('has dedicated panel entries matching the documented node catalog count and exact keys', () => {
@@ -41,6 +43,27 @@ describe('PROPERTY_FORM_REGISTRY', () => {
       expect(NODE_DOCUMENTATION_REGISTRY[qualifiedKey], `Missing docs for ${qualifiedKey}`).toBeDefined();
       expect(NODE_DOCUMENTATION_REGISTRY[node.sparkTransform], `Missing direct docs for ${node.sparkTransform}`).toBeDefined();
     }
+  });
+
+  it('registers all 29 Phase 7 Spark 4.x STEP_NODES under both STEP:<transform> and direct <transform> keys with capability parity', () => {
+    expect(STEP_NODES).toHaveLength(29);
+    for (const node of STEP_NODES) {
+      const qualifiedKey = `STEP:${node.sparkTransform}`;
+      expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
+      expect(PROPERTY_FORM_REGISTRY[node.sparkTransform], `Missing direct form for ${node.sparkTransform}`).toBeDefined();
+      expect(PROPERTY_FORM_REGISTRY[qualifiedKey]).toBe(PROPERTY_FORM_REGISTRY[node.sparkTransform]);
+      expect(NODE_DOCUMENTATION_REGISTRY[qualifiedKey], `Missing docs for ${qualifiedKey}`).toBeDefined();
+      expect(NODE_DOCUMENTATION_REGISTRY[node.sparkTransform], `Missing direct docs for ${node.sparkTransform}`).toBeDefined();
+
+      const capability = SPARK_NODE_CAPABILITIES[node.sparkTransform];
+      expect(capability, `Missing SPARK_NODE_CAPABILITIES entry for ${node.sparkTransform}`).toBeDefined();
+      expect(node.inputArity).toBe(capability.inputArity);
+      expect(node.errorOutput).toBe(capability.errorOutput);
+    }
+    expect(PROPERTY_FORM_REGISTRY['STEP:SparkMlInference']).toBe(PROPERTY_FORM_REGISTRY['SparkMlAndVertexAi']);
+    expect(PROPERTY_FORM_REGISTRY['SparkMlInference']).toBe(PROPERTY_FORM_REGISTRY['SparkMlAndVertexAi']);
+    expect(PROPERTY_FORM_REGISTRY['STEP:VertexAiInference']).toBe(PROPERTY_FORM_REGISTRY['SparkMlAndVertexAi']);
+    expect(PROPERTY_FORM_REGISTRY['VertexAiInference']).toBe(PROPERTY_FORM_REGISTRY['SparkMlAndVertexAi']);
   });
 
   it('contains valid component functions or objects for every registered key', () => {

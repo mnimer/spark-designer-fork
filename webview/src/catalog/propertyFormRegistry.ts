@@ -162,12 +162,38 @@ const ConsoleSinkProperties = lazyForm(() => import('../properties/sink/ConsoleS
 const MemorySinkProperties = lazyForm(() => import('../properties/sink/MemorySink').then((m) => m.MemorySinkProperties));
 const ForeachBatchSinkProperties = lazyForm(() => import('../properties/sink/ForeachBatchSink').then((m) => m.ForeachBatchSinkProperties));
 
-// Step Property Forms
-const ParseMessageProperties = lazyForm(() => import('../properties/step/ParseMessage').then((m) => m.ParseMessageProperties));
+// Phase 7 — Step Property Forms (OP1-OP29 + legacy Beam step aliases)
+const SelectProperties = lazyForm(() => import('../properties/step/Select').then((m) => m.SelectProperties));
 const FilterProperties = lazyForm(() => import('../properties/step/Filter').then((m) => m.FilterProperties));
-const AggregationProperties = lazyForm(() => import('../properties/step/Aggregations').then((m) => m.AggregationProperties));
-const WatermarkProperties = lazyForm(() => import('../properties/step/Watermark').then((m) => m.WatermarkProperties));
+const WithColumnsProperties = lazyForm(() => import('../properties/step/WithColumns').then((m) => m.WithColumnsProperties));
+const RenameDropColumnsProperties = lazyForm(() => import('../properties/step/RenameDropColumns').then((m) => m.RenameDropColumnsProperties));
+const ParsePayloadProperties = lazyForm(() => import('../properties/step/ParsePayload').then((m) => m.ParsePayloadProperties));
+const ExplodeProperties = lazyForm(() => import('../properties/step/Explode').then((m) => m.ExplodeProperties));
+const HandleNullsProperties = lazyForm(() => import('../properties/step/HandleNulls').then((m) => m.HandleNullsProperties));
+const OrderByProperties = lazyForm(() => import('../properties/step/OrderBy').then((m) => m.OrderByProperties));
+const LimitSampleProperties = lazyForm(() => import('../properties/step/LimitSample').then((m) => m.LimitSampleProperties));
+const ConditionalSplitProperties = lazyForm(() => import('../properties/step/ConditionalSplit').then((m) => m.ConditionalSplitProperties));
+const DataQualityAssertProperties = lazyForm(() => import('../properties/step/DataQualityAssert').then((m) => m.DataQualityAssertProperties));
+const JoinProperties = lazyForm(() => import('../properties/step/Join').then((m) => m.JoinProperties));
+const UnionByNameProperties = lazyForm(() => import('../properties/step/UnionByName').then((m) => m.UnionByNameProperties));
+const SetOperationProperties = lazyForm(() => import('../properties/step/SetOperation').then((m) => m.SetOperationProperties));
 const GroupByAggProperties = lazyForm(() => import('../properties/step/GroupByAgg').then((m) => m.GroupByAggProperties));
+const TopNProperties = lazyForm(() => import('../properties/step/TopN').then((m) => m.TopNProperties));
+const DeduplicateProperties = lazyForm(() => import('../properties/step/Deduplicate').then((m) => m.DeduplicateProperties));
+const PivotUnpivotProperties = lazyForm(() => import('../properties/step/PivotUnpivot').then((m) => m.PivotUnpivotProperties));
+const RollupCubeProperties = lazyForm(() => import('../properties/step/RollupCube').then((m) => m.RollupCubeProperties));
+const WindowOverProperties = lazyForm(() => import('../properties/step/WindowOver').then((m) => m.WindowOverProperties));
+const WatermarkProperties = lazyForm(() => import('../properties/step/Watermark').then((m) => m.WatermarkProperties));
+const StatefulTransformProperties = lazyForm(() => import('../properties/step/StatefulTransform').then((m) => m.StatefulTransformProperties));
+const SparkSqlQueryProperties = lazyForm(() => import('../properties/step/SparkSqlQuery').then((m) => m.SparkSqlQueryProperties));
+const PandasUdfTransformProperties = lazyForm(() => import('../properties/step/PandasUdfTransform').then((m) => m.PandasUdfTransformProperties));
+const CustomTransformProperties = lazyForm(() => import('../properties/step/CustomTransform').then((m) => m.CustomTransformProperties));
+const RepartitionCoalesceProperties = lazyForm(() => import('../properties/step/RepartitionCoalesce').then((m) => m.RepartitionCoalesceProperties));
+const CachePersistProperties = lazyForm(() => import('../properties/step/CachePersist').then((m) => m.CachePersistProperties));
+const FeaturePrepProperties = lazyForm(() => import('../properties/step/FeaturePrep').then((m) => m.FeaturePrepProperties));
+const SparkMlAndVertexAiProperties = lazyForm(() => import('../properties/step/SparkMlAndVertexAi').then((m) => m.SparkMlAndVertexAiProperties));
+const ParseMessageProperties = lazyForm(() => import('../properties/step/ParseMessage').then((m) => m.ParseMessageProperties));
+const AggregationProperties = lazyForm(() => import('../properties/step/Aggregations').then((m) => m.AggregationProperties));
 
 /**
  * Map of immutable metadata keys (`${type}:${sparkTransform}` or direct transform name)
@@ -426,18 +452,76 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'WriteToText': TextIOSinkProperties,
   'WriteToMqtt': MqttIOSinkProperties,
 
-  // Steps & Core Transforms (with and without STEP: prefix)
+  // Phase 7 — Canonical Spark 4.x Steps (OP1-OP29 + ML aliases, qualified by STEP: and direct)
+  'STEP:Select': SelectProperties,
+  'Select': SelectProperties,
+  'STEP:Filter': FilterProperties,
+  'Filter': FilterProperties,
+  'STEP:WithColumns': WithColumnsProperties,
+  'WithColumns': WithColumnsProperties,
+  'STEP:RenameDropColumns': RenameDropColumnsProperties,
+  'RenameDropColumns': RenameDropColumnsProperties,
+  'STEP:ParsePayload': ParsePayloadProperties,
+  'ParsePayload': ParsePayloadProperties,
+  'STEP:Explode': ExplodeProperties,
+  'Explode': ExplodeProperties,
+  'STEP:HandleNulls': HandleNullsProperties,
+  'HandleNulls': HandleNullsProperties,
+  'STEP:OrderBy': OrderByProperties,
+  'OrderBy': OrderByProperties,
+  'STEP:LimitSample': LimitSampleProperties,
+  'LimitSample': LimitSampleProperties,
+  'STEP:ConditionalSplit': ConditionalSplitProperties,
+  'ConditionalSplit': ConditionalSplitProperties,
+  'STEP:DataQualityAssert': DataQualityAssertProperties,
+  'DataQualityAssert': DataQualityAssertProperties,
+  'STEP:Join': JoinProperties,
+  'Join': JoinProperties,
+  'STEP:UnionByName': UnionByNameProperties,
+  'UnionByName': UnionByNameProperties,
+  'STEP:SetOperation': SetOperationProperties,
+  'SetOperation': SetOperationProperties,
+  'STEP:GroupByAgg': GroupByAggProperties,
+  'GroupByAgg': GroupByAggProperties,
+  'GroupBy & Aggregate': GroupByAggProperties,
+  'STEP:TopN': TopNProperties,
+  'TopN': TopNProperties,
+  'STEP:Deduplicate': DeduplicateProperties,
+  'Deduplicate': DeduplicateProperties,
+  'STEP:PivotUnpivot': PivotUnpivotProperties,
+  'PivotUnpivot': PivotUnpivotProperties,
+  'STEP:RollupCube': RollupCubeProperties,
+  'RollupCube': RollupCubeProperties,
+  'STEP:WindowOver': WindowOverProperties,
+  'WindowOver': WindowOverProperties,
+  'STEP:Watermark': WatermarkProperties,
+  'Watermark': WatermarkProperties,
+  'STEP:StatefulTransform': StatefulTransformProperties,
+  'StatefulTransform': StatefulTransformProperties,
+  'STEP:SparkSqlQuery': SparkSqlQueryProperties,
+  'SparkSqlQuery': SparkSqlQueryProperties,
+  'STEP:PandasUdfTransform': PandasUdfTransformProperties,
+  'PandasUdfTransform': PandasUdfTransformProperties,
+  'STEP:CustomTransform': CustomTransformProperties,
+  'CustomTransform': CustomTransformProperties,
+  'STEP:RepartitionCoalesce': RepartitionCoalesceProperties,
+  'RepartitionCoalesce': RepartitionCoalesceProperties,
+  'STEP:CachePersist': CachePersistProperties,
+  'CachePersist': CachePersistProperties,
+  'STEP:FeaturePrep': FeaturePrepProperties,
+  'FeaturePrep': FeaturePrepProperties,
+  'STEP:SparkMlAndVertexAi': SparkMlAndVertexAiProperties,
+  'SparkMlAndVertexAi': SparkMlAndVertexAiProperties,
+  'STEP:SparkMlInference': SparkMlAndVertexAiProperties,
+  'SparkMlInference': SparkMlAndVertexAiProperties,
+  'STEP:VertexAiInference': SparkMlAndVertexAiProperties,
+  'VertexAiInference': SparkMlAndVertexAiProperties,
+
+  // Legacy Step & Aggregation aliases (backwards compatibility)
   'STEP:ParDo': AggregationProperties,
   'ParDo': AggregationProperties,
   'STEP:ParseMessage': ParseMessageProperties,
   'ParseMessage': ParseMessageProperties,
-  'STEP:Filter': FilterProperties,
-  'Filter': FilterProperties,
-  'STEP:Watermark': WatermarkProperties,
-  'Watermark': WatermarkProperties,
-  'STEP:GroupByAgg': GroupByAggProperties,
-  'GroupByAgg': GroupByAggProperties,
-  'GroupBy & Aggregate': GroupByAggProperties,
 
   // Aggregation transforms
   'STEP:ApproximateQuantiles': AggregationProperties,

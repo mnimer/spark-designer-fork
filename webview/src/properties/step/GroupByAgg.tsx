@@ -28,6 +28,9 @@ export type SparkAggFunction =
   | 'min'
   | 'max'
   | 'countDistinct'
+  | 'approx_count_distinct'
+  | 'stddev'
+  | 'variance'
   | 'first'
   | 'last'
   | 'collect_list'
@@ -52,6 +55,7 @@ export interface GroupByAggStepProperties {
   windowDuration?: string;
   slideDuration?: string;
   sessionGapDuration?: string;
+  flattenWindowStruct?: boolean;
   aggregations?: GroupByAggregationSpec[];
   system_instructions?: string;
   special_instructions?: string;
@@ -96,6 +100,9 @@ const AGG_FUNCTION_OPTIONS: SelectFieldOption[] = [
   { value: 'min', label: 'min' },
   { value: 'max', label: 'max' },
   { value: 'countDistinct', label: 'countDistinct' },
+  { value: 'approx_count_distinct', label: 'approx_count_distinct' },
+  { value: 'stddev', label: 'stddev' },
+  { value: 'variance', label: 'variance' },
   { value: 'first', label: 'first' },
   { value: 'last', label: 'last' },
   { value: 'collect_list', label: 'collect_list' },
@@ -174,6 +181,7 @@ export const GroupByAggProperties: React.FC<GroupByAggPropertiesProps> = ({ node
     typeof properties.sessionGapDuration === 'string'
       ? properties.sessionGapDuration
       : '10 minutes';
+  const flattenWindowStruct = properties.flattenWindowStruct === true;
   const aggregations = normalizeAggregations(properties.aggregations);
   const systemInstructions = resolveSystemInstructions(node);
 
@@ -465,6 +473,34 @@ export const GroupByAggProperties: React.FC<GroupByAggPropertiesProps> = ({ node
                 error={isSessionGapInvalid ? 'Session gap duration is required for session windows.' : null}
               />
             )}
+
+            <label
+              htmlFor="groupByFlattenWindowStruct"
+              className="flex items-start gap-2 text-xs text-[var(--vscode-text-primary)] cursor-pointer select-none"
+            >
+              <input
+                id="groupByFlattenWindowStruct"
+                name="flattenWindowStruct"
+                type="checkbox"
+                checked={flattenWindowStruct}
+                onChange={(e) =>
+                  onChange({
+                    ...properties,
+                    groupByColumns,
+                    windowType,
+                    aggregations,
+                    flattenWindowStruct: e.target.checked,
+                  })
+                }
+                className="mt-0.5 rounded border-[var(--vscode-border)] bg-[var(--vscode-input-bg)] cursor-pointer"
+              />
+              <span className="flex items-center flex-wrap gap-1">
+                <span className="font-bold">
+                  Flatten Window Struct (`window_start`, `window_end`)
+                </span>
+                <InfoTooltip text="Unpacks window.start and window.end into top-level TimestampType columns and drops the nested window struct for flat downstream sinks." />
+              </span>
+            </label>
 
             <p className="text-xs text-[var(--vscode-text-muted)] leading-relaxed">
               If this step runs on a streaming DataFrame, place an upstream Watermark step so Spark

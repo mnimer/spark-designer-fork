@@ -148,6 +148,24 @@ describe('codegen skill library invariants', () => {
         expect(missing).toEqual([]);
     });
 
+    it('resolves all 29 Phase 7 STEP_NODES in webview/src/catalog/nodes/steps.ts to a transform-* skill', () => {
+        const stepEntries = CATALOG.filter((entry) => entry.type === 'STEP');
+        expect(stepEntries).toHaveLength(29);
+        const stepTransforms = new Map<string, string>();
+        for (const skill of SKILLS.filter((s) => s.kind === 'transform')) {
+            for (const transform of skill.transforms) {
+                stepTransforms.set(transform, skill.name);
+            }
+        }
+        const missing = stepEntries
+            .filter((entry) => {
+                const skillName = stepTransforms.get(entry.sparkTransform);
+                return !skillName || !skillName.startsWith('transform-');
+            })
+            .map((entry) => entry.sparkTransform);
+        expect(missing).toEqual([]);
+    });
+
     it('names only known Spark transforms in metadata.transforms', () => {
         const unknown = SKILLS.flatMap((s) =>
             s.transforms.filter((t) => !KNOWN_SPARK_TRANSFORMS.has(t)).map((t) => `${s.name}: ${t}`)

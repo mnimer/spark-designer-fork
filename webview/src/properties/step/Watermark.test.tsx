@@ -122,4 +122,67 @@ describe('WatermarkProperties', () => {
       })
     );
   });
+
+  it('supports pre-watermark timestamp casting representations and custom datetime patterns', () => {
+    const handleChange = vi.fn();
+    const { rerender } = render(
+      <WatermarkProperties
+        node={createNode({ eventTimeColumn: 'event_ms', delayThreshold: '2 minutes' })}
+        onChange={handleChange}
+      />
+    );
+
+    const sourceTypeSelect = screen.getByLabelText(/Input Timestamp Representation/i, {
+      selector: 'select',
+    });
+    expect(sourceTypeSelect).toHaveValue('timestamp');
+
+    fireEvent.change(sourceTypeSelect, { target: { value: 'epoch_millis' } });
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventTimeColumn: 'event_ms',
+        delayThreshold: '2 minutes',
+        sourceTimestampType: 'epoch_millis',
+        system_instructions: expect.stringContaining('F.timestamp_millis'),
+      })
+    );
+
+    fireEvent.change(sourceTypeSelect, { target: { value: 'custom_format' } });
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceTimestampType: 'custom_format',
+        timestampFormat: 'yyyy-MM-dd HH:mm:ss',
+      })
+    );
+
+    rerender(
+      <WatermarkProperties
+        node={createNode({
+          eventTimeColumn: 'raw_ts',
+          delayThreshold: '5 minutes',
+          sourceTimestampType: 'custom_format',
+          timestampFormat: '   ',
+        })}
+        onChange={handleChange}
+      />
+    );
+
+    const formatInput = screen.getByLabelText(/Datetime Pattern/i, { selector: 'input' });
+    expect(formatInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Datetime pattern is required for custom format.')).toBeInTheDocument();
+
+    fireEvent.change(formatInput, { target: { value: 'dd/MM/yyyy HH:mm:ss' } });
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceTimestampType: 'custom_format',
+        timestampFormat: 'dd/MM/yyyy HH:mm:ss',
+        system_instructions: buildWatermarkSystemInstruction(
+          'raw_ts',
+          '5 minutes',
+          'custom_format',
+          'dd/MM/yyyy HH:mm:ss'
+        ),
+      })
+    );
+  });
 });

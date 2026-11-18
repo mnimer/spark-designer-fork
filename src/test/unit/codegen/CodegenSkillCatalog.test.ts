@@ -435,6 +435,44 @@ describe('getCodegenSkillCatalog', () => {
         );
         const ioSkills = catalog.all().filter((s) => s.kind === 'io');
         expect(ioSkills.length).toBeGreaterThanOrEqual(41);
+        const transformSkills = catalog.all().filter((s) => s.kind === 'transform');
+        expect(transformSkills).toHaveLength(29);
+        for (const stepTransform of [
+            'Select',
+            'Filter',
+            'WithColumns',
+            'RenameDropColumns',
+            'ParsePayload',
+            'Explode',
+            'HandleNulls',
+            'OrderBy',
+            'LimitSample',
+            'ConditionalSplit',
+            'DataQualityAssert',
+            'Join',
+            'UnionByName',
+            'SetOperation',
+            'GroupByAgg',
+            'TopN',
+            'Deduplicate',
+            'PivotUnpivot',
+            'RollupCube',
+            'WindowOver',
+            'Watermark',
+            'StatefulTransform',
+            'SparkSqlQuery',
+            'PandasUdfTransform',
+            'CustomTransform',
+            'RepartitionCoalesce',
+            'CachePersist',
+            'FeaturePrep',
+            'SparkMlAndVertexAi',
+            'SparkMlInference',
+            'VertexAiInference',
+            'ParseMessage',
+        ]) {
+            expect(catalog.resolveTransform(stepTransform).known, `Unresolved step transform: ${stepTransform}`).toBe(true);
+        }
         const common = catalog.all().find((s) => s.name === 'codegen-common')!;
         expect(common.kind).toBe('common');
         expect(common.body).toContain('def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataFrame]:');

@@ -1,46 +1,54 @@
-/** @fileoverview Step node catalog definitions for the pipeline palette.
+/** @fileoverview Step node catalog definitions for the Apache Spark pipeline palette.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
 import type { NodeDefinition } from './types';
 
-// Step node definitions
 /**
- * Step/transform node definitions available in the palette.
+ * Step and transformation node definitions available in the Spark 4.x palette (OP1-OP29).
  */
 export const STEP_NODES: NodeDefinition[] = [
-  { label: 'ParDo', type: 'STEP', iconName: 'Code', sparkTransform: 'ParDo', badge: 'Core', description: 'Apply custom per-element DoFn transform', category: 'Core Transforms' },
-  { label: 'Parse Message', type: 'STEP', iconName: 'FileCode', sparkTransform: 'ParseMessage', badge: 'Parser', description: 'Parse structured JSON/Avro payload', category: 'Message Parsers' },
-  { label: 'Add Timestamp', type: 'STEP', iconName: 'Calendar', sparkTransform: 'WithTimestamps', badge: 'Timestamp', description: 'Assign event timestamps to elements', category: 'Element Transforms' },
-  { label: 'Filter', type: 'STEP', iconName: 'Filter', sparkTransform: 'Filter', badge: 'Condition', description: 'Filter elements matching boolean predicate', category: 'Element Transforms' },
-  { label: 'FlatMap', type: 'STEP', iconName: 'GitMerge', sparkTransform: 'FlatMap', badge: '1-to-N', description: 'Map one element to zero or more elements', category: 'Element Transforms' },
-  { label: 'Keys', type: 'STEP', iconName: 'Key', sparkTransform: 'Keys', badge: 'Key-Value', description: 'Extract key components from KV pairs', category: 'Element Transforms' },
-  { label: 'KV Mapper', type: 'STEP', iconName: 'Hash', sparkTransform: 'KVMapper', badge: 'Mapping', description: 'Map elements to key-value pairs', category: 'Element Transforms' },
-  { label: 'KV Swap', type: 'STEP', iconName: 'Shuffle', sparkTransform: 'KvSwap', badge: 'Swap', description: 'Swap keys and values in KV pairs', category: 'Element Transforms' },
-  { label: 'Map', type: 'STEP', iconName: 'Activity', sparkTransform: 'Map', badge: '1-to-1', description: 'Transform elements with 1-to-1 function', category: 'Element Transforms' },
-  { label: 'To String', type: 'STEP', iconName: 'Type', sparkTransform: 'ToString', badge: 'Format', description: 'Convert elements into string representations', category: 'Element Transforms' },
-  { label: 'Values', type: 'STEP', iconName: 'Grid', sparkTransform: 'Values', badge: 'Values', description: 'Extract value components from KV pairs', category: 'Element Transforms' },
-  { label: 'Approximate Quantiles', type: 'STEP', iconName: 'BarChart', sparkTransform: 'ApproximateQuantiles', badge: 'Quantile', description: 'Compute approximate distribution quantiles', category: 'Aggregations' },
-  { label: 'Approximate Unique', type: 'STEP', iconName: 'BarChart', sparkTransform: 'ApproximateUnique', badge: 'Distinct', description: 'Estimate count of distinct elements', category: 'Aggregations' },
-  { label: 'Batch Elements', type: 'STEP', iconName: 'BarChart', sparkTransform: 'BatchElements', badge: 'Batch', description: 'Group elements into batches', category: 'Aggregations' },
-  { label: 'Co Group By Key', type: 'STEP', iconName: 'BarChart', sparkTransform: 'CoGroupByKey', badge: 'Co-Group', description: 'Group multiple PCollections by common key', category: 'Aggregations' },
-  { label: 'Combine', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Combine', badge: 'Combine', description: 'Combine elements with associative function', category: 'Aggregations' },
-  { label: 'Combine With Context', type: 'STEP', iconName: 'BarChart', sparkTransform: 'CombineWithContext', badge: 'Context', description: 'Combine elements with pipeline side inputs', category: 'Aggregations' },
-  { label: 'Count', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Count', badge: 'Counter', description: 'Count total occurrences of elements', category: 'Aggregations' },
-  { label: 'Distinct', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Distinct', badge: 'Unique', description: 'Deduplicate elements in collection', category: 'Aggregations' },
-  { label: 'GroupBy & Aggregate', type: 'STEP', iconName: 'BarChart', sparkTransform: 'GroupByAgg', badge: 'Group & Window', description: 'Group rows by columns and optional time window with aggregations', category: 'Aggregations' },
-  { label: 'Group By Key', type: 'STEP', iconName: 'BarChart', sparkTransform: 'GroupByKey', badge: 'Group', description: 'Group PCollection of KV pairs by key', category: 'Aggregations' },
-  { label: 'Group Into Batches', type: 'STEP', iconName: 'BarChart', sparkTransform: 'GroupIntoBatches', badge: 'Bundle', description: 'Group elements into batched bundles', category: 'Aggregations' },
-  { label: 'Latest', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Latest', badge: 'Latest', description: 'Select element with latest timestamp', category: 'Aggregations' },
-  { label: 'Max', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Max', badge: 'Max', description: 'Calculate maximum value in collection', category: 'Aggregations' },
-  { label: 'Mean', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Mean', badge: 'Average', description: 'Calculate arithmetic mean across values', category: 'Aggregations' },
-  { label: 'Min', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Min', badge: 'Min', description: 'Calculate minimum value in collection', category: 'Aggregations' },
-  { label: 'Sample', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Sample', badge: 'Sample', description: 'Extract random sample of elements', category: 'Aggregations' },
-  { label: 'Sum', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Sum', badge: 'Sum', description: 'Calculate sum across numeric elements', category: 'Aggregations' },
-  { label: 'Top', type: 'STEP', iconName: 'BarChart', sparkTransform: 'Top', badge: 'Top-N', description: 'Extract top N elements', category: 'Aggregations' },
-  { label: 'Watermark', type: 'STEP', iconName: 'Clock', sparkTransform: 'Watermark', badge: 'Event Time', description: 'Define event-time watermark threshold for late streaming data', category: 'Streaming' },
-  { label: 'Window', type: 'STEP', iconName: 'Clock', sparkTransform: 'WindowInto', badge: 'Windowing', description: 'Assign elements into fixed/sliding windows', category: 'Windows' },
-  { label: 'Flatten', type: 'STEP', iconName: 'Layers', sparkTransform: 'Flatten', badge: 'Merge', description: 'Merge multiple PCollections into one', category: 'Other Transforms' },
-  { label: 'ReShuffle', type: 'STEP', iconName: 'Shuffle', sparkTransform: 'Reshuffle', badge: 'Partition', description: 'Redistribute elements evenly across workers', category: 'Other Transforms' },
+  // Column & Row (OP1-OP11)
+  { label: 'Select', type: 'STEP', iconName: 'Grid', sparkTransform: 'Select', badge: 'Project', description: 'Project, rename, or compute columns using select or selectExpr expressions', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Filter', type: 'STEP', iconName: 'Filter', sparkTransform: 'Filter', badge: 'Predicate', description: 'Filter rows matching a boolean predicate and optionally route rejected rows to error DLQ', category: 'Column & Row', inputArity: 1, errorOutput: true },
+  { label: 'With Columns', type: 'STEP', iconName: 'Wrench', sparkTransform: 'WithColumns', badge: 'Derive', description: 'Add or overwrite multiple derived columns in a single Catalyst projection pass', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Rename & Drop Columns', type: 'STEP', iconName: 'Type', sparkTransform: 'RenameDropColumns', badge: 'Schema', description: 'Rename columns in bulk with withColumnsRenamed and drop unneeded columns', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Parse Payload', type: 'STEP', iconName: 'FileCode', sparkTransform: 'ParsePayload', badge: 'Parser', description: 'Parse JSON, Avro, CSV, or XML payloads into structured columns with corrupt-record DLQ routing', category: 'Column & Row', inputArity: 1, errorOutput: true },
+  { label: 'Explode', type: 'STEP', iconName: 'GitMerge', sparkTransform: 'Explode', badge: '1-to-N', description: 'Unnest array, map, or struct-array columns into individual rows using explode or posexplode', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Handle Nulls', type: 'STEP', iconName: 'Activity', sparkTransform: 'HandleNulls', badge: 'Cleanse', description: 'Fill, drop, or replace null and NaN values across selected DataFrame columns', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Order By', type: 'STEP', iconName: 'ListOrdered', sparkTransform: 'OrderBy', badge: 'Sort', description: 'Sort rows globally with orderBy or within partitions using directional and null-order rules', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Limit & Sample', type: 'STEP', iconName: 'Hash', sparkTransform: 'LimitSample', badge: 'Subset', description: 'Cap output row count with limit or draw a deterministic random sample of rows', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Conditional Split', type: 'STEP', iconName: 'Share2', sparkTransform: 'ConditionalSplit', badge: 'Router', description: 'Route rows across dynamic boolean rule output handles plus an automatic else fallback branch', category: 'Column & Row', inputArity: 1, errorOutput: false },
+  { label: 'Data Quality Assert', type: 'STEP', iconName: 'Activity', sparkTransform: 'DataQualityAssert', badge: 'Quality', description: 'Validate non-null, range, regex, set, or SQL expectations and route violations to error DLQ', category: 'Column & Row', inputArity: 1, errorOutput: true },
+
+  // Joins & Sets (OP12-OP14)
+  { label: 'Join', type: 'STEP', iconName: 'GitMerge', sparkTransform: 'Join', badge: '2-Input', description: 'Join left and right DataFrames with inner, outer, semi, anti, cross, or broadcast strategies', category: 'Joins & Sets', inputArity: 2, errorOutput: false },
+  { label: 'Union By Name', type: 'STEP', iconName: 'Layers', sparkTransform: 'UnionByName', badge: 'Merge', description: 'Combine two or more upstream DataFrames by column name or position with optional deduplication', category: 'Joins & Sets', inputArity: 'n', errorOutput: false },
+  { label: 'Set Operation', type: 'STEP', iconName: 'Layers', sparkTransform: 'SetOperation', badge: 'Set', description: 'Compute intersect, intersectAll, exceptAll, or subtract across upstream DataFrames', category: 'Joins & Sets', inputArity: 'n', errorOutput: false },
+
+  // Aggregations (OP15-OP20)
+  { label: 'GroupBy & Aggregate', type: 'STEP', iconName: 'BarChart', sparkTransform: 'GroupByAgg', badge: 'Group & Window', description: 'Group rows by columns and optional event-time window with Catalyst aggregate metrics', category: 'Aggregations', inputArity: 1, errorOutput: false },
+  { label: 'Top N', type: 'STEP', iconName: 'ListOrdered', sparkTransform: 'TopN', badge: 'Top-N', description: 'Select global top N rows or per-partition ranked rows using row_number, rank, or dense_rank', category: 'Aggregations', inputArity: 1, errorOutput: false },
+  { label: 'Deduplicate', type: 'STEP', iconName: 'Key', sparkTransform: 'Deduplicate', badge: 'Unique', description: 'Remove duplicate rows globally, by key subset, within streaming watermark, or keeping latest row', category: 'Aggregations', inputArity: 1, errorOutput: false },
+  { label: 'Pivot / Unpivot', type: 'STEP', iconName: 'Grid', sparkTransform: 'PivotUnpivot', badge: 'Reshape', description: 'Reshape rows into wide pivoted columns with explicit values or unpivot wide columns into rows', category: 'Aggregations', inputArity: 1, errorOutput: false },
+  { label: 'Rollup / Cube', type: 'STEP', iconName: 'BarChart', sparkTransform: 'RollupCube', badge: 'OLAP', description: 'Compute hierarchical rollup subtotals or multi-dimensional cube aggregations with grouping IDs', category: 'Aggregations', inputArity: 1, errorOutput: false },
+  { label: 'Window Analytic', type: 'STEP', iconName: 'BarChart', sparkTransform: 'WindowOver', badge: 'Analytic', description: 'Compute partitioned analytic rankings, lag/lead offsets, and frame-bounded running metrics', category: 'Aggregations', inputArity: 1, errorOutput: false },
+
+  // Streaming (OP21-OP22)
+  { label: 'Watermark', type: 'STEP', iconName: 'Clock', sparkTransform: 'Watermark', badge: 'Event Time', description: 'Define event-time watermark column and late-data delay threshold on streaming DataFrames', category: 'Streaming', inputArity: 1, errorOutput: false },
+  { label: 'Stateful Transform', type: 'STEP', iconName: 'Workflow', sparkTransform: 'StatefulTransform', badge: 'State', description: 'Execute arbitrary keyed stateful streaming logic via Spark 4.0 transformWithState or Pandas state', category: 'Streaming', inputArity: 1, errorOutput: true },
+
+  // Custom & SQL (OP23-OP25)
+  { label: 'Spark SQL Query', type: 'STEP', iconName: 'Database', sparkTransform: 'SparkSqlQuery', badge: 'SQL', description: 'Register upstream DataFrames as temp views and execute parameterized Catalyst SQL queries', category: 'Custom & SQL', inputArity: 'n', errorOutput: true },
+  { label: 'Pandas / Arrow UDF', type: 'STEP', iconName: 'Zap', sparkTransform: 'PandasUdfTransform', badge: 'Arrow', description: 'Apply vectorized Apache Arrow Python transformations via pandas_udf, mapInPandas, or mapInArrow', category: 'Custom & SQL', inputArity: 1, errorOutput: true },
+  { label: 'Custom Transform', type: 'STEP', iconName: 'Code', sparkTransform: 'CustomTransform', badge: 'Custom', description: 'Apply modular prompt-driven DataFrame.transform logic using Spark Connect compatible APIs', category: 'Custom & SQL', inputArity: 1, errorOutput: true },
+
+  // Partitioning (OP26-OP27)
+  { label: 'Repartition / Coalesce', type: 'STEP', iconName: 'Shuffle', sparkTransform: 'RepartitionCoalesce', badge: 'Partition', description: 'Coalesce partitions without shuffle or repartition DataFrames by hash or range columns', category: 'Partitioning', inputArity: 1, errorOutput: false },
+  { label: 'Cache / Persist', type: 'STEP', iconName: 'HardDrive', sparkTransform: 'CachePersist', badge: 'Storage', description: 'Materialize reused batch DataFrames in executor memory or disk with automatic unpersist', category: 'Partitioning', inputArity: 1, errorOutput: false },
+
+  // Spark ML & AI (OP28-OP29)
+  { label: 'Feature Prep', type: 'STEP', iconName: 'Wrench', sparkTransform: 'FeaturePrep', badge: 'MLlib', description: 'Assemble imputed, indexed, one-hot encoded, and scaled feature vectors via Spark ML Pipeline', category: 'Spark ML & AI', inputArity: 1, errorOutput: false },
+  { label: 'Spark ML & Vertex AI', type: 'STEP', iconName: 'Cpu', sparkTransform: 'SparkMlAndVertexAi', badge: 'ML / AI', description: 'Run Spark MLlib PipelineModel, XGBoost, Vertex AI Endpoint, or batched Gemini inference', category: 'Spark ML & AI', inputArity: 1, errorOutput: true },
 ];

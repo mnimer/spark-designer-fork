@@ -204,35 +204,35 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 
 | # | Category | `sparkTransform` | Inputs | `errorOutput` (DLQ) | PySpark API Pattern | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| [OP1](#op1) | Column & Row | `Select` | `1` | `false` | `df.select(*cols)` / `df.selectExpr(*exprs)` | ⬜ Not Started |
-| [OP2](#op2) | Column & Row | `Filter` | `1` | `true` | `df.filter(cond)` (routes `~(cond)` to `error` handle when connected) | ⬜ Not Started |
-| [OP3](#op3) | Column & Row | `WithColumns` | `1` | `false` | `df.withColumns({col: expr, ...})` (single-pass Catalyst projection) | ⬜ Not Started |
-| [OP4](#op4) | Column & Row | `RenameDropColumns` | `1` | `false` | `df.withColumnsRenamed({...}).drop(*cols)` | ⬜ Not Started |
-| [OP5](#op5) | Column & Row | `ParsePayload` | `1` | `true` | `F.from_json` / `from_avro` / `from_csv` / `from_xml` with `_corrupt_record` DLQ split | ⬜ Not Started |
-| [OP6](#op6) | Column & Row | `Explode` | `1` | `false` | `F.explode`, `F.explode_outer`, `F.posexplode` | ⬜ Not Started |
-| [OP7](#op7) | Column & Row | `HandleNulls` | `1` | `false` | `df.na.fill(...)`, `df.na.drop(...)`, `df.na.replace(...)` | ⬜ Not Started |
-| [OP8](#op8) | Column & Row | `OrderBy` | `1` | `false` | `df.orderBy(*sort_exprs)` | ⬜ Not Started |
-| [OP9](#op9) | Column & Row | `LimitSample` | `1` | `false` | `df.limit(n)` or `df.sample(withReplacement, fraction, seed)` | ⬜ Not Started |
-| [OP10](#op10) | Column & Row | `ConditionalSplit` | `1` | `false` | Multi-output router: 1 output handle per boolean rule + `else` handle (auto-cached) | ⬜ Not Started |
-| [OP11](#op11) | Column & Row | `DataQualityAssert` | `1` | `true` | Evaluates non-null, range, regex, or uniqueness expectations; routes violations to `error` DLQ | ⬜ Not Started |
-| [OP12](#op12) | Joins & Sets | `Join` | `2` (`left`, `right`) | `false` | `left_df.join(F.broadcast(right_df), on=..., how=...)` + stream time constraint | ⬜ Not Started |
-| [OP13](#op13) | Joins & Sets | `UnionByName` | `n` | `false` | `functools.reduce(lambda a, b: a.unionByName(b, allowMissingColumns=...), dfs)` | ⬜ Not Started |
-| [OP14](#op14) | Joins & Sets | `SetOperation` | `n` | `false` | `df1.intersect(df2)` / `df1.intersectAll(df2)` / `df1.exceptAll(df2)` | ⬜ Not Started |
-| [OP15](#op15) | Aggregations | `GroupByAgg` | `1` | `false` | `df.groupBy([F.window(...) \| F.session_window(...)], *cols).agg(*exprs)` (includes built-in Time Window: `None \| Tumbling \| Sliding \| Session`) | ⬜ Not Started |
-| [OP16](#op16) | Aggregations | `TopN` | `1` | `false` | Global `orderBy().limit(n)` or per-group `Window.partitionBy().orderBy()` + `row_number() <= n` | ⬜ Not Started |
-| [OP17](#op17) | Aggregations | `Deduplicate` | `1` | `false` | `df.distinct()`, `df.dropDuplicates(cols)`, or `df.dropDuplicatesWithinWatermark(cols)` | ⬜ Not Started |
-| [OP18](#op18) | Aggregations | `PivotUnpivot` | `1` | `false` | `df.groupBy(...).pivot(...).agg(...)` or `df.unpivot(...)` | ⬜ Not Started |
-| [OP19](#op19) | Aggregations | `RollupCube` | `1` | `false` | `df.rollup(*cols).agg(...)` or `df.cube(*cols).agg(...)` | ⬜ Not Started |
-| [OP20](#op20) | Aggregations | `WindowOver` | `1` | `false` | `Window.partitionBy(...).orderBy(...)` (`row_number`, `rank`, `dense_rank`, `lag`, `lead`, running totals) | ⬜ Not Started |
-| [OP21](#op21) | Streaming | `Watermark` | `1` | `false` | `df.withWatermark(eventTimeCol, delayThreshold)` (placed after payload parsing) | ⬜ Not Started |
-| [OP22](#op22) | Streaming | `StatefulTransform` | `1` | `true` | `df.groupBy(...).transformWithState(...)` (Spark 4.0 StatefulProcessor) or `applyInPandasWithState` | ⬜ Not Started |
-| [OP23](#op23) | Custom & SQL | `SparkSqlQuery` | `n` | `true` | Registers each upstream input as a temp view and executes `spark.sql(query)` | ⬜ Not Started |
-| [OP24](#op24) | Custom & SQL | `PandasUdfTransform` | `1` | `true` | `@pandas_udf` / `df.mapInPandas(fn, schema)` / `df.mapInArrow(fn, schema)` | ⬜ Not Started |
-| [OP25](#op25) | Custom & SQL | `CustomTransform` | `1` | `true` | `df.transform(custom_fn)` driven by user prompt instructions | ⬜ Not Started |
-| [OP26](#op26) | Partitioning | `RepartitionCoalesce` | `1` | `false` | `df.coalesce(n)` (reduce without shuffle) or `df.repartition(n, *cols)` / `repartitionByRange` | ⬜ Not Started |
-| [OP27](#op27) | Partitioning | `CachePersist` | `1` | `false` | `df.cache()` or `df.persist(StorageLevel.<LEVEL>)` | ⬜ Not Started |
-| [OP28](#op28) | Spark ML & AI | `FeaturePrep` | `1` | `false` | `StringIndexer(handleInvalid="keep")` + `OneHotEncoder` + `VectorAssembler(handleInvalid="keep")` + `StandardScaler` | ⬜ Not Started |
-| [OP29](#op29) | Spark ML & AI | `SparkMlAndVertexAi` | `1` | `true` | `PipelineModel.load()`, `SparkXGBClassifier` (`vector_to_array`), or batched `mapInPandas` Vertex AI Gemini / Endpoint inference | ⬜ Not Started |
+| [OP1](#op1) | Column & Row | `Select` | `1` | `false` | `df.select(*cols)` / `df.selectExpr(*exprs)` | ✅ Done |
+| [OP2](#op2) | Column & Row | `Filter` | `1` | `true` | `df.filter(cond)` (routes `~(cond)` to `error` handle when connected) | ✅ Done |
+| [OP3](#op3) | Column & Row | `WithColumns` | `1` | `false` | `df.withColumns({col: expr, ...})` (single-pass Catalyst projection) | ✅ Done |
+| [OP4](#op4) | Column & Row | `RenameDropColumns` | `1` | `false` | `df.withColumnsRenamed({...}).drop(*cols)` | ✅ Done |
+| [OP5](#op5) | Column & Row | `ParsePayload` | `1` | `true` | `F.from_json` / `from_avro` / `from_csv` / `from_xml` with `_corrupt_record` DLQ split | ✅ Done |
+| [OP6](#op6) | Column & Row | `Explode` | `1` | `false` | `F.explode`, `F.explode_outer`, `F.posexplode` | ✅ Done |
+| [OP7](#op7) | Column & Row | `HandleNulls` | `1` | `false` | `df.na.fill(...)`, `df.na.drop(...)`, `df.na.replace(...)` | ✅ Done |
+| [OP8](#op8) | Column & Row | `OrderBy` | `1` | `false` | `df.orderBy(*sort_exprs)` | ✅ Done |
+| [OP9](#op9) | Column & Row | `LimitSample` | `1` | `false` | `df.limit(n)` or `df.sample(withReplacement, fraction, seed)` | ✅ Done |
+| [OP10](#op10) | Column & Row | `ConditionalSplit` | `1` | `false` | Multi-output router: 1 output handle per boolean rule + `else` handle (auto-cached) | ✅ Done |
+| [OP11](#op11) | Column & Row | `DataQualityAssert` | `1` | `true` | Evaluates non-null, range, regex, or uniqueness expectations; routes violations to `error` DLQ | ✅ Done |
+| [OP12](#op12) | Joins & Sets | `Join` | `2` (`left`, `right`) | `false` | `left_df.join(F.broadcast(right_df), on=..., how=...)` + stream time constraint | ✅ Done |
+| [OP13](#op13) | Joins & Sets | `UnionByName` | `n` | `false` | `functools.reduce(lambda a, b: a.unionByName(b, allowMissingColumns=...), dfs)` | ✅ Done |
+| [OP14](#op14) | Joins & Sets | `SetOperation` | `n` | `false` | `df1.intersect(df2)` / `df1.intersectAll(df2)` / `df1.exceptAll(df2)` | ✅ Done |
+| [OP15](#op15) | Aggregations | `GroupByAgg` | `1` | `false` | `df.groupBy([F.window(...) \| F.session_window(...)], *cols).agg(*exprs)` (includes built-in Time Window: `None \| Tumbling \| Sliding \| Session`) | ✅ Done |
+| [OP16](#op16) | Aggregations | `TopN` | `1` | `false` | Global `orderBy().limit(n)` or per-group `Window.partitionBy().orderBy()` + `row_number() <= n` | ✅ Done |
+| [OP17](#op17) | Aggregations | `Deduplicate` | `1` | `false` | `df.distinct()`, `df.dropDuplicates(cols)`, or `df.dropDuplicatesWithinWatermark(cols)` | ✅ Done |
+| [OP18](#op18) | Aggregations | `PivotUnpivot` | `1` | `false` | `df.groupBy(...).pivot(...).agg(...)` or `df.unpivot(...)` | ✅ Done |
+| [OP19](#op19) | Aggregations | `RollupCube` | `1` | `false` | `df.rollup(*cols).agg(...)` or `df.cube(*cols).agg(...)` | ✅ Done |
+| [OP20](#op20) | Aggregations | `WindowOver` | `1` | `false` | `Window.partitionBy(...).orderBy(...)` (`row_number`, `rank`, `dense_rank`, `lag`, `lead`, running totals) | ✅ Done |
+| [OP21](#op21) | Streaming | `Watermark` | `1` | `false` | `df.withWatermark(eventTimeCol, delayThreshold)` (placed after payload parsing) | ✅ Done |
+| [OP22](#op22) | Streaming | `StatefulTransform` | `1` | `true` | `df.groupBy(...).transformWithState(...)` (Spark 4.0 StatefulProcessor) or `applyInPandasWithState` | ✅ Done |
+| [OP23](#op23) | Custom & SQL | `SparkSqlQuery` | `n` | `true` | Registers each upstream input as a temp view and executes `spark.sql(query)` | ✅ Done |
+| [OP24](#op24) | Custom & SQL | `PandasUdfTransform` | `1` | `true` | `@pandas_udf` / `df.mapInPandas(fn, schema)` / `df.mapInArrow(fn, schema)` | ✅ Done |
+| [OP25](#op25) | Custom & SQL | `CustomTransform` | `1` | `true` | `df.transform(custom_fn)` driven by user prompt instructions | ✅ Done |
+| [OP26](#op26) | Partitioning | `RepartitionCoalesce` | `1` | `false` | `df.coalesce(n)` (reduce without shuffle) or `df.repartition(n, *cols)` / `repartitionByRange` | ✅ Done |
+| [OP27](#op27) | Partitioning | `CachePersist` | `1` | `false` | `df.cache()` or `df.persist(StorageLevel.<LEVEL>)` | ✅ Done |
+| [OP28](#op28) | Spark ML & AI | `FeaturePrep` | `1` | `false` | `StringIndexer(handleInvalid="keep")` + `OneHotEncoder` + `VectorAssembler(handleInvalid="keep")` + `StandardScaler` | ✅ Done |
+| [OP29](#op29) | Spark ML & AI | `SparkMlAndVertexAi` | `1` | `true` | `PipelineModel.load()`, `SparkXGBClassifier` (`vector_to_array`), or batched `mapInPandas` Vertex AI Gemini / Endpoint inference | ✅ Done |
 
 ### Phase 8 — Unit Tests & Multi-Agent Spark Evaluator Harness (`T1`–`T10`)
 
