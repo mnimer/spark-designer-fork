@@ -1,0 +1,56 @@
+---
+name: phase-swarm-execution
+description: >-
+  Executes a phase of tasks from TASKS.md using a parallel /swarm with disjoint
+  shared git worktrees, atomic per-task commits, zero-regression verification
+  against develop, TASKS.md status updates, and a GitHub PR description artifact.
+  Use when asked to execute a phase or batch of TASKS.md items with /swarm or
+  parallel subagents and commit each completed task.
+---
+
+# Phase Swarm Execution Playbook
+
+## 1. Sync Worktree & Partition Tasks Without Collisions
+
+1. **Fast-forward the phase worktree to `origin/develop` before spawning workers**: Pre-created phase worktrees often point to an older `develop` commit. Because `swarm{action: "add", workspace: "share"}` branches each worker worktree from the coordinator's current `HEAD`, fast-forward strictly to `origin/develop` (never onto an un-squashed sibling feature branch) and link `node_modules` first. If `origin/develop` lacks a merged prerequisite phase, ask the user to pull `develop` first:
+   ```bash
+   git merge --ff-only origin/develop
+   test -d node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/node_modules ./node_modules
+   test -d webview/node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/webview/node_modules ./webview/node_modules
+   ```
+2. Read `TASKS.md`, `AGENTS.md`, `DESIGN.md`, and target interfaces (plus `.agents/skills/spark-connector-authoring/SKILL.md` for connector or step catalog phases) before briefing workers.
+3. Group tasks into 3–6 author slices (`workspace: "share"`) with **100% disjoint file ownership**, plus:
+   - `integrator` (`workspace: "inherit"` on the phase worktree branch)
+   - `verifier` (or split `verifier-skills` / `verifier-forms` on `workspace: "inherit"`, strictly read-only)
+   - `monitor` (when `swarm_monitor` is in `<skills>`)
+4. **Reserve shared barrel and registry files for `integrator`**: In catalog phases (`SRC*`, `SNK*`, `OP*`), authors own only isolated `resources/codegen-skills/*` and `webview/src/properties/*` files. Keep `webview/src/catalog/nodes/*.ts`, `webview/src/catalog/propertyFormRegistry.ts`, `webview/src/catalog/documentation/*.ts`, `webview/src/catalog/paletteGroupState.ts`, `src/legacyNodeMigration.ts`, `src/test/unit/codegen/CodegenSkillCatalog.test.ts`, `src/test/unit/codegen/codegen-skills-invariants.test.ts`, and `TASKS.md` exclusively in `integrator`.
+5. Leave `model` unset on `swarm{action: "add"}` unless the user requests another model. If a worker hits `503 No capacity available` or quota exhaustion while `waiting`, switch its model in place with `swarm{action: "model", name, model}` and inform the user. Never `kill` and re-`add` a stalled worker because `kill` deletes its worktree and context.
+6. **Assign full vertical IPC call chains**: If a task sends state or actions between the Webview and Extension Host, assign the complete call path (`Leaf Component -> Context -> App.tsx -> useVsCodeBridge.ts -> src/shared/protocol.ts -> src/ipc/handlers/*.ts`) to one owner (or explicitly assign the bridge files) so options are never dropped at unowned middle layers.
+
+## 2. Author Worktree Brief Requirements
+
+Include these 5 rules in every `workspace: "share"` author brief:
+
+1. **Bootstrap `node_modules` via hardlinks** (never run `npm ci`):
+   ```bash
+   test -d node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/node_modules ./node_modules
+   test -d webview/node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/webview/node_modules ./webview/node_modules
+   ```
+2. **Search with Git, not `cs`**: Never run `cs --corpus=local` (fails outside CitC and Cog). Use `git grep` and `git ls-files`.
+3. **Enforce file boundaries & webview lint rules**: Touch only owned files. Never stage `node_modules/`, `out/`, or `webview/dist/`. Place any agent skills or rules under `.agents/` (never `.gemini/`). In `webview/src/`, keep non-component helpers in `.ts` modules (`react-refresh/only-export-components`), document every `interface` and exported arrow component with JSDoc, and pass `{ selector }` to `getByLabelText(...)` when `<InfoTooltip>` sits inside `<label>`.
+4. **Commit verified work cleanly**: After targeted unit tests (`npx vitest run <paths>` for host and `(cd webview && npx vitest run <paths>)` for webview), typecheck (`npm run typecheck` and `npm run typecheck:webview`), lint (`npm run lint` and `npm --prefix webview run lint`), single-header `Author:` check, and ASD-STE100 zero-semicolon check pass, commit as `<type>(<scope>): <summary> (<TASK_ID>)` with **zero file paths, zero file extensions, and zero markdown links** in subject or body (`.agents/workflows/gitcommit.md`).
+5. **Clean peer handoffs**: Post only authored commit SHAs and branch names, and `@mention` only the next peer (`@verifier` or `@integrator`). Tag `@coordinator` only on blockers or final completion.
+
+## 3. Integration, Bundle Build & Phase Completion
+
+1. **`integrator` workflow** (runs after verifiers approve all author branches):
+   - Cherry-pick all authored commits onto the phase branch in logical order.
+   - Fold any cross-slice integration fix into its target task commit with `git commit --fixup <task-sha>` and `GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash origin/develop` rather than leaving extra fix commits at the branch tip.
+   - Wire shared catalog registries, documentation maps, legacy migrations, and invariant tests.
+   - Audit `git log origin/develop..HEAD` to ensure commit messages contain zero file paths, extensions, or links.
+   - Verify **zero regressions** relative to `origin/develop` across `npm run lint`, `npm --prefix webview run lint`, `npm run test:unit`, and `npm run test:webview` (`npm run test:all`) without modifying unrelated legacy suites scheduled for later phases.
+   - Update `TASKS.md` (`Status` -> `✅ Done`), sync `ARCHITECTURE.md` / `DESIGN.md` if applicable, and create the phase completion commit.
+   - Run `npm run build` (`npm run build:webview && npm run compile`) so `out/extension.js` and `webview/dist/` are ready for immediate Extension Development Host (`F5`) testing, and confirm `git status` remains clean.
+2. **Coordinator wrap-up**:
+   - Post `[done] <summary>` (no `@` mentions) so `monitor` goes quiet, then `kill` finished workers (excluding `monitor`) only after all commits are landed on the phase branch.
+   - Present the copy-ready `phase -> develop` PR description in a single ` ```text ` block (with zero file paths, extensions, or links inside the block).
