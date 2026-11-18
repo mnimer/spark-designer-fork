@@ -1,240 +1,117 @@
 /**
- * Unit Tests for JsonIO Source Properties Component
- * 
+ * @fileoverview Unit tests for the JsonSource / JsonIO source properties panel (SRC17).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Validates rendering, input handling,
- * required-path validation states, JSON Lines mode, compression selection, sample schema insertion,
- * accordion toggling, and code generation instructions for JsonIOSourceProperties.
- * 
- * Architectural Decisions:
- * - Uses Vitest and React Testing Library for fast, realistic DOM interaction testing.
- * - Verifies that 100% of event handlers, toggles, and input states produce proper onChange payloads.
+ * Validates rendering, readMode switching, StorageBackendFields integration,
+ * multiLine, primitivesAsString, allowComments, mode, columnNameOfCorruptRecord,
+ * maxFilesPerTrigger, SchemaEditor, and SystemInstructionsField for JsonIOSourceProperties.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { JsonIOSourceProperties, JSON_SOURCE_COMPRESSION_TYPES } from './JsonIO';
+import { JsonIOSourceProperties, JsonSourceProperties } from './JsonIO';
 
-describe('JsonIOSourceProperties', () => {
+describe('JsonIOSourceProperties (SRC17 JsonSource)', () => {
   const mockOnChange = vi.fn();
   let originalVscode: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders with empty properties and flags validation error for missing filePattern', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JsonIO Source',
-        spark_transform: 'JsonIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const filePatternInput = container.querySelector('#jsonSourceFilePattern') as HTMLInputElement;
-    expect(filePatternInput).toBeInTheDocument();
-    expect(filePatternInput).toHaveValue('');
-    expect(filePatternInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('File Pattern is required.')).toBeInTheDocument();
+  it('exports JsonSourceProperties as an alias for JsonIOSourceProperties', () => {
+    expect(JsonSourceProperties).toBe(JsonIOSourceProperties);
   });
 
-  it('renders with populated properties and no validation error', () => {
+  it('renders Spark JSON defaults and flags required validation when path is empty', () => {
     const mockNode: any = {
       data: {
-        label: 'JsonIO Source',
-        spark_transform: 'JsonIO',
+        label: 'JsonSource',
+        spark_transform: 'JsonSource',
+        properties: {},
+      },
+    };
+
+    const { container } = render(
+      <JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    expect(container.querySelector('#jsonSourceReadMode')).toHaveValue('batch');
+    expect(container.querySelector('#jsonSourcePath')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('JSON URI / Path is required.')).toBeInTheDocument();
+
+    expect(container.querySelector('#jsonSourceMultiLine')).not.toBeChecked();
+    expect(container.querySelector('#jsonSourcePrimitivesAsString')).not.toBeChecked();
+    expect(container.querySelector('#jsonSourceAllowComments')).not.toBeChecked();
+    expect(container.querySelector('#jsonSourceMode')).toHaveValue('PERMISSIVE');
+    expect(container.querySelector('#jsonSourceCorruptRecordCol')).toHaveValue('_corrupt_record');
+  });
+
+  it('renders populated streaming JSON properties and propagates changes across all fields', () => {
+    const mockNode: any = {
+      data: {
+        label: 'JsonSource',
+        spark_transform: 'JsonSource',
         properties: {
-          filePattern: 'gs://my-bucket/data/*.json',
-          lines: true,
-          compression: 'GZIP',
-          schema: '[{"name": "eventId", "type": "STRING", "mode": "REQUIRED"}]',
-          system_instructions: 'Parse timestamps using ISO format'
-        }
-      }
+          readMode: 'streaming',
+          path: 'gs://my-bucket/events/*.json',
+          multiLine: true,
+          primitivesAsString: true,
+          allowComments: true,
+          mode: 'PERMISSIVE',
+          columnNameOfCorruptRecord: '_malformed_json',
+          maxFilesPerTrigger: 40,
+          schemaFields: [{ name: 'event_id', type: 'STRING', mode: 'REQUIRED' }],
+          system_instructions: 'Parse nested JSON objects',
+        },
+      },
     };
 
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const filePatternInput = container.querySelector('#jsonSourceFilePattern') as HTMLInputElement;
-    const linesCheckbox = container.querySelector('#jsonSourceLines') as HTMLInputElement;
-    const compressionSelect = container.querySelector('#jsonSourceCompression') as HTMLSelectElement;
-    const strategySelect = container.querySelector('#jsonSourceMappingStrategy') as HTMLSelectElement;
-    const instructionsTextarea = container.querySelector('#jsonSourceInstructions') as HTMLTextAreaElement;
+    expect(container.querySelector('#jsonSourceReadMode')).toHaveValue('streaming');
+    expect(container.querySelector('#jsonSourcePath')).toHaveValue('gs://my-bucket/events/*.json');
+    expect(container.querySelector('#jsonSourceMultiLine')).toBeChecked();
+    expect(container.querySelector('#jsonSourcePrimitivesAsString')).toBeChecked();
+    expect(container.querySelector('#jsonSourceAllowComments')).toBeChecked();
+    expect(container.querySelector('#jsonSourceCorruptRecordCol')).toHaveValue('_malformed_json');
+    expect(container.querySelector('#jsonSourceMaxFilesPerTrigger')).toHaveValue(40);
 
-    expect(filePatternInput).toHaveValue('gs://my-bucket/data/*.json');
-    expect(filePatternInput).toHaveAttribute('aria-invalid', 'false');
-    expect(screen.queryByText('File Pattern is required.')).not.toBeInTheDocument();
-    expect(linesCheckbox).toBeChecked();
-    expect(compressionSelect).toHaveValue('GZIP');
-    expect(strategySelect).toHaveValue('schema');
-    expect(screen.getByText('1 FIELD')).toBeInTheDocument();
-    expect(instructionsTextarea).toHaveValue('Parse timestamps using ISO format');
-  });
+    fireEvent.click(container.querySelector('#jsonSourceMultiLine')!);
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ multiLine: false }));
 
-  it('handles field changes for filePattern, lines, and compression', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
+    fireEvent.click(container.querySelector('#jsonSourcePrimitivesAsString')!);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ primitivesAsString: false })
+    );
 
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
+    fireEvent.click(container.querySelector('#jsonSourceAllowComments')!);
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ allowComments: false }));
 
-    // Change filePattern
-    const filePatternInput = container.querySelector('#jsonSourceFilePattern') as HTMLInputElement;
-    fireEvent.change(filePatternInput, {
-      target: { name: 'filePattern', value: 's3://my-lake/events/*.json' }
+    fireEvent.change(container.querySelector('#jsonSourceMode')!, {
+      target: { name: 'mode', value: 'DROPMALFORMED' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filePattern: 's3://my-lake/events/*.json'
-      })
+      expect.objectContaining({ mode: 'DROPMALFORMED' })
     );
 
-    // Toggle lines checkbox
-    const linesCheckbox = container.querySelector('#jsonSourceLines') as HTMLInputElement;
-    expect(linesCheckbox).toBeChecked(); // default true
-    fireEvent.click(linesCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lines: false
-      })
-    );
-
-    // Change compression
-    const compressionSelect = container.querySelector('#jsonSourceCompression') as HTMLSelectElement;
-    fireEvent.change(compressionSelect, {
-      target: { name: 'compression', value: 'BZIP2' }
+    fireEvent.change(container.querySelector('#jsonSourceInstructions')!, {
+      target: { value: 'Updated JSON instructions' },
     });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        compression: 'BZIP2'
-      })
+      expect.objectContaining({ system_instructions: 'Updated JSON instructions' })
     );
   });
-
-  it('defaults mappingStrategy to infer when schema is empty and switches to schema mode', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const strategySelect = container.querySelector('#jsonSourceMappingStrategy') as HTMLSelectElement;
-    expect(strategySelect).toBeInTheDocument();
-    expect(strategySelect).toHaveValue('infer');
-    expect(Array.from(strategySelect.options).map((o) => o.value)).toEqual(['infer', 'schema']);
-
-    fireEvent.change(strategySelect, {
-      target: { name: 'mappingStrategy', value: 'schema' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mappingStrategy: 'schema'
-      })
-    );
-  });
-
-  it('toggles schema accordion visibility and handles SchemaEditor updates when in schema mode', () => {
-    const mockNode: any = {
-      data: {
-        properties: {
-          mappingStrategy: 'schema'
-        }
-      }
-    };
-
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-
-    // Switch to Schema String tab in SchemaEditor and update schema
-    fireEvent.click(screen.getByText('Schema String'));
-    const stringTextarea = container.querySelector('#jsonSourceMappingStrategySchemaString') as HTMLTextAreaElement;
-    expect(stringTextarea).toBeInTheDocument();
-
-    fireEvent.change(stringTextarea, {
-      target: { value: 'eventId:STRING:REQUIRED, payload:STRING' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        schemaString: 'eventId:STRING:REQUIRED, payload:STRING',
-        schemaFields: [
-          { name: 'eventId', type: 'STRING', mode: 'REQUIRED', description: '' },
-          { name: 'payload', type: 'STRING', mode: 'NULLABLE', description: '' }
-        ]
-      })
-    );
-  });
-
-  it('omits minBundleSize, validate, XZ codec, and non-existent JsonIO.readRows title while documenting Java TextIO + JsonToRow vs Python ReadFromJson (regression test)', () => {
-    const mockNode: any = {
-      data: {
-        properties: {
-          filePattern: 'gs://my-bucket/events/*.json'
-        }
-      }
-    };
-
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Verify non-existent JsonIO.readRows is completely absent and replaced by TextIO + JsonToRow.withSchema(schema)
-    expect(screen.queryByText(/JsonIO\.readRows/i)).not.toBeInTheDocument();
-    expect(
-      screen.getByText('Schema Configuration (Java TextIO + JsonToRow.withSchema(schema))')
-    ).toBeInTheDocument();
-
-    // Verify unroutable minBundleSize and validate controls are absent
-    expect(container.querySelector('#jsonSourceValidate')).not.toBeInTheDocument();
-    expect(container.querySelector('#jsonSourceMinBundleSize')).not.toBeInTheDocument();
-    expect(container.querySelector('[name="validate"]')).not.toBeInTheDocument();
-    expect(container.querySelector('[name="minBundleSize"]')).not.toBeInTheDocument();
-
-    // Verify XZ is omitted from JSON_SOURCE_COMPRESSION_TYPES and the dropdown
-    expect(JSON_SOURCE_COMPRESSION_TYPES.map((c) => c.value)).not.toContain('XZ');
-    const compressionSelect = container.querySelector('#jsonSourceCompression') as HTMLSelectElement;
-    const optionValues = Array.from(compressionSelect.querySelectorAll('option')).map((opt) => opt.value);
-    expect(optionValues).not.toContain('XZ');
-    expect(optionValues).toEqual(['AUTO', 'UNCOMPRESSED', 'GZIP', 'BZIP2', 'DEFLATE', 'ZSTD']);
-
-    // Verify helper texts for lines and compression
-    expect(screen.getByText(/always newline-delimited JSON/i)).toBeInTheDocument();
-    expect(screen.getByText(/auto-detects decompression by file extension/i)).toBeInTheDocument();
-  });
-
-  it('updates system_instructions when instructions textarea changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsTextarea = container.querySelector('#jsonSourceInstructions') as HTMLTextAreaElement;
-    fireEvent.change(instructionsTextarea, {
-      target: { value: 'Parse JSON into UserEvent class conforming to Beam Schema' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'Parse JSON into UserEvent class conforming to Beam Schema'
-      })
-    );
-  });
-
-
 });

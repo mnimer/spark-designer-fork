@@ -1,113 +1,103 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+/**
+ * @fileoverview Unit tests for the TextSource / TextIO source properties panel (SRC18).
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ *
+ * Purpose:
+ * Validates rendering, readMode switching, StorageBackendFields integration,
+ * wholetext toggle, lineSep input, maxFilesPerTrigger, and SystemInstructionsField
+ * for TextIOSourceProperties.
+ */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TextIOSourceProperties } from './TextIO';
+import { TextIOSourceProperties, TextSourceProperties } from './TextIO';
 
-describe('TextIOSourceProperties', () => {
+describe('TextIOSourceProperties (SRC18 TextSource)', () => {
   const mockOnChange = vi.fn();
+  let originalVscode: any;
 
-  it('renders all default fields and handles value updates', () => {
-    const mockNode: any = {
-      data: {
-        label: 'TextIO',
-        spark_transform: 'TextIO',
-        properties: {
-          filePattern: 'gs://bucket/data/*.txt',
-          skipHeaderLines: 1,
-          delimiter: '\\n',
-          hintMatchesManyFiles: true
-        }
-      }
-    };
-
-    const { container } = render(<TextIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const filePatternInput = container.querySelector('#textFilePattern') as HTMLInputElement;
-    const skipHeaderInput = container.querySelector('#skipHeaderLines') as HTMLInputElement;
-    const delimiterInput = container.querySelector('#textDelimiter') as HTMLInputElement;
-    const hintCheckbox = container.querySelector('#hintMatchesManyFiles') as HTMLInputElement;
-
-    expect(filePatternInput).toHaveValue('gs://bucket/data/*.txt');
-    expect(skipHeaderInput).toHaveValue(1);
-    expect(delimiterInput).toHaveValue('\\n');
-    expect(hintCheckbox).toBeChecked();
-
-    fireEvent.change(filePatternInput, {
-      target: { name: 'filePattern', value: 'gs://bucket/data/*.csv' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      filePattern: 'gs://bucket/data/*.csv'
-    }));
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
-  it('toggles compression and handles selection', () => {
-    const mockNode: any = {
-      data: {
-        label: 'TextIO',
-        spark_transform: 'TextIO',
-        properties: {
-          withCompression: true,
-          compression: 'GZIP'
-        }
-      }
-    };
-
-    const { container } = render(<TextIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const compressionSelect = container.querySelector('#textCompression') as HTMLSelectElement;
-    expect(compressionSelect).toHaveValue('GZIP');
-
-    fireEvent.change(compressionSelect, {
-      target: { name: 'compression', value: 'ZSTD' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      compression: 'ZSTD'
-    }));
+  afterEach(() => {
+    (window as any).vscode = originalVscode;
   });
 
-  it('shows required validation when filePattern is empty', () => {
-    const mockNode: any = {
-      data: {
-        label: 'TextIO',
-        spark_transform: 'TextIO',
-        properties: {
-          filePattern: ''
-        }
-      }
-    };
-
-    const { container, getByRole } = render(<TextIOSourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const filePatternInput = container.querySelector('#textFilePattern') as HTMLInputElement;
-    expect(filePatternInput).toHaveAttribute('aria-invalid', 'true');
-    expect(getByRole('alert')).toHaveTextContent('File Pattern is required.');
+  it('exports TextSourceProperties as an alias for TextIOSourceProperties', () => {
+    expect(TextSourceProperties).toBe(TextIOSourceProperties);
   });
 
-  it('handles code generation instructions change', () => {
+  it('renders default batch settings and flags required validation when path is empty', () => {
     const mockNode: any = {
       data: {
-        label: 'TextIO',
-        spark_transform: 'TextIO',
-        properties: {
-          filePattern: 'gs://bucket/*.txt',
-          system_instructions: 'Initial prompt'
-        }
-      }
+        label: 'TextSource',
+        spark_transform: 'TextSource',
+        properties: {},
+      },
     };
 
-    const { container } = render(<TextIOSourceProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <TextIOSourceProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const instructionsTextarea = container.querySelector('#textSourceSystemInstructions') as HTMLTextAreaElement;
-    expect(instructionsTextarea).toHaveValue('Initial prompt');
+    expect(container.querySelector('#textSourceReadMode')).toHaveValue('batch');
+    expect(container.querySelector('#textSourcePath')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Text URI / Path is required.')).toBeInTheDocument();
+    expect(container.querySelector('#textSourceWholetext')).not.toBeChecked();
+    expect(container.querySelector('#textSourceLineSep')).toHaveValue('');
+  });
 
-    fireEvent.change(instructionsTextarea, {
-      target: { value: 'Updated prompt' }
+  it('renders populated streaming properties and propagates updates for wholetext, lineSep, maxFilesPerTrigger, and instructions', () => {
+    const mockNode: any = {
+      data: {
+        label: 'TextSource',
+        spark_transform: 'TextSource',
+        properties: {
+          readMode: 'streaming',
+          path: 'gs://my-bucket/logs/*.log',
+          wholetext: false,
+          lineSep: '\\n',
+          maxFilesPerTrigger: 15,
+          system_instructions: 'Parse log lines',
+        },
+      },
+    };
+
+    const { container } = render(
+      <TextIOSourceProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    expect(container.querySelector('#textSourceReadMode')).toHaveValue('streaming');
+    expect(container.querySelector('#textSourcePath')).toHaveValue('gs://my-bucket/logs/*.log');
+    expect(container.querySelector('#textSourceLineSep')).toHaveValue('\\n');
+    expect(container.querySelector('#textSourceMaxFilesPerTrigger')).toHaveValue(15);
+
+    fireEvent.change(container.querySelector('#textSourceLineSep')!, {
+      target: { name: 'lineSep', value: '\\r\\n' },
     });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ lineSep: '\\r\\n' }));
 
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      system_instructions: 'Updated prompt'
-    }));
+    fireEvent.click(container.querySelector('#textSourceWholetext')!);
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ wholetext: true }));
+
+    fireEvent.change(container.querySelector('#textSourceMaxFilesPerTrigger')!, {
+      target: { name: 'maxFilesPerTrigger', value: '30' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ maxFilesPerTrigger: '30' })
+    );
+
+    fireEvent.change(container.querySelector('#textSourceSystemInstructions')!, {
+      target: { value: 'Updated text instructions' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Updated text instructions' })
+    );
   });
 });

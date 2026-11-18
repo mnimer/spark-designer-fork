@@ -1,44 +1,31 @@
 /**
- * RedisIOSourceProperties Component
+ * Redis Source Properties Component (SRC35)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam RedisIO Source nodes.
- * Supports both static key pattern matching via RedisIO.read().withKeyPattern() and
- * PCollection-driven dynamic key pattern reading via RedisIO.readKeyPatterns().
+ * Renders the property configuration panel for Apache Spark Redis Source nodes
+ * using the Spark 4.0 Python DataSource API (redis-py SCAN for batch and XREADGROUP for Redis Streams).
  *
  * Architectural Decisions:
- * - Controlled inputs following the "props in, events up" unidirectional data flow.
- * - Dynamic discovery: Requests GCP Secret Manager secrets via 'getSecrets' IPC message to securely bind AUTH passwords.
- * - Real-time validation: Requires Redis endpoint host, and requires key pattern when in 'keyPattern' read mode.
- * - Read mode switching: Dynamically toggles between static pattern input and PCollection stream description.
- * - Collapsible Advanced Source Settings: Encapsulates connection timeout, socket timeout, max attempts, and cluster mode.
- * - Preserves system_instructions / special_instructions fallback chain for LLM pipeline code generation.
- * - Follows the 8pt grid system and VS Code theme tokens with Tailwind CSS styling.
+ * - Supports readMode ('batch' | 'streaming', default 'batch').
+ * - Configures host, port (default 6379), dataType ('hash' | 'json' | 'stream' | 'string'),
+ *   keyPattern + scanCount (in batch mode), or streamKey + consumerGroup (in streaming mode).
+ * - Uses SecretManagerAuthFields for Redis AUTH password secret.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { SecretManagerAuthFields, type SecretItem } from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
 
-/**
- * Secret item descriptor returned from extension host discovery.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
+export type RedisReadMode = 'batch' | 'streaming';
+export type RedisDataType = 'hash' | 'json' | 'stream' | 'string';
 
-/**
- * Props for the RedisIOSourceProperties component.
- */
+/** Props for the {@link RedisIOSourceProperties} component. */
 export interface RedisIOSourcePropertiesProps {
   node: {
     data: {
@@ -47,20 +34,16 @@ export interface RedisIOSourcePropertiesProps {
       system_instructions?: string;
       special_instructions?: string;
       properties?: {
+        readMode?: RedisReadMode | string;
         host?: string;
         port?: number | string;
-        database?: number | string;
-        ssl?: boolean;
-        readMode?: 'keyPattern' | 'readKeyPatterns';
+        dataType?: RedisDataType;
         keyPattern?: string;
-        batchSize?: number | string;
-        outputParallelization?: boolean;
-        authMode?: 'none' | 'secret_manager';
-        authPasswordSecret?: string;
-        connectionTimeout?: number | string;
-        socketTimeout?: number | string;
-        maxAttempts?: number | string;
-        clusterMode?: boolean;
+        streamKey?: string;
+        consumerGroup?: string;
+        scanCount?: number | string;
+        authMode?: string;
+        secretName?: string;
         system_instructions?: string;
         special_instructions?: string;
         [key: string]: any;
@@ -71,343 +54,193 @@ export interface RedisIOSourcePropertiesProps {
 }
 
 /**
- * RedisIOSourceProperties renders the configuration panel for RedisIO source reads.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Configures properties for Apache Spark Redis batch and streaming source nodes.
  */
 export const RedisIOSourceProperties: React.FC<RedisIOSourcePropertiesProps> = ({ node, onChange }) => {
-  const properties = node.data?.properties || {};
+  const properties = node?.data?.properties || {};
 
-  // Form field state extracted from node properties
+  const readMode: RedisReadMode = properties.readMode === 'streaming' ? 'streaming' : 'batch';
   const host = properties.host || '';
-  const port = properties.port !== undefined && properties.port !== null ? properties.port : '';
-  const database = properties.database !== undefined && properties.database !== null ? properties.database : '';
-  const ssl = properties.ssl ?? false;
-  const readMode = properties.readMode || 'keyPattern';
+  const port = properties.port !== undefined && properties.port !== '' ? properties.port : 6379;
+  const dataType: RedisDataType =
+    properties.dataType || (readMode === 'streaming' ? 'stream' : 'hash');
   const keyPattern = properties.keyPattern || '';
-  const batchSize = properties.batchSize !== undefined && properties.batchSize !== null ? properties.batchSize : '';
-  const outputParallelization = properties.outputParallelization ?? false;
-  const authMode = properties.authMode || 'none';
-  const authPasswordSecret = properties.authPasswordSecret || '';
-  const connectionTimeout = properties.connectionTimeout !== undefined && properties.connectionTimeout !== null ? properties.connectionTimeout : '';
-  const socketTimeout = properties.socketTimeout !== undefined && properties.socketTimeout !== null ? properties.socketTimeout : '';
-  const maxAttempts = properties.maxAttempts !== undefined && properties.maxAttempts !== null ? properties.maxAttempts : '';
-  const clusterMode = properties.clusterMode ?? false;
+  const streamKey = properties.streamKey || '';
+  const consumerGroup = properties.consumerGroup || 'spark-consumer-group';
+  const scanCount = properties.scanCount ?? 1000;
+  const authMode = properties.authMode || 'default';
+  const secretName = properties.secretName || properties.authPasswordSecret || '';
 
-  // Local state for dynamically loaded secrets and UI toggles
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
   const isHostEmpty = !host.trim();
-  const isKeyPatternEmpty = readMode === 'keyPattern' && !keyPattern.trim();
+  const isKeyPatternEmpty = readMode === 'batch' && !keyPattern.trim();
+  const isStreamKeyEmpty = readMode === 'streaming' && !streamKey.trim();
 
-  // Fallback chain for system instructions
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers the onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    // NOTE: Merges updated key/value into current properties and dispatches to parent
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, select, and checkbox input changes.
-   *
-   * @param e Standard React change event from input, select, or textarea
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
-    }
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    onChange({ ...properties, [name]: updatedValue });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Endpoint Configuration Section */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Redis Endpoint</span>
-          <InfoTooltip text="Configure the target Redis server endpoint hostname, port, database index, and TLS encryption." />
-        </label>
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark 4.0 Python DataSource (Redis)</span>
+        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+          redis-py · {readMode.toUpperCase()}
+        </span>
+      </div>
 
+      {/* Read Mode & Data Type */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="redisSourceReadMode"
+            className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+          >
+            <span>Execution Read Mode</span>
+            <InfoTooltip text="Choose batch key scan (SCAN) or streaming Redis Streams (XREADGROUP)." />
+          </label>
+          <select
+            id="redisSourceReadMode"
+            name="readMode"
+            value={readMode}
+            onChange={handleChange}
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="batch">Batch (SCAN Keys)</option>
+            <option value="streaming">Streaming (Redis Streams)</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="redisSourceDataType"
+            className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+          >
+            <span>Redis Value Data Type</span>
+            <InfoTooltip text="Redis data structure type to deserialize into DataFrame rows." />
+          </label>
+          <select
+            id="redisSourceDataType"
+            name="dataType"
+            value={dataType}
+            onChange={handleChange}
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="hash">Hash (HGETALL)</option>
+            <option value="json">JSON (RedisJSON / String JSON)</option>
+            <option value="stream">Stream (XREADGROUP)</option>
+            <option value="string">String (GET)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Redis Endpoint */}
+      <div className="grid grid-cols-2 gap-2">
         <PropertyField
           id="redisSourceHost"
           name="host"
-          label="Host"
+          label="Redis Host"
           required="Host is required"
-          tooltip="Hostname or IP address of the Redis server (e.g. 127.0.0.1 or redis.example.com). Required."
+          tooltip="Redis / Memorystore hostname or IP address."
           value={host}
           invalid={isHostEmpty}
           error={isHostEmpty ? 'Host is required' : null}
-          placeholder="127.0.0.1"
+          placeholder="10.0.0.5"
           onChange={handleChange}
           mono={true}
         />
+        <PropertyField
+          id="redisSourcePort"
+          name="port"
+          label="Port"
+          type="number"
+          tooltip="Redis server port (default 6379)."
+          value={port}
+          placeholder="6379"
+          onChange={handleChange}
+          mono={true}
+        />
+      </div>
 
+      {/* Mode-Specific Target Configuration */}
+      {readMode === 'batch' ? (
         <div className="grid grid-cols-2 gap-2">
           <PropertyField
-            id="redisSourcePort"
-            name="port"
-            label="Port"
-            type="number"
-            tooltip="Port number of the Redis server. Defaults to 6379."
-            value={port}
+            id="redisSourceKeyPattern"
+            name="keyPattern"
+            label="Key Pattern (keyPattern)"
+            required="Key pattern is required in Batch mode"
+            tooltip="Glob pattern passed to Redis SCAN (for example user:*)."
+            value={keyPattern}
+            invalid={isKeyPatternEmpty}
+            error={isKeyPatternEmpty ? 'Key pattern is required in Batch mode' : null}
+            placeholder="user:*"
             onChange={handleChange}
-            placeholder="6379"
             mono={true}
           />
           <PropertyField
-            id="redisSourceDatabase"
-            name="database"
-            label="Database Index"
+            id="redisSourceScanCount"
+            name="scanCount"
+            label="SCAN Batch Count (scanCount)"
             type="number"
-            tooltip="Logical database index to connect to (e.g. 0). In Redis, databases are identified by integer index."
-            value={database}
+            min={1}
+            tooltip="COUNT hint per Redis SCAN cursor iteration (default 1000)."
+            value={scanCount}
+            placeholder="1000"
             onChange={handleChange}
-            placeholder="0"
             mono={true}
           />
         </div>
-
-        <div className="flex items-center gap-2 mt-1">
-          <input
-            id="redisSourceSsl"
-            type="checkbox"
-            name="ssl"
-            checked={ssl}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0"
-          />
-          <label htmlFor="redisSourceSsl" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Enable SSL / TLS</span>
-            <InfoTooltip text="Enables SSL/TLS encrypted connection to the Redis server (enableSSL())." />
-          </label>
-        </div>
-      </div>
-
-      {/* Read Mode Configuration Section */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Read Mode</span>
-          <InfoTooltip text="Choose whether to read keys using a static key pattern filter via RedisIO.read().withKeyPattern() or dynamically from an upstream PCollection of key patterns via RedisIO.readKeyPatterns()." />
-        </label>
-        <div className="flex flex-col gap-2 mt-1">
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="readMode"
-              value="keyPattern"
-              checked={readMode === 'keyPattern'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-            />
-            <span>Key Pattern (RedisIO.read() with static pattern)</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="readMode"
-              value="readKeyPatterns"
-              checked={readMode === 'readKeyPatterns'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-            />
-            <span>Dynamic Key Patterns (RedisIO.readKeyPatterns() PCollection-driven)</span>
-          </label>
-        </div>
-
-        {readMode === 'keyPattern' && (
-          <div className="flex flex-col gap-2 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
-            <PropertyField
-              id="redisSourceKeyPattern"
-              name="keyPattern"
-              label="Key Pattern"
-              required="Key pattern is required in Key Pattern mode"
-              tooltip="Glob-style pattern to match Redis keys (e.g. '*' or 'user:*'). Required when using static keyPattern mode."
-              value={keyPattern}
-              invalid={isKeyPatternEmpty}
-              error={isKeyPatternEmpty ? 'Key pattern is required in Key Pattern mode' : null}
-              placeholder="e.g. user:*"
-              onChange={handleChange}
-              mono={true}
-            />
-          </div>
-        )}
-
-        {readMode === 'readKeyPatterns' && (
-          <div className="mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50 text-xs text-[var(--vscode-text-secondary)]">
-            <span>Keys will be read dynamically from pattern strings in the incoming upstream PCollection.</span>
-          </div>
-        )}
-      </div>
-
-      {/* Batching & Parallelization Section */}
-      <div className="grid grid-cols-2 gap-2">
-        <PropertyField
-          id="redisSourceBatchSize"
-          name="batchSize"
-          label="Batch Size"
-          type="number"
-          tooltip="Number of keys to fetch from Redis in each batch request (withBatchSize). Default is driver-dependent."
-          value={batchSize}
-          onChange={handleChange}
-          placeholder="1000"
-          mono={true}
-        />
-        <div className="flex flex-col justify-end pb-1">
-          <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-            <input
-              id="redisSourceOutputParallelization"
-              type="checkbox"
-              name="outputParallelization"
-              checked={outputParallelization}
-              onChange={handleChange}
-              className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0"
-            />
-            <label htmlFor="redisSourceOutputParallelization" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-              <span>Parallelize Output</span>
-              <InfoTooltip text="Enables output reshuffling to parallelize downstream pipeline processing (withOutputParallelization)." />
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Authentication Section */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Authentication</span>
-          <InfoTooltip text="Configure authentication credentials for Redis server. Choose None for unauthenticated instances or Google Cloud Secret Manager to reference stored auth tokens securely." />
-        </label>
-        <div className="flex gap-4 mt-1">
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="none"
-              checked={authMode === 'none'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>None</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="secret_manager"
-              checked={authMode === 'secret_manager'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Secret Manager</span>
-          </label>
-        </div>
-
-        {authMode === 'secret_manager' && (
-          <div className="flex flex-col gap-2 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
-            <PropertyField
-              id="redisSourceAuthPasswordSecret"
-              name="authPasswordSecret"
-              label="Auth Password Secret"
-              tooltip="GCP Secret Manager secret containing the Redis AUTH password token."
-              value={authPasswordSecret}
-              onChange={handleChange}
-              list="redis-source-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. redis-auth-password"
-              error={secretError}
-              invalid={!!secretError}
-              mono={true}
-              helperText={
-                <span>
-                  Values auto-populated from{' '}
-                  <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">
-                    gcloud secrets list
-                  </code>
-                </span>
-              }
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Collapsible Advanced Source Settings */}
-      <CollapsibleSection
-        title="Advanced Source Settings"
-        isOpen={showAdvanced}
-        onToggle={() => setShowAdvanced(!showAdvanced)}
-      >
+      ) : (
         <div className="grid grid-cols-2 gap-2">
           <PropertyField
-            id="redisSourceConnectionTimeout"
-            name="connectionTimeout"
-            label="Connection Timeout (ms)"
-            type="number"
-            tooltip="Connection timeout in milliseconds. Defaults to driver default."
-            value={connectionTimeout}
+            id="redisSourceStreamKey"
+            name="streamKey"
+            label="Stream Key (streamKey)"
+            required="Stream key is required in Streaming mode"
+            tooltip="Redis Stream key to consume via XREADGROUP."
+            value={streamKey}
+            invalid={isStreamKeyEmpty}
+            error={isStreamKeyEmpty ? 'Stream key is required in Streaming mode' : null}
+            placeholder="events:stream"
             onChange={handleChange}
-            placeholder="2000"
             mono={true}
           />
           <PropertyField
-            id="redisSourceSocketTimeout"
-            name="socketTimeout"
-            label="Socket Timeout (ms)"
-            type="number"
-            tooltip="Socket timeout in milliseconds for reading data from Redis."
-            value={socketTimeout}
+            id="redisSourceConsumerGroup"
+            name="consumerGroup"
+            label="Consumer Group (consumerGroup)"
+            tooltip="Redis Streams consumer group name."
+            value={consumerGroup}
+            placeholder="spark-consumer-group"
             onChange={handleChange}
-            placeholder="2000"
             mono={true}
           />
         </div>
+      )}
 
-        <PropertyField
-          id="redisSourceMaxAttempts"
-          name="maxAttempts"
-          label="Max Attempts"
-          type="number"
-          tooltip="Maximum number of connection/read attempts before failing."
-          value={maxAttempts}
-          onChange={handleChange}
-          placeholder="5"
-          mono={true}
-        />
-
-        <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-          <input
-            id="redisSourceClusterMode"
-            type="checkbox"
-            name="clusterMode"
-            checked={clusterMode}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0"
-          />
-          <label htmlFor="redisSourceClusterMode" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Redis Cluster Mode</span>
-            <InfoTooltip text="Enables cluster topology awareness when connecting to a multi-node Redis cluster. Switches the underlying client to JedisCluster. Note that logical database index is ignored in cluster mode." />
-          </label>
-        </div>
-      </CollapsibleSection>
+      {/* Secret Manager Authentication */}
+      <SecretManagerAuthFields
+        idPrefix="redisSource"
+        serviceName="Redis"
+        authMode={authMode}
+        secretName={secretName}
+        datalistId="redis-source-secret-options"
+        secretPlaceholder="e.g. redis-auth-password-secret"
+        onChange={handleChange}
+      />
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="redisSourceInstructions"
         value={systemInstructions}
-        tooltip="Optional custom prompt instructions passed to the LLM code generator when synthesizing Redis pipeline reader transforms."
-        placeholder="e.g. Ingest cache keys matching user:* and convert KV pairs into UserSession records"
+        placeholder="Enter custom instructions for Spark Redis source code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -418,3 +251,5 @@ export const RedisIOSourceProperties: React.FC<RedisIOSourcePropertiesProps> = (
     </div>
   );
 };
+
+export const RedisSourceProperties = RedisIOSourceProperties;

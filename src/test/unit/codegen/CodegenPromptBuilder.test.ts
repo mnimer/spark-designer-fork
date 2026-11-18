@@ -360,6 +360,8 @@ jobConfig:
             'runner-dataproc-cluster',
             'runner-local',
             'runner-serverless-spark',
+            'io-iceberg',
+            'io-pubsub',
             'core-catalyst-optimization',
             'core-python-datasource',
             'core-streaming',

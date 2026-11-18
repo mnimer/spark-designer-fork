@@ -1,45 +1,32 @@
 /**
- * BigTableIOSourceProperties Component
+ * Bigtable Source Properties Component (SRC24)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam BigTableIO Read Source nodes
- * (org.apache.beam.sdk.io.gcp.bigtable.BigtableIO.read() in Java / ReadFromBigtable in Python).
+ * Renders the property configuration panel for Google Cloud Bigtable Source nodes
+ * in Apache Spark 4.x pipelines (.format("bigtable") via spark-bigtable connector).
  *
  * Architectural Decisions:
- * // NOTE: The Beam Java SDK class is BigtableIO (lower-case 't') while the designer palette/registry identifier
- * // is BigTableIO (capital 'T'). This file and component exports use BigTableIO to match the designer registry keys,
- * // while system_instructions reference org.apache.beam.sdk.io.gcp.bigtable.BigtableIO.
- * // NOTE: BigtableIO.read() emits PCollection<com.google.bigtable.v2.Row> rather than Beam Row.
- * // NOTE: Bigtable metrics surface through Google Cloud Monitoring (bigtable.googleapis.com/client/)
- * // rather than custom builder methods on BigtableIO.read().
- * - Requires Project ID, Instance ID, and Table ID with immediate validation and aria-invalid flags.
- * - Supports row filtering expressions (withRowFilter), start/end key ranges (withKeyRanges),
- *   and buffer element limits (withMaxBufferElementCount).
- * - Authentication options: Application Default Credentials (ADC) or GCP Secret Manager service-account reference.
- *   Uses IPC 'getSecrets' to populate datalist with id 'bigtable-source-secret-options'.
- * - Collapsible Advanced Source Settings: Bigtable emulator host (withEmulator), withoutValidation toggle,
- *   and attempt/operation timeouts in milliseconds.
- * - Preserves system_instructions / special_instructions for LLM code generation.
- * - Follows the 8pt grid system (p-2, p-3, p-4, gap-2, gap-4) and Tailwind CSS styling.
+ * - Batch-only source reading from Cloud Bigtable with a JSON catalog schema mapping.
+ * - Requires projectId, instanceId, tableId/table, and catalog JSON definition.
+ * - Exposes pushDownRowKeyFilters toggle for server-side row key filter pushdown.
  */
 
-import React, { useState } from 'react';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
 
-/** Secret descriptor loaded from the secret manager for BigTable authentication. */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+const SAMPLE_BIGTABLE_CATALOG = `{
+  "table": {"name": "user_events"},
+  "rowkey": "key",
+  "columns": {
+    "key": {"cf": "rowkey", "col": "key", "type": "string"},
+    "event_type": {"cf": "cf1", "col": "event_type", "type": "string"}
+  }
+}`;
 
 /** Props for the {@link BigTableIOSourceProperties} component. */
 export interface BigTableIOSourcePropertiesProps {
@@ -53,17 +40,10 @@ export interface BigTableIOSourcePropertiesProps {
         projectId?: string;
         instanceId?: string;
         tableId?: string;
+        table?: string;
+        catalog?: string;
+        pushDownRowKeyFilters?: boolean;
         appProfileId?: string;
-        rowFilter?: string;
-        keyRangeStart?: string;
-        keyRangeEnd?: string;
-        maxBufferElementCount?: number | string;
-        authMode?: 'adc' | 'secret_manager';
-        serviceAccountSecret?: string;
-        emulatorHost?: string;
-        withoutValidation?: boolean;
-        attemptTimeoutMs?: number | string;
-        operationTimeoutMs?: number | string;
         system_instructions?: string;
         special_instructions?: string;
         [key: string]: any;
@@ -74,78 +54,55 @@ export interface BigTableIOSourcePropertiesProps {
 }
 
 /**
- * BigTableIOSourceProperties renders the property configuration form for BigtableIO read operations.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Configures properties for Apache Spark Cloud Bigtable batch source nodes (.format("bigtable")).
  */
 export const BigTableIOSourceProperties: React.FC<BigTableIOSourcePropertiesProps> = ({ node, onChange }) => {
   const properties = node?.data?.properties || {};
 
-  // Form field state extracted from node properties
   const projectId = properties.projectId || '';
   const instanceId = properties.instanceId || '';
-  const tableId = properties.tableId || '';
+  const tableId = properties.tableId ?? properties.table ?? '';
+  const catalog = properties.catalog || '';
+  const pushDownRowKeyFilters = properties.pushDownRowKeyFilters ?? true;
   const appProfileId = properties.appProfileId || '';
-  const rowFilter = properties.rowFilter || '';
-  const keyRangeStart = properties.keyRangeStart || '';
-  const keyRangeEnd = properties.keyRangeEnd || '';
-  const maxBufferElementCount = properties.maxBufferElementCount ?? '';
-  const authMode = properties.authMode || 'adc';
-  const serviceAccountSecret = properties.serviceAccountSecret || '';
-  const emulatorHost = properties.emulatorHost || '';
-  const withoutValidation = properties.withoutValidation ?? false;
-  const attemptTimeoutMs = properties.attemptTimeoutMs ?? '';
-  const operationTimeoutMs = properties.operationTimeoutMs ?? '';
 
-  // Local state for dynamically loaded GCP Secret Manager secrets
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
   const isProjectEmpty = !projectId.trim();
   const isInstanceEmpty = !instanceId.trim();
-  const isTableEmpty = !tableId.trim();
+  const isTableEmpty = !String(tableId).trim();
+  const isCatalogEmpty = !catalog.trim();
 
-  // Verbatim system instruction fallback chain
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, select, and checkbox input changes.
-   *
-   * @param e Standard React change event
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    if (name === 'tableId') {
+      onChange({ ...properties, tableId: updatedValue, table: updatedValue });
+      return;
     }
+    onChange({ ...properties, [name]: updatedValue });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Target Bigtable Instance & Table Identification */}
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark Cloud Bigtable Connector</span>
+        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+          .format(&quot;bigtable&quot;) · BATCH
+        </span>
+      </div>
+
+      {/* Bigtable Coordinates */}
       <div className="flex flex-col gap-3">
         <PropertyField
           id="bigtableSourceProjectId"
           name="projectId"
           label="Project ID"
           required="Project ID is required"
-          tooltip="Google Cloud Project ID hosting the Cloud Bigtable instance (withProjectId). Required."
+          tooltip="Google Cloud Project ID hosting the Cloud Bigtable instance (spark.bigtable.project.id)."
           value={projectId}
           invalid={isProjectEmpty}
           error={isProjectEmpty ? 'Project ID is required' : null}
@@ -160,7 +117,7 @@ export const BigTableIOSourceProperties: React.FC<BigTableIOSourcePropertiesProp
             name="instanceId"
             label="Instance ID"
             required="Instance ID is required"
-            tooltip="Cloud Bigtable Instance ID (withInstanceId). Required."
+            tooltip="Cloud Bigtable Instance ID (spark.bigtable.instance.id)."
             value={instanceId}
             invalid={isInstanceEmpty}
             error={isInstanceEmpty ? 'Instance ID is required' : null}
@@ -173,7 +130,7 @@ export const BigTableIOSourceProperties: React.FC<BigTableIOSourcePropertiesProp
             name="tableId"
             label="Table ID"
             required="Table ID is required"
-            tooltip="Cloud Bigtable Table ID to read from (withTableId). Required."
+            tooltip="Cloud Bigtable Table ID to read from."
             value={tableId}
             invalid={isTableEmpty}
             error={isTableEmpty ? 'Table ID is required' : null}
@@ -186,198 +143,57 @@ export const BigTableIOSourceProperties: React.FC<BigTableIOSourcePropertiesProp
         <PropertyField
           id="bigtableSourceAppProfileId"
           name="appProfileId"
-          label="App Profile ID"
-          tooltip="Optional Bigtable App Profile ID to route requests or select single/multi-cluster routing (withAppProfileId)."
+          label="App Profile ID (Optional)"
+          tooltip="Optional Bigtable App Profile ID (spark.bigtable.app_profile.id)."
           value={appProfileId}
           onChange={handleChange}
-          placeholder="e.g. analytics-app-profile"
+          placeholder="e.g. batch-analytics-profile"
           mono={true}
         />
       </div>
 
-      {/* Row Filtering & Scan Range Configuration */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Row Filtering &amp; Key Ranges</span>
-          <InfoTooltip text="Restrict rows returned by BigtableIO.read() via regex/cell filters (withRowFilter) or row key boundary ranges (withKeyRange/withKeyRanges)." />
+      {/* Catalog JSON Schema Mapping */}
+      <PropertyField
+        id="bigtableSourceCatalog"
+        name="catalog"
+        label="Catalog JSON Schema Mapping"
+        type="textarea"
+        rows={6}
+        required="Catalog JSON schema mapping is required"
+        tooltip="Spark Bigtable catalog JSON mapping DataFrame columns to Bigtable rowkey and column families (.option('catalog', catalogJson))."
+        value={catalog}
+        invalid={isCatalogEmpty}
+        error={isCatalogEmpty ? 'Catalog JSON schema mapping is required' : null}
+        placeholder={SAMPLE_BIGTABLE_CATALOG}
+        onChange={handleChange}
+        mono={true}
+      />
+
+      {/* Row Key Filter Pushdown */}
+      <div className="flex items-center gap-2 p-2.5 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <input
+          id="bigtableSourcePushDownRowKeyFilters"
+          type="checkbox"
+          name="pushDownRowKeyFilters"
+          checked={pushDownRowKeyFilters}
+          onChange={handleChange}
+          className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+        />
+        <label
+          htmlFor="bigtableSourcePushDownRowKeyFilters"
+          className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+        >
+          <span>Push Down Row Key Filters (spark.bigtable.push.down.row.key.filters)</span>
+          <InfoTooltip text="Pushes DataFrame row key predicates down to Cloud Bigtable server-side scans to avoid full table scans." />
         </label>
-
-        <PropertyField
-          id="bigtableSourceRowFilter"
-          name="rowFilter"
-          label="Row Filter Expression"
-          value={rowFilter}
-          onChange={handleChange}
-          placeholder="e.g. RowFilter.newBuilder().setRowKeyRegexFilter(...).build()"
-          tooltip="Server-side RowFilter specification to select or prune columns and cells (withRowFilter)."
-          mono={true}
-        />
-
-        <div className="grid grid-cols-2 gap-2 mt-1">
-          <PropertyField
-            id="bigtableSourceKeyRangeStart"
-            name="keyRangeStart"
-            label="Start Row Key"
-            value={keyRangeStart}
-            onChange={handleChange}
-            placeholder="e.g. user#0000"
-            tooltip="Inclusive start row key for scanning key range segments."
-            mono={true}
-          />
-          <PropertyField
-            id="bigtableSourceKeyRangeEnd"
-            name="keyRangeEnd"
-            label="End Row Key"
-            value={keyRangeEnd}
-            onChange={handleChange}
-            placeholder="e.g. user#9999"
-            tooltip="Exclusive end row key for scanning key range segments."
-            mono={true}
-          />
-        </div>
-
-        <PropertyField
-          id="bigtableSourceMaxBufferElementCount"
-          name="maxBufferElementCount"
-          label="Max Buffer Element Count"
-          type="number"
-          min={1}
-          value={maxBufferElementCount}
-          onChange={handleChange}
-          placeholder="e.g. 1000"
-          tooltip="Limits the number of in-memory buffered rows per reader split (withMaxBufferElementCount)."
-          mono={true}
-        />
       </div>
-
-      {/* Authentication */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Authentication</span>
-          <InfoTooltip text="Choose authentication strategy: Google Application Default Credentials (ADC) or GCP Secret Manager service-account reference." />
-        </label>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="adc"
-              checked={authMode === 'adc'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Application Default Credentials (ADC)</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="secret_manager"
-              checked={authMode === 'secret_manager'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Secret Manager</span>
-          </label>
-        </div>
-
-        {authMode === 'secret_manager' && (
-          <div className="flex flex-col gap-2 mt-1">
-            <PropertyField
-              id="bigtableSourceServiceAccountSecret"
-              name="serviceAccountSecret"
-              label="Service Account Key Secret"
-              value={serviceAccountSecret}
-              onChange={handleChange}
-              list="bigtable-source-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. gcp-bigtable-sa-key"
-              error={secretError}
-              invalid={!!secretError}
-              mono={true}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Client-Side Metrics Information Card */}
-      <div className="flex flex-col gap-1 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)] text-xs text-[var(--vscode-text-secondary)]">
-        <span className="font-bold text-[var(--vscode-text-muted)] uppercase">Client-Side Metrics</span>
-        <p>
-          Bigtable client-side metrics (latency, error rates, client-side throttling) publish automatically
-          to Cloud Monitoring under <span className="font-mono text-[var(--vscode-text-primary)]">bigtable.googleapis.com/client/*</span>.
-        </p>
-      </div>
-
-      {/* Collapsible Advanced Source Settings */}
-      <CollapsibleSection
-        title="Advanced Source Settings"
-        isOpen={showAdvanced}
-        onToggle={() => setShowAdvanced(!showAdvanced)}
-      >
-        {/* Emulator Host Override */}
-        <PropertyField
-          id="bigtableSourceEmulatorHost"
-          name="emulatorHost"
-          label="Emulator Host"
-          tooltip="Bigtable emulator host (e.g. localhost:8086) for local integration testing (withEmulator)."
-          value={emulatorHost}
-          onChange={handleChange}
-          placeholder="localhost:8086"
-          mono={true}
-        />
-
-        {/* Attempt and Operation Timeouts */}
-        <div className="grid grid-cols-2 gap-2">
-          <PropertyField
-            id="bigtableSourceAttemptTimeoutMs"
-            name="attemptTimeoutMs"
-            label="Attempt Timeout (ms)"
-            type="number"
-            min={1}
-            value={attemptTimeoutMs}
-            onChange={handleChange}
-            placeholder="e.g. 20000"
-            tooltip="Timeout in milliseconds for each individual RPC call attempt to Bigtable (withAttemptTimeout)."
-            mono={true}
-          />
-          <PropertyField
-            id="bigtableSourceOperationTimeoutMs"
-            name="operationTimeoutMs"
-            label="Operation Timeout (ms)"
-            type="number"
-            min={1}
-            value={operationTimeoutMs}
-            onChange={handleChange}
-            placeholder="e.g. 60000"
-            tooltip="Total timeout in milliseconds for the overall Bigtable operation including retries (withOperationTimeout)."
-            mono={true}
-          />
-        </div>
-
-        {/* Validation Toggle */}
-        <div className="flex items-center gap-2 mt-1">
-          <input
-            id="bigtableSourceWithoutValidation"
-            type="checkbox"
-            name="withoutValidation"
-            checked={withoutValidation}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
-          />
-          <label htmlFor="bigtableSourceWithoutValidation" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Disable Pipeline Graph Validation</span>
-            <InfoTooltip text="Bypasses table existence and permission checks during graph submission (withoutValidation)." />
-          </label>
-        </div>
-      </CollapsibleSection>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="bigtableSourceInstructions"
         value={systemInstructions}
-        tooltip="Optional instructions passed to LLM code generator when synthesizing BigtableIO read pipelines (emits PCollection<com.google.bigtable.v2.Row>)."
-        placeholder="e.g. Apply BigtableIO.read().withProjectId(...).withInstanceId(...).withTableId(...) emitting com.google.bigtable.v2.Row"
+        tooltip="Optional custom instructions for Spark Bigtable source code generation."
+        placeholder="Enter custom instructions for Spark Bigtable source code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -388,3 +204,5 @@ export const BigTableIOSourceProperties: React.FC<BigTableIOSourcePropertiesProp
     </div>
   );
 };
+
+export const BigtableSourceProperties = BigTableIOSourceProperties;

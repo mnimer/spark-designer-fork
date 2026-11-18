@@ -1,153 +1,185 @@
 /**
- * KafkaIOSourceProperties Test Suite
- * 
+ * KafkaIO Source Properties Test Suite
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Unit tests validating KafkaIOSourceProperties component functionality,
- * form change callbacks, presets, bounded settings, and documentation tooltips.
+ * Unit tests validating KafkaIOSourceProperties (`KafkaSourceProperties`) component functionality,
+ * readMode switching, subscriptionMode conditional inputs, starting/ending offsets,
+ * trigger/partition limits, security and Secret Manager integration, and system instructions.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { KafkaIOSourceProperties } from './KafkaIO';
+import { KafkaIOSourceProperties, KafkaSourceProperties } from './KafkaIO';
 
 describe('KafkaIOSourceProperties', () => {
-  it('renders default fields with documentation tooltips and placeholders', () => {
+  it('exports KafkaSourceProperties as an alias for KafkaIOSourceProperties', () => {
+    expect(KafkaSourceProperties).toBe(KafkaIOSourceProperties);
+  });
+
+  it('renders default streaming fields with documentation tooltips and placeholders', () => {
     const mockNode = {
       data: {
         label: 'Kafka',
-        properties: {}
-      }
+        properties: {},
+      },
     };
     const mockOnChange = vi.fn();
 
     render(<KafkaIOSourceProperties node={mockNode} onChange={mockOnChange} />);
 
+    expect(screen.getByLabelText(/Read Mode/i)).toHaveValue('streaming');
     expect(screen.getByLabelText(/Bootstrap Servers/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Subscription Mode/i)).toHaveValue('subscribe');
     expect(screen.getByLabelText(/Topic\(s\)/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Group ID/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Auto Offset Reset/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Key Deserializer/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Value Deserializer/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Commit Offsets in Finalize/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Timestamp Policy/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Consumer Properties/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Starting Offsets/i)).toHaveValue('latest');
+    expect(screen.queryByLabelText(/Ending Offsets/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Max Offsets Per Trigger/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Min Partitions/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Fail on Data Loss/i)).toBeChecked();
+    expect(screen.getByLabelText(/Include Kafka Headers/i)).not.toBeChecked();
+    expect(screen.getByLabelText(/Security Protocol/i)).toHaveValue('PLAINTEXT');
     expect(screen.getByLabelText(/Code Generation Instructions/i)).toBeInTheDocument();
   });
 
-  it('populates fields with provided properties and triggers onChange on bootstrapServers and topics change', () => {
+  it('renders endingOffsets when readMode is batch', () => {
     const mockNode = {
       data: {
         label: 'Kafka',
         properties: {
+          readMode: 'batch' as const,
           bootstrapServers: 'kafka.prod:9092',
           topics: 'orders-topic',
-          groupId: 'analytics-group',
-          autoOffsetReset: 'earliest' as const,
-          consumerProperties: 'security.protocol=SASL_SSL'
-        }
-      }
+          startingOffsets: 'earliest',
+          endingOffsets: 'latest',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
     render(<KafkaIOSourceProperties node={mockNode} onChange={mockOnChange} />);
 
-    const bootstrapInput = screen.getByLabelText(/Bootstrap Servers/i);
-    expect(bootstrapInput).toHaveValue('kafka.prod:9092');
+    expect(screen.getByLabelText(/Read Mode/i)).toHaveValue('batch');
+    const endingInput = screen.getByLabelText(/Ending Offsets/i);
+    expect(endingInput).toBeInTheDocument();
+    expect(endingInput).toHaveValue('latest');
 
-    const topicsInput = screen.getByLabelText(/Topic\(s\)/i);
-    expect(topicsInput).toHaveValue('orders-topic');
-
-    const groupInput = screen.getByLabelText(/Group ID/i);
-    expect(groupInput).toHaveValue('analytics-group');
-
-    // Change topic
-    fireEvent.change(topicsInput, { target: { name: 'topics', value: 'new-events' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      topics: 'new-events'
-    }));
+    fireEvent.change(endingInput, { target: { name: 'endingOffsets', value: '{"orders-topic":{"0":500}}' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endingOffsets: '{"orders-topic":{"0":500}}',
+      })
+    );
   });
 
-  it('selects standard key and value deserializers and does not offer Custom Class option or custom class inputs', () => {
-    const mockNode = {
-      data: {
-        label: 'Kafka',
-        properties: {
-          keyDeserializer: 'org.apache.kafka.common.serialization.ByteArrayDeserializer',
-          valueDeserializer: 'org.apache.kafka.common.serialization.StringDeserializer'
-        }
-      }
-    };
+  it('switches subscription inputs for subscribe, subscribePattern, and assign modes', () => {
     const mockOnChange = vi.fn();
+    const { rerender } = render(
+      <KafkaIOSourceProperties
+        node={{ data: { label: 'Kafka', properties: { bootstrapServers: 'localhost:9092', subscriptionMode: 'subscribePattern' } } }}
+        onChange={mockOnChange}
+      />
+    );
 
-    const { container } = render(<KafkaIOSourceProperties node={mockNode} onChange={mockOnChange} />);
+    const patternInput = screen.getByLabelText(/Topic Pattern \(Regex\)/i);
+    expect(patternInput).toBeInTheDocument();
+    expect(patternInput).toHaveAttribute('aria-invalid', 'true');
 
-    const keySelect = container.querySelector('#kafkaKeyDeserializer') as HTMLSelectElement;
-    const valueSelect = container.querySelector('#kafkaValueDeserializer') as HTMLSelectElement;
+    fireEvent.change(patternInput, { target: { name: 'topicPattern', value: 'telemetry-.*' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        topicPattern: 'telemetry-.*',
+      })
+    );
 
-    expect(keySelect).toHaveValue('org.apache.kafka.common.serialization.ByteArrayDeserializer');
-    expect(valueSelect).toHaveValue('org.apache.kafka.common.serialization.StringDeserializer');
+    rerender(
+      <KafkaIOSourceProperties
+        node={{ data: { label: 'Kafka', properties: { bootstrapServers: 'localhost:9092', subscriptionMode: 'assign' } } }}
+        onChange={mockOnChange}
+      />
+    );
 
-    const keyOptions = Array.from(keySelect.querySelectorAll('option')).map(o => o.textContent);
-    expect(keyOptions.some(t => t?.includes('Custom'))).toBe(false);
+    const assignInput = screen.getByLabelText(/Assigned Partitions \(JSON\)/i);
+    expect(assignInput).toBeInTheDocument();
+    expect(assignInput).toHaveAttribute('aria-invalid', 'true');
 
-    expect(container.querySelector('input[name="customKeyDeserializer"]')).not.toBeInTheDocument();
-    expect(container.querySelector('input[name="customValueDeserializer"]')).not.toBeInTheDocument();
-
-    fireEvent.change(keySelect, {
-      target: { value: 'org.apache.kafka.common.serialization.LongDeserializer' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      keyDeserializer: 'org.apache.kafka.common.serialization.LongDeserializer'
-    }));
-
-    fireEvent.change(valueSelect, {
-      target: { value: 'org.apache.kafka.common.serialization.ByteArrayDeserializer' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      valueDeserializer: 'org.apache.kafka.common.serialization.ByteArrayDeserializer'
-    }));
+    fireEvent.change(assignInput, { target: { name: 'assignedPartitions', value: '{"events":[0,1]}' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignedPartitions: '{"events":[0,1]}',
+      })
+    );
   });
 
-  it('updates commitOffsetsInFinalize checkbox and system_instructions', () => {
+  it('updates checkboxes, SASL security options, Secret Manager auth, and system_instructions', () => {
     const mockNode = {
       data: {
         label: 'Kafka',
         properties: {
-          commitOffsetsInFinalize: true
-        }
-      }
+          bootstrapServers: 'localhost:9092',
+          topics: 'events',
+          securityProtocol: 'SASL_SSL',
+          authMode: 'secretManager',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
     render(<KafkaIOSourceProperties node={mockNode} onChange={mockOnChange} />);
 
-    const commitCheckbox = screen.getByLabelText(/Commit Offsets in Finalize/i);
-    expect(commitCheckbox).toBeChecked();
+    const saslSelect = screen.getByLabelText(/SASL Mechanism/i);
+    expect(saslSelect).toBeInTheDocument();
+    fireEvent.change(saslSelect, { target: { name: 'saslMechanism', value: 'SCRAM-SHA-256' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        saslMechanism: 'SCRAM-SHA-256',
+      })
+    );
 
-    fireEvent.click(commitCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      commitOffsetsInFinalize: false
-    }));
+    const secretInput = screen.getByLabelText(/Secret Manager Secret/i);
+    fireEvent.change(secretInput, { target: { name: 'secretName', value: 'kafka-sasl-secret' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        secretName: 'kafka-sasl-secret',
+      })
+    );
 
-    const instructionsTextarea = screen.getByPlaceholderText('Enter custom instructions for Kafka read code generation...');
-    fireEvent.change(instructionsTextarea, { target: { value: 'Use exact partition assignment' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      system_instructions: 'Use exact partition assignment'
-    }));
+    const failCheckbox = screen.getByLabelText(/Fail on Data Loss/i);
+    fireEvent.click(failCheckbox);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        failOnDataLoss: false,
+      })
+    );
+
+    const headersCheckbox = screen.getByLabelText(/Include Kafka Headers/i);
+    fireEvent.click(headersCheckbox);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeHeaders: true,
+      })
+    );
+
+    const instructionsTextarea = screen.getByPlaceholderText('Enter custom instructions for Kafka source code generation...');
+    fireEvent.change(instructionsTextarea, { target: { value: 'Cast binary value to string' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system_instructions: 'Cast binary value to string',
+      })
+    );
   });
 
-  it('displays required validation errors when required fields are empty', () => {
+  it('displays required validation errors when bootstrapServers and topics are empty', () => {
     const mockNode = {
       data: {
         label: 'Kafka',
         properties: {
           bootstrapServers: '',
-          topics: ''
-        }
-      }
+          topics: '',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
@@ -155,31 +187,28 @@ describe('KafkaIOSourceProperties', () => {
 
     expect(screen.getByText('Bootstrap Servers is required.')).toBeInTheDocument();
     expect(screen.getByText('Topic(s) is required.')).toBeInTheDocument();
-
-    const bootstrapInput = screen.getByPlaceholderText('localhost:9092');
-    expect(bootstrapInput).toHaveAttribute('aria-invalid', 'true');
-    expect(bootstrapInput).toHaveAttribute('aria-required', 'true');
   });
 
-  it('updates consumerProperties when textarea changes', () => {
+  it('toggles Advanced Kafka Options accordion and updates consumerProperties', () => {
     const mockNode = {
       data: {
         label: 'Kafka',
-        properties: {
-          consumerProperties: 'security.protocol=PLAINTEXT'
-        }
-      }
+        properties: {},
+      },
     };
     const mockOnChange = vi.fn();
 
     const { container } = render(<KafkaIOSourceProperties node={mockNode} onChange={mockOnChange} />);
 
+    fireEvent.click(screen.getByText('Advanced Kafka Options'));
     const textarea = container.querySelector('#kafkaConsumerProperties') as HTMLTextAreaElement;
-    expect(textarea).toHaveValue('security.protocol=PLAINTEXT');
+    expect(textarea).toBeInTheDocument();
 
-    fireEvent.change(textarea, { target: { name: 'consumerProperties', value: 'security.protocol=SASL_SSL' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      consumerProperties: 'security.protocol=SASL_SSL'
-    }));
+    fireEvent.change(textarea, { target: { name: 'consumerProperties', value: 'kafka.fetch.min.bytes=2048' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        consumerProperties: 'kafka.fetch.min.bytes=2048',
+      })
+    );
   });
 });

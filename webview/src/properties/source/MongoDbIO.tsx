@@ -1,252 +1,43 @@
 /**
- * MongoDbIOSourceProperties Component
+ * MongoDB Source Properties Component (SRC32)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam MongoDbIO Source nodes.
- * Maps to Java SDK `MongoDbIO.read()` and Python SDK native `ReadFromMongoDB`.
+ * Renders the property configuration panel for Apache Spark MongoDB Source nodes
+ * (.format("mongodb") via mongo-spark-connector v10+ supporting batch and Change Streams).
  *
  * Architectural Decisions:
- * - Controlled input architecture with props in / events up pattern.
- * - Real-time validation for required connection URI, database, and collection fields.
- * - URI format validation providing a warning helper text if not starting with "mongodb".
- * - Dynamic discovery: Requests GCP Secret Manager secrets from the extension host via `getSecrets` IPC.
- * - Unique datalist id `mongodb-source-secret-options` to prevent collision with other connector panels.
- * - BucketAuto and split configuration directly mapping to `withBucketAuto` and `withNumSplits`.
- * - Collapsible Advanced Source Settings decomposed into local presentational component with semantic toggle event callback.
- * - Preserves system_instructions / special_instructions for LLM code generation.
- * - Strictly adheres to 8pt grid system (p-2, p-3, gap-2, gap-3, gap-4) and Tailwind CSS with VS Code tokens.
+ * - Supports readMode ('batch' | 'streaming', default 'batch').
+ * - Configures database, collection, aggregationPipeline, partitioner (batch),
+ *   and changeStreamPublishFullDocumentOnly (when streaming).
+ * - Uses SecretManagerAuthFields to resolve connection.uri from Google Cloud Secret Manager.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { SecretManagerAuthFields, type AuthModeOption, type SecretItem } from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
 
-/**
- * Secret item interface for normalized Secret Manager secrets.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
+export type MongoReadMode = 'batch' | 'streaming';
 
-/**
- * Props for the MongoDbSourceAuthSection sub-component.
- */
-interface MongoDbSourceAuthSectionProps {
-  authMode: 'uri_embedded' | 'secret_manager';
-  usernameSecret: string;
-  passwordSecret: string;
-  secrets: SecretItem[];
-  secretError: string | null;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
+const MONGO_AUTH_OPTIONS: AuthModeOption[] = [
+  { value: 'secretManager', label: 'Google Cloud Secret Manager (connection.uri Secret)' },
+  { value: 'default', label: 'Custom / Local Connection URI' },
+];
 
-/**
- * Presentational component for source authentication configuration.
- *
- * @param props Sub-component properties
- */
-const MongoDbSourceAuthSection: React.FC<MongoDbSourceAuthSectionProps> = ({
-  authMode,
-  usernameSecret,
-  passwordSecret,
-  secrets,
-  secretError,
-  onChange
-}) => {
-  return (
-    <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-      <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        <span>Authentication</span>
-        <InfoTooltip text="Choose how credentials are supplied to the MongoDB cluster. Using Secret Manager avoids committing credentials into pipeline code." />
-      </label>
-      <div className="flex flex-col gap-2 mt-1">
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            type="radio"
-            name="authMode"
-            value="uri_embedded"
-            checked={authMode === 'uri_embedded'}
-            onChange={onChange}
-            className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-          />
-          <span>None (Unauthenticated)</span>
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            type="radio"
-            name="authMode"
-            value="secret_manager"
-            checked={authMode === 'secret_manager'}
-            onChange={onChange}
-            className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-          />
-          <span>GCP Secret Manager</span>
-        </label>
-      </div>
+const MONGO_PARTITIONERS = [
+  'com.mongodb.spark.sql.connector.read.partitioner.SamplePartitioner',
+  'com.mongodb.spark.sql.connector.read.partitioner.PaginateBySizePartitioner',
+  'com.mongodb.spark.sql.connector.read.partitioner.PaginateIntoPartitionsPartitioner',
+  'com.mongodb.spark.sql.connector.read.partitioner.AutoBucketPartitioner',
+  'com.mongodb.spark.sql.connector.read.partitioner.SinglePartitionPartitioner',
+] as const;
 
-      {authMode === 'secret_manager' && (
-        <div className="flex flex-col gap-3 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
-          <PropertyField
-            id="mongoSourceUsernameSecret"
-            name="usernameSecret"
-            label="Username Secret"
-            value={usernameSecret}
-            onChange={onChange}
-            list="mongodb-source-secret-options"
-            datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-            placeholder="e.g. mongodb-username"
-            tooltip="GCP Secret Manager secret containing the MongoDB username."
-            error={secretError}
-            invalid={!!secretError}
-            mono={true}
-          />
-          <PropertyField
-            id="mongoSourcePasswordSecret"
-            name="passwordSecret"
-            label="Password Secret"
-            value={passwordSecret}
-            onChange={onChange}
-            list="mongodb-source-secret-options"
-            datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-            placeholder="e.g. mongodb-password"
-            tooltip="GCP Secret Manager secret containing the MongoDB password."
-            invalid={!!secretError}
-            mono={true}
-          />
-        </div>
-      )}
-    </div>
-  );
-};
-
-/**
- * Props for the MongoDbSourceAdvancedSection sub-component.
- */
-interface MongoDbSourceAdvancedSectionProps {
-  showAdvanced: boolean;
-  /** Emitted when the user toggles the advanced drawer. */
-  onToggleAdvanced: () => void;
-  sslEnabled: boolean;
-  sslInvalidHostNameAllowed: boolean;
-  ignoreSSLCertificate: boolean;
-  maxConnectionIdleTime: number | string;
-  readPreference: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Presentational component for collapsible Advanced Source Settings.
- *
- * @param props Sub-component properties
- */
-const MongoDbSourceAdvancedSection: React.FC<MongoDbSourceAdvancedSectionProps> = ({
-  showAdvanced,
-  onToggleAdvanced,
-  sslEnabled,
-  sslInvalidHostNameAllowed,
-  ignoreSSLCertificate,
-  maxConnectionIdleTime,
-  readPreference,
-  onChange
-}) => {
-  return (
-    <CollapsibleSection
-      title="Advanced Source Settings"
-      isOpen={showAdvanced}
-      onToggle={onToggleAdvanced}
-    >
-      {/* SSL Options */}
-      <div className="flex flex-col gap-2">
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            id="mongoSourceSslEnabled"
-            type="checkbox"
-            name="sslEnabled"
-            checked={sslEnabled}
-            onChange={onChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
-          />
-          <span>SSL / TLS Enabled</span>
-          <InfoTooltip text="Enables SSL/TLS encrypted connection to MongoDB cluster." />
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            id="mongoSourceSslInvalidHostNameAllowed"
-            type="checkbox"
-            name="sslInvalidHostNameAllowed"
-            checked={sslInvalidHostNameAllowed}
-            onChange={onChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
-          />
-          <span>Allow Invalid Hostname</span>
-          <InfoTooltip text="Configures whether invalid hostnames are allowed in SSL connections (Java: withSslInvalidHostNameAllowed)." />
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            id="mongoSourceIgnoreSSLCertificate"
-            type="checkbox"
-            name="ignoreSSLCertificate"
-            checked={ignoreSSLCertificate}
-            onChange={onChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
-          />
-          <span>Ignore SSL Certificate</span>
-          <InfoTooltip text="Configures whether to trust invalid or self-signed SSL certificates (Java: withIgnoreSSLCertificate)." />
-        </label>
-      </div>
-
-      {/* Max Connection Idle Time */}
-      <PropertyField
-        id="mongoSourceMaxConnectionIdleTime"
-        name="maxConnectionIdleTime"
-        label="Max Connection Idle Time (ms)"
-        type="number"
-        value={maxConnectionIdleTime}
-        onChange={onChange}
-        placeholder="0 (Unlimited)"
-        min={0}
-        tooltip="Maximum idle time of a pooled connection in milliseconds before it is closed (withMaxConnectionIdleTime)."
-      />
-
-      {/* Read Preference */}
-      <div className="flex flex-col gap-1">
-        <label
-          htmlFor="mongoSourceReadPreference"
-          className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
-        >
-          <span>Read Preference</span>
-          <InfoTooltip text="Configures replica set routing (e.g. primary, secondary, nearest)." />
-        </label>
-        <select
-          id="mongoSourceReadPreference"
-          name="readPreference"
-          value={readPreference}
-          onChange={onChange}
-          className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)]"
-        >
-          <option value="primary">primary</option>
-          <option value="primaryPreferred">primaryPreferred</option>
-          <option value="secondary">secondary</option>
-          <option value="secondaryPreferred">secondaryPreferred</option>
-          <option value="nearest">nearest</option>
-        </select>
-      </div>
-    </CollapsibleSection>
-  );
-};
-
-/**
- * Component props interface for MongoDbIOSourceProperties.
- */
+/** Props for the {@link MongoDbIOSourceProperties} component. */
 export interface MongoDbIOSourcePropertiesProps {
   node: {
     data: {
@@ -255,21 +46,16 @@ export interface MongoDbIOSourcePropertiesProps {
       system_instructions?: string;
       special_instructions?: string;
       properties?: {
-        uri?: string;
+        readMode?: MongoReadMode;
         database?: string;
         collection?: string;
+        aggregationPipeline?: string;
         filter?: string;
-        projection?: string;
-        bucketAuto?: boolean;
-        numSplits?: number | string;
-        authMode?: 'uri_embedded' | 'secret_manager';
-        usernameSecret?: string;
-        passwordSecret?: string;
-        sslEnabled?: boolean;
-        sslInvalidHostNameAllowed?: boolean;
-        ignoreSSLCertificate?: boolean;
-        maxConnectionIdleTime?: number | string;
-        readPreference?: string;
+        partitioner?: string;
+        changeStreamPublishFullDocumentOnly?: boolean;
+        uri?: string;
+        authMode?: string;
+        secretName?: string;
         system_instructions?: string;
         special_instructions?: string;
         [key: string]: any;
@@ -280,224 +66,188 @@ export interface MongoDbIOSourcePropertiesProps {
 }
 
 /**
- * MongoDbIOSourceProperties renders the configuration panel for reading from MongoDB.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Configures properties for Apache Spark MongoDB batch and streaming source nodes (.format("mongodb")).
  */
-export const MongoDbIOSourceProperties: React.FC<MongoDbIOSourcePropertiesProps> = ({
-  node,
-  onChange
-}) => {
-  const properties = node.data.properties || {};
+export const MongoDbIOSourceProperties: React.FC<MongoDbIOSourcePropertiesProps> = ({ node, onChange }) => {
+  const properties = node?.data?.properties || {};
 
-  // Form field state extracted from node properties
-  const uri = properties.uri || '';
+  const readMode: MongoReadMode = properties.readMode === 'streaming' ? 'streaming' : 'batch';
   const database = properties.database || '';
   const collection = properties.collection || '';
-  const filter = properties.filter || '';
-  const projection = properties.projection || '';
-  const bucketAuto = properties.bucketAuto ?? false;
-  const numSplits = properties.numSplits ?? '';
-  const authMode = properties.authMode || 'uri_embedded';
-  const usernameSecret = properties.usernameSecret || '';
-  const passwordSecret = properties.passwordSecret || '';
-  const sslEnabled = properties.sslEnabled ?? false;
-  const sslInvalidHostNameAllowed = properties.sslInvalidHostNameAllowed ?? false;
-  const ignoreSSLCertificate = properties.ignoreSSLCertificate ?? false;
-  const maxConnectionIdleTime = properties.maxConnectionIdleTime ?? '';
-  const readPreference = properties.readPreference || 'primary';
+  const aggregationPipeline = properties.aggregationPipeline ?? properties.filter ?? '';
+  const partitioner =
+    properties.partitioner || 'com.mongodb.spark.sql.connector.read.partitioner.SamplePartitioner';
+  const changeStreamPublishFullDocumentOnly =
+    properties.changeStreamPublishFullDocumentOnly ?? true;
+  const uri = properties.uri || '';
+  const authMode = properties.authMode || 'secretManager';
+  const secretName = properties.secretName || '';
 
-  // Local state for dynamically loaded secrets and accordion toggle
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
-  const isUriEmpty = !uri.trim();
-  const isUriInvalid = uri.trim().length > 0 && !uri.trim().startsWith('mongodb');
   const isDatabaseEmpty = !database.trim();
   const isCollectionEmpty = !collection.trim();
 
-  // Fallback chain for system instructions
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    // NOTE: Keep controlled state intact and bubble changes upwards
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, number, select, and checkbox input changes.
-   *
-   * @param e Standard React change event
-   */
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
-    }
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    onChange({ ...properties, [name]: updatedValue });
   };
 
-  /**
-   * Handles system instructions textarea modification.
-   *
-   * @param e React textarea change event
-   */
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* MongoDB Connection URI Input */}
-      <PropertyField
-        id="mongoSourceUri"
-        name="uri"
-        label="Connection URI"
-        required="Connection URI is required"
-        tooltip="MongoDB connection URI (e.g. mongodb://localhost:27017 or mongodb+srv://cluster.example.com). In Java: MongoDbIO.read().withUri(). In Python: ReadFromMongoDB(uri=...)."
-        value={uri}
-        invalid={isUriEmpty}
-        error={isUriEmpty ? 'Connection URI is required' : null}
-        helperText={
-          !isUriEmpty && isUriInvalid ? (
-            <span className="text-amber-400" role="alert">
-              Warning: MongoDB connection URI should start with &quot;mongodb://&quot; or &quot;mongodb+srv://&quot;
-            </span>
-          ) : null
-        }
-        placeholder="mongodb://localhost:27017 or mongodb+srv://cluster.example.com"
-        onChange={handleChange}
-        mono={true}
-      />
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark MongoDB Connector v10+</span>
+        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+          .format(&quot;mongodb&quot;) · {readMode.toUpperCase()}
+        </span>
+      </div>
 
-      {/* Database & Collection Names */}
+      {/* Read Mode Selector */}
+      <div className="flex flex-col gap-1.5">
+        <label
+          htmlFor="mongoSourceReadMode"
+          className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+        >
+          <span>Execution Read Mode</span>
+          <InfoTooltip text="Choose batch collection scan (spark.read) or MongoDB Change Streams (spark.readStream)." />
+        </label>
+        <select
+          id="mongoSourceReadMode"
+          name="readMode"
+          value={readMode}
+          onChange={handleChange}
+          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+        >
+          <option value="batch">Batch (spark.read.format(&quot;mongodb&quot;))</option>
+          <option value="streaming">Streaming Change Streams (spark.readStream.format(&quot;mongodb&quot;))</option>
+        </select>
+      </div>
+
+      {/* Database & Collection */}
       <div className="grid grid-cols-2 gap-2">
         <PropertyField
           id="mongoSourceDatabase"
           name="database"
-          label="Database Name"
+          label="Database"
           required="Database name is required"
-          tooltip="Target MongoDB database name. In Java: withDatabase(database). In Python: db=..."
+          tooltip="Target MongoDB database name (.option('database', ...))."
           value={database}
           invalid={isDatabaseEmpty}
           error={isDatabaseEmpty ? 'Database name is required' : null}
-          placeholder="e.g. analytics"
+          placeholder="analytics"
           onChange={handleChange}
           mono={true}
         />
         <PropertyField
           id="mongoSourceCollection"
           name="collection"
-          label="Collection Name"
+          label="Collection"
           required="Collection name is required"
-          tooltip="Target MongoDB collection name. In Java: withCollection(collection). In Python: coll=..."
+          tooltip="Target MongoDB collection name (.option('collection', ...))."
           value={collection}
           invalid={isCollectionEmpty}
           error={isCollectionEmpty ? 'Collection name is required' : null}
-          placeholder="e.g. events"
+          placeholder="events"
           onChange={handleChange}
           mono={true}
         />
       </div>
 
-      {/* Query Filter & Projection */}
+      {/* Aggregation Pipeline */}
       <PropertyField
-        id="mongoSourceFilter"
-        name="filter"
-        label="Query Filter (JSON)"
-        tooltip="MongoDB JSON query filter for document matching. In Java: withFilter(json) or withQueryFn(...). In Python: filter={...}."
+        id="mongoSourceAggregationPipeline"
+        name="aggregationPipeline"
+        label="Aggregation Pipeline JSON (aggregation.pipeline)"
         type="textarea"
         rows={3}
-        value={filter}
+        tooltip="Optional JSON array of MongoDB aggregation stages pushed down to MongoDB (.option('aggregation.pipeline', ...))."
+        value={aggregationPipeline}
+        placeholder='[{"$match": {"status": "active"}}]'
         onChange={handleChange}
-        placeholder='{"status": "active"}'
         mono={true}
       />
 
-      <PropertyField
-        id="mongoSourceProjection"
-        name="projection"
-        label="Projection Fields"
-        tooltip="Comma-delimited projection field list or JSON projection specification. In Java: configure custom projection inside withQueryFn(...). In Python: projection=[...]."
-        value={projection}
-        onChange={handleChange}
-        placeholder="e.g. _id, timestamp, userId, status"
-        mono={true}
-      />
-
-      {/* Bucket-Auto & Parallelism Split Configuration */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Splitting &amp; Parallelism</span>
-          <InfoTooltip text="Configure how Beam partitions large MongoDB collections into parallel splits for distributed workers." />
-        </label>
-        <div className="flex items-center gap-2 mt-1">
-          <input
-            id="mongoSourceBucketAuto"
-            type="checkbox"
-            name="bucketAuto"
-            checked={bucketAuto}
+      {/* Mode-specific Partitioner or Change Stream Options */}
+      {readMode === 'batch' ? (
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="mongoSourcePartitioner"
+            className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+          >
+            <span>Partitioner Strategy</span>
+            <InfoTooltip text="MongoDB Spark V2 partitioner class used to split the collection across Spark tasks." />
+          </label>
+          <select
+            id="mongoSourcePartitioner"
+            name="partitioner"
+            value={partitioner}
             onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-xs font-mono focus:outline-none focus:border-blue-500"
+          >
+            {MONGO_PARTITIONERS.map((p) => (
+              <option key={p} value={p}>
+                {p.split('.').pop()} ({p})
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+          <input
+            id="mongoSourceChangeStreamFullDocumentOnly"
+            type="checkbox"
+            name="changeStreamPublishFullDocumentOnly"
+            checked={changeStreamPublishFullDocumentOnly}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
           />
           <label
-            htmlFor="mongoSourceBucketAuto"
-            className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+            htmlFor="mongoSourceChangeStreamFullDocumentOnly"
+            className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
           >
-            <span>Bucket-Auto Splitting</span>
-            <InfoTooltip text="Uses MongoDB $bucketAuto aggregation operator to automatically partition collection into evenly sized splits (withBucketAuto)." />
+            <span>Publish Full Document Only (change.stream.publish.full.document.only=true)</span>
+            <InfoTooltip text="Emits the full updated document directly instead of the raw Change Stream envelope." />
           </label>
         </div>
-        <PropertyField
-          id="mongoSourceNumSplits"
-          name="numSplits"
-          label="Number of Splits"
-          type="number"
-          value={numSplits}
+      )}
+
+      {/* Secret Manager Auth for connection.uri */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <SecretManagerAuthFields
+          idPrefix="mongoSource"
+          serviceName="MongoDB (spark.mongodb.read.connection.uri)"
+          authMode={authMode}
+          secretName={secretName}
+          authOptions={MONGO_AUTH_OPTIONS}
+          secretManagerValue="secretManager"
+          datalistId="mongodb-source-secret-options"
+          secretPlaceholder="e.g. mongodb-connection-uri-secret"
           onChange={handleChange}
-          placeholder="0 (Automatic)"
-          min={0}
-          tooltip="Target number of splits to divide the collection into for parallel reads (Java: withNumSplits(splits)). Set 0 for auto."
         />
+
+        {authMode !== 'secretManager' && (
+          <PropertyField
+            id="mongoSourceUri"
+            name="uri"
+            label="Connection URI (connection.uri)"
+            tooltip="MongoDB connection URI when not using Secret Manager."
+            value={uri}
+            placeholder="mongodb://localhost:27017"
+            onChange={handleChange}
+            mono={true}
+          />
+        )}
       </div>
-
-      {/* Authentication Configuration Sub-section */}
-      <MongoDbSourceAuthSection
-        authMode={authMode}
-        usernameSecret={usernameSecret}
-        passwordSecret={passwordSecret}
-        secrets={secrets}
-        secretError={secretError}
-        onChange={handleChange}
-      />
-
-      {/* Collapsible Advanced Source Settings Sub-section */}
-      <MongoDbSourceAdvancedSection
-        showAdvanced={showAdvanced}
-        onToggleAdvanced={() => setShowAdvanced(!showAdvanced)}
-        sslEnabled={sslEnabled}
-        sslInvalidHostNameAllowed={sslInvalidHostNameAllowed}
-        ignoreSSLCertificate={ignoreSSLCertificate}
-        maxConnectionIdleTime={maxConnectionIdleTime}
-        readPreference={readPreference}
-        onChange={handleChange}
-      />
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="mongoSourceInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions passed to the LLM code generator when synthesizing Beam pipeline code for Java (MongoDbIO.read()) or Python (ReadFromMongoDB)."
-        placeholder="e.g. Read MongoDB BSON documents, filter by active status, and map to Beam Row schema"
+        placeholder="Enter custom instructions for Spark MongoDB source code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -508,3 +258,5 @@ export const MongoDbIOSourceProperties: React.FC<MongoDbIOSourcePropertiesProps>
     </div>
   );
 };
+
+export const MongoDbSourceProperties = MongoDbIOSourceProperties;

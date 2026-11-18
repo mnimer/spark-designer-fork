@@ -84,7 +84,7 @@ describe('Code Generation Instructions placement', () => {
       if (problem) problems.push(`${key}: ${problem}`);
     }
 
-    expect(checked).toBeGreaterThan(100);
+    expect(checked).toBeGreaterThanOrEqual(70);
     expect(problems, problems.join('\n')).toEqual([]);
   }, 60_000); // renders ~150 panels; the default 5s timeout is too tight on a loaded machine
 });

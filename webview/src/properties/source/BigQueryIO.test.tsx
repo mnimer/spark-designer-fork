@@ -1,7 +1,12 @@
 /**
- * BigQuery Source Properties Unit Tests
+ * BigQuery Source Properties Unit Tests (SRC22)
  *
  * Author: Mike Nimer <mikenimer@google.com>
+ *
+ * Purpose:
+ * Verifies the Spark BigQuerySourceProperties component for .format("bigquery"),
+ * including readModeType switching ('table' vs 'query'), live dataset/table discovery,
+ * viewsEnabled and materializationDataset options, filter pushdown, and maxParallelism.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -10,192 +15,175 @@ import '@testing-library/jest-dom';
 import { BigQuerySourceProperties } from './BigQueryIO';
 
 describe('BigQuerySourceProperties', () => {
-  it('renders dataset and table input', () => {
+  it('renders dataset, table, filter pushdown, and maxParallelism in table mode', () => {
     const mockNode = {
       data: {
         properties: {
+          readModeType: 'table' as const,
           dataset: 'test-dataset',
-          table: 'test-table'
-        }
-      }
+          table: 'test-table',
+          filter: "status = 'ACTIVE'",
+          maxParallelism: 32,
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
     const { container } = render(<BigQuerySourceProperties node={mockNode} onChange={mockOnChange} />);
 
+    const modeSelect = container.querySelector('#bqSourceReadModeType') as HTMLSelectElement;
     const datasetInput = container.querySelector('#bqSourceDataset') as HTMLInputElement;
     const tableInput = container.querySelector('#bqSourceTable') as HTMLInputElement;
-    const queryInput = container.querySelector('#bqSourceQuery') as HTMLTextAreaElement;
+    const filterInput = container.querySelector('#bqSourceFilter') as HTMLInputElement;
+    const maxParallelismInput = container.querySelector('#bqSourceMaxParallelism') as HTMLInputElement;
 
+    expect(modeSelect).toHaveValue('table');
     expect(datasetInput).toHaveValue('test-dataset');
     expect(tableInput).toHaveValue('test-table');
-    expect(queryInput).toBeInTheDocument();
+    expect(filterInput).toHaveValue("status = 'ACTIVE'");
+    expect(maxParallelismInput).toHaveValue(32);
   });
 
-  it('calls onChange when dataset input changes', () => {
+  it('calls onChange and resets table when dataset input changes', () => {
     const mockNode = {
       data: {
-        properties: {}
-      }
+        properties: {
+          dataset: 'old-dataset',
+          table: 'old-table',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
     const { container } = render(<BigQuerySourceProperties node={mockNode} onChange={mockOnChange} />);
 
     const datasetInput = container.querySelector('#bqSourceDataset') as HTMLInputElement;
-    fireEvent.change(datasetInput, { target: { value: 'new-dataset' } });
+    fireEvent.change(datasetInput, { target: { name: 'dataset', value: 'new-dataset' } });
 
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ dataset: 'new-dataset', table: '' }));
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ dataset: 'new-dataset', table: '' })
+    );
   });
 
-  it('calls onChange when table input changes', () => {
+  it('switches to query mode and configures query, viewsEnabled, and materializationDataset', () => {
     const mockNode = {
       data: {
-        properties: {}
-      }
-    };
-    const mockOnChange = vi.fn();
-
-    const { container } = render(<BigQuerySourceProperties node={mockNode} onChange={mockOnChange} />);
-
-    const tableInput = container.querySelector('#bqSourceTable') as HTMLInputElement;
-    fireEvent.change(tableInput, { target: { value: 'new-table' } });
-
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ table: 'new-table' }));
-  });
-
-  it('calls onChange when query input changes', () => {
-    const mockNode = {
-      data: {
-        properties: {}
-      }
+        properties: {
+          readModeType: 'query' as const,
+          query: 'SELECT * FROM `proj.ds.tbl`',
+          viewsEnabled: true,
+          materializationDataset: 'temp_ds',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
     const { container } = render(<BigQuerySourceProperties node={mockNode} onChange={mockOnChange} />);
 
     const queryInput = container.querySelector('#bqSourceQuery') as HTMLTextAreaElement;
-    fireEvent.change(queryInput, { target: { value: 'SELECT * FROM test' } });
+    const viewsCheckbox = container.querySelector('#bqSourceViewsEnabled') as HTMLInputElement;
+    const matInput = container.querySelector('#bqSourceMaterializationDataset') as HTMLInputElement;
 
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ query: 'SELECT * FROM test' }));
+    expect(queryInput).toHaveValue('SELECT * FROM `proj.ds.tbl`');
+    expect(viewsCheckbox).toBeChecked();
+    expect(matInput).toHaveValue('temp_ds');
+
+    fireEvent.change(queryInput, { target: { name: 'query', value: 'SELECT id FROM `proj.ds.tbl`' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'SELECT id FROM `proj.ds.tbl`' })
+    );
+
+    fireEvent.click(viewsCheckbox);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ viewsEnabled: false })
+    );
+
+    fireEvent.change(matInput, { target: { name: 'materializationDataset', value: 'new_mat_ds' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ materializationDataset: 'new_mat_ds' })
+    );
   });
 
-  // Regression test: stale closure bug where datasetsLoaded overwrote user input
-  it('preserves latest user changes when datasetsLoaded message arrives (stale closure regression)', () => {
+  it('updates filter pushdown, maxParallelism, and system_instructions', () => {
+    const mockNode = {
+      data: {
+        properties: {
+          readModeType: 'table' as const,
+          table: 'orders',
+        },
+      },
+    };
+    const mockOnChange = vi.fn();
+
+    const { container } = render(<BigQuerySourceProperties node={mockNode} onChange={mockOnChange} />);
+
+    const filterInput = container.querySelector('#bqSourceFilter') as HTMLInputElement;
+    fireEvent.change(filterInput, { target: { name: 'filter', value: 'amount > 50' } });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ filter: 'amount > 50' }));
+
+    const parallelismInput = container.querySelector('#bqSourceMaxParallelism') as HTMLInputElement;
+    fireEvent.change(parallelismInput, { target: { name: 'maxParallelism', value: '64' } });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ maxParallelism: '64' }));
+
+    const sysInput = container.querySelector('#bqSourceSystemInstructions') as HTMLTextAreaElement;
+    fireEvent.change(sysInput, { target: { value: 'Push down date partition filter' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Push down date partition filter' })
+    );
+  });
+
+  it('preserves latest user changes when datasetsLoaded message arrives', () => {
     const initialNode = {
       data: {
         properties: {
           dataset: 'initial-dataset',
-          table: 'initial-table'
-        }
-      }
+          table: 'initial-table',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
     const { rerender } = render(<BigQuerySourceProperties node={initialNode} onChange={mockOnChange} />);
 
-    // Simulate user editing table after mount, causing parent component to re-render with updated properties
     const updatedNode = {
       data: {
         properties: {
           dataset: 'initial-dataset',
           table: 'user-updated-table',
-          query: 'SELECT 1'
-        }
-      }
+          filter: 'id > 0',
+        },
+      },
     };
     rerender(<BigQuerySourceProperties node={updatedNode} onChange={mockOnChange} />);
 
-    // Dispatch datasetsLoaded message event on window inside act
     act(() => {
       window.dispatchEvent(
         new MessageEvent('message', {
           data: {
             command: 'datasetsLoaded',
             datasets: ['dataset-a', 'dataset-b'],
-            projectId: 'new-project-id'
-          }
+            projectId: 'new-project-id',
+          },
         })
       );
     });
 
-    // Assert onChange is called with projectId merged into the latest properties, NOT initial properties
     expect(mockOnChange).toHaveBeenCalledWith({
       dataset: 'initial-dataset',
       table: 'user-updated-table',
-      query: 'SELECT 1',
-      projectId: 'new-project-id'
+      filter: 'id > 0',
+      projectId: 'new-project-id',
     });
   });
 
-  // Extreme case: multiple rapid updates from initial empty state before message arrival
-  it('preserves multiple sequential property updates when datasetsLoaded arrives', () => {
-    const initialNode = {
-      data: {
-        properties: {}
-      }
-    };
-    const mockOnChange = vi.fn();
-
-    const { rerender } = render(<BigQuerySourceProperties node={initialNode} onChange={mockOnChange} />);
-
-    // User types dataset, then table, then query, then system instructions
-    const intermediateNode1 = {
-      data: {
-        properties: { dataset: 'sales_ds' }
-      }
-    };
-    rerender(<BigQuerySourceProperties node={intermediateNode1} onChange={mockOnChange} />);
-
-    const intermediateNode2 = {
-      data: {
-        properties: { dataset: 'sales_ds', table: 'orders' }
-      }
-    };
-    rerender(<BigQuerySourceProperties node={intermediateNode2} onChange={mockOnChange} />);
-
-    const finalNode = {
-      data: {
-        properties: {
-          dataset: 'sales_ds',
-          table: 'orders',
-          query: 'SELECT * FROM orders WHERE amount > 100',
-          system_instructions: 'Filter high-value orders'
-        }
-      }
-    };
-    rerender(<BigQuerySourceProperties node={finalNode} onChange={mockOnChange} />);
-
-    act(() => {
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            command: 'datasetsLoaded',
-            datasets: ['sales_ds', 'inventory_ds'],
-            projectId: 'corp-analytics-prod'
-          }
-        })
-      );
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith({
-      dataset: 'sales_ds',
-      table: 'orders',
-      query: 'SELECT * FROM orders WHERE amount > 100',
-      system_instructions: 'Filter high-value orders',
-      projectId: 'corp-analytics-prod'
-    });
-  });
-
-  // Failure / edge case: datasetsLoaded message arrives with missing or null projectId
   it('does not trigger onChange if datasetsLoaded message has no projectId', () => {
     const mockNode = {
       data: {
         properties: {
           dataset: 'analytics',
-          table: 'events'
-        }
-      }
+          table: 'events',
+        },
+      },
     };
     const mockOnChange = vi.fn();
 
@@ -206,8 +194,8 @@ describe('BigQuerySourceProperties', () => {
         new MessageEvent('message', {
           data: {
             command: 'datasetsLoaded',
-            datasets: ['analytics', 'monitoring']
-          }
+            datasets: ['analytics', 'monitoring'],
+          },
         })
       );
     });
@@ -215,6 +203,3 @@ describe('BigQuerySourceProperties', () => {
     expect(mockOnChange).not.toHaveBeenCalled();
   });
 });
-
-
-

@@ -14,6 +14,11 @@ export const GROUPS_STORAGE_KEY = 'beam_node_groups_state';
  */
 export const defaultGroupOpenState: Record<string, boolean> = {
   sources_streaming_sources: true,
+  sources_lakehouse_sources: false,
+  sources_file_format_sources: false,
+  'sources_warehouse_&_database_sources': false,
+  'sources_nosql_&_graph_sources': false,
+  'sources_synthetic_&_api_sources': false,
   sources_database_sources: false,
   sources_data_services_sources: false,
   sources_file_sources: false,

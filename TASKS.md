@@ -117,44 +117,44 @@ All 9 File Format sources (`SRC13`–`SRC21`) embed the shared **`StorageBackend
 
 | # | Category | `sparkTransform` | Modes | Format / Mechanism | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [SRC1](#src1) | Streaming | `KafkaSource` | `batch`, `stream` | `.format("kafka")` (`spark-sql-kafka-0-10`) | ⬜ Not Started |
-| [SRC2](#src2) | Streaming | `PubSubSource` | `batch`, `stream` | Spark 4.0 Python `DataSourceStreamReader` (`google-cloud-pubsub`) | ⬜ Not Started |
-| [SRC3](#src3) | Streaming | `KinesisSource` | `stream` | Spark 4.0 Python `DataSourceStreamReader` (`boto3`) / `.format("kinesis")` | ⬜ Not Started |
-| [SRC4](#src4) | Streaming | `PulsarSource` | `batch`, `stream` | `.format("pulsar")` (`pulsar-spark-connector`) | ⬜ Not Started |
-| [SRC5](#src5) | Streaming | `EventHubsSource` | `batch`, `stream` | `.format("kafka")` (Event Hubs Kafka endpoint) / `.format("eventhubs")` | ⬜ Not Started |
-| [SRC6](#src6) | Streaming | `MqttSource` | `stream` | Spark 4.0 Python `DataSourceStreamReader` (`paho-mqtt`) | ⬜ Not Started |
-| [SRC7](#src7) | Streaming | `RateSource` | `stream` | `.format("rate")` / `.format("rate-micro-batch")` (built-in) | ⬜ Not Started |
-| [SRC8](#src8) | Streaming | `SocketSource` | `stream` | `.format("socket")` (built-in debug stream) | ⬜ Not Started |
-| [SRC9](#src9) | Lakehouse | `IcebergSource` | `batch`, `stream` | `.format("iceberg")` (BigLake REST / REST / Hive / Hadoop catalog) | ⬜ Not Started |
-| [SRC10](#src10) | Lakehouse | `DeltaSource` | `batch`, `stream` | `.format("delta")` (`io.delta:delta-spark` + Change Data Feed) | ⬜ Not Started |
-| [SRC11](#src11) | Lakehouse | `HudiSource` | `batch`, `stream` | `.format("hudi")` (`snapshot`, `incremental`, `read_optimized`) | ⬜ Not Started |
-| [SRC12](#src12) | Lakehouse | `HiveSource` | `batch` | `spark.table("<db>.<table>")` (Dataproc Metastore / Hive) | ⬜ Not Started |
-| [SRC13](#src13) | File Format | `ParquetSource` | `batch`, `stream` | `.parquet(uri)` + `StorageBackendFields` (`gs://`, `s3a://`, `abfss://`, `hdfs://`, `file://`) | ⬜ Not Started |
-| [SRC14](#src14) | File Format | `OrcSource` | `batch`, `stream` | `.orc(uri)` + `StorageBackendFields` | ⬜ Not Started |
-| [SRC15](#src15) | File Format | `AvroSource` | `batch`, `stream` | `.format("avro")` (`spark-avro`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC16](#src16) | File Format | `CsvSource` | `batch`, `stream` | `.csv(uri)` (`header=true`, `inferSchema=true`, `_corrupt_record`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC17](#src17) | File Format | `JsonSource` | `batch`, `stream` | `.json(uri)` (`multiLine`, `_corrupt_record`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC18](#src18) | File Format | `TextSource` | `batch`, `stream` | `.text(uri)` (`wholetext`, `lineSep`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC19](#src19) | File Format | `XmlSource` | `batch`, `stream` | `.format("xml")` (built-in Spark 4.0, `rowTag`, `_corrupt_record`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC20](#src20) | File Format | `BinaryFileSource` | `batch`, `stream` | `.format("binaryFile")` (`pathGlobFilter`, `recursiveFileLookup`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC21](#src21) | File Format | `TFRecordSource` | `batch` | `.format("tfrecords")` (`Example` / `SequenceExample`) + `StorageBackendFields` | ⬜ Not Started |
-| [SRC22](#src22) | Warehouse/DB | `BigQuerySource` | `batch` | `.format("bigquery")` (Storage Read API table or SQL query with `viewsEnabled=true`) | ⬜ Not Started |
-| [SRC23](#src23) | Warehouse/DB | `SpannerSource` | `batch` | `.format("cloud-spanner")` (`gs://spark-lib/spanner/spark-4.0-spanner-1.5.0.jar`) | ⬜ Not Started |
-| [SRC24](#src24) | Warehouse/DB | `BigtableSource` | `batch` | `.format("bigtable")` (`spark-bigtable`) | ⬜ Not Started |
-| [SRC25](#src25) | Warehouse/DB | `CloudSqlSource` | `batch` | `.format("jdbc")` + Cloud SQL Socket Factory (`iam` or `secret_manager`, dynamic `MIN`/`MAX` bounds) | ⬜ Not Started |
-| [SRC26](#src26) | Warehouse/DB | `AlloyDbSource` | `batch` | `.format("jdbc")` + AlloyDB Socket Factory (`dataproc.artifacts.remove=conscrypt`, dynamic bounds) | ⬜ Not Started |
-| [SRC27](#src27) | Warehouse/DB | `JdbcSource` | `batch` | `.format("jdbc")` (PostgreSQL, MySQL, Oracle, SQL Server, DB2 presets + parallel bounds) | ⬜ Not Started |
-| [SRC28](#src28) | Warehouse/DB | `SnowflakeSource` | `batch` | `.format("net.snowflake.spark.snowflake")` | ⬜ Not Started |
-| [SRC29](#src29) | Warehouse/DB | `RedshiftSource` | `batch` | `.format("io.github.spark_redshift_community.spark.redshift")` | ⬜ Not Started |
-| [SRC30](#src30) | Warehouse/DB | `ClickHouseSource` | `batch` | `.format("jdbc")` / ClickHouse Spark V2 connector | ⬜ Not Started |
-| [SRC31](#src31) | Warehouse/DB | `SingleStoreSource` | `batch` | `.format("singlestore")` / `.format("jdbc")` | ⬜ Not Started |
-| [SRC32](#src32) | NoSQL/Graph | `MongoDbSource` | `batch`, `stream` | `.format("mongodb")` (`mongo-spark-connector` v10+ batch & change streams) | ⬜ Not Started |
-| [SRC33](#src33) | NoSQL/Graph | `FirestoreSource` | `batch` | Spark 4.0 Python `DataSourceReader` (`google-cloud-firestore`) | ⬜ Not Started |
-| [SRC34](#src34) | NoSQL/Graph | `CassandraSource` | `batch` | `.format("org.apache.spark.sql.cassandra")` / Spark 4.0 Python `DataSource` | ⬜ Not Started |
-| [SRC35](#src35) | NoSQL/Graph | `RedisSource` | `batch`, `stream` | Spark 4.0 Python `DataSource` (`redis-py` scan / Redis Streams) | ⬜ Not Started |
-| [SRC36](#src36) | NoSQL/Graph | `ElasticsearchSource` | `batch` | `.format("org.elasticsearch.spark.sql")` | ⬜ Not Started |
-| [SRC37](#src37) | NoSQL/Graph | `Neo4jSource` | `batch`, `stream` | `.format("org.neo4j.spark.DataSource")` | ⬜ Not Started |
-| [SRC38](#src38) | Synthetic/API | `CreateDataFrameSource` | `batch` | `spark.createDataFrame(rows, schema)` / `spark.range(...)` / Faker generator | ⬜ Not Started |
+| [SRC1](#src1) | Streaming | `KafkaSource` | `batch`, `stream` | `.format("kafka")` (`spark-sql-kafka-0-10`) | ✅ Done |
+| [SRC2](#src2) | Streaming | `PubSubSource` | `batch`, `stream` | Spark 4.0 Python `DataSourceStreamReader` (`google-cloud-pubsub`) | ✅ Done |
+| [SRC3](#src3) | Streaming | `KinesisSource` | `stream` | Spark 4.0 Python `DataSourceStreamReader` (`boto3`) / `.format("kinesis")` | ✅ Done |
+| [SRC4](#src4) | Streaming | `PulsarSource` | `batch`, `stream` | `.format("pulsar")` (`pulsar-spark-connector`) | ✅ Done |
+| [SRC5](#src5) | Streaming | `EventHubsSource` | `batch`, `stream` | `.format("kafka")` (Event Hubs Kafka endpoint) / `.format("eventhubs")` | ✅ Done |
+| [SRC6](#src6) | Streaming | `MqttSource` | `stream` | Spark 4.0 Python `DataSourceStreamReader` (`paho-mqtt`) | ✅ Done |
+| [SRC7](#src7) | Streaming | `RateSource` | `stream` | `.format("rate")` / `.format("rate-micro-batch")` (built-in) | ✅ Done |
+| [SRC8](#src8) | Streaming | `SocketSource` | `stream` | `.format("socket")` (built-in debug stream) | ✅ Done |
+| [SRC9](#src9) | Lakehouse | `IcebergSource` | `batch`, `stream` | `.format("iceberg")` (BigLake REST / REST / Hive / Hadoop catalog) | ✅ Done |
+| [SRC10](#src10) | Lakehouse | `DeltaSource` | `batch`, `stream` | `.format("delta")` (`io.delta:delta-spark` + Change Data Feed) | ✅ Done |
+| [SRC11](#src11) | Lakehouse | `HudiSource` | `batch`, `stream` | `.format("hudi")` (`snapshot`, `incremental`, `read_optimized`) | ✅ Done |
+| [SRC12](#src12) | Lakehouse | `HiveSource` | `batch` | `spark.table("<db>.<table>")` (Dataproc Metastore / Hive) | ✅ Done |
+| [SRC13](#src13) | File Format | `ParquetSource` | `batch`, `stream` | `.parquet(uri)` + `StorageBackendFields` (`gs://`, `s3a://`, `abfss://`, `hdfs://`, `file://`) | ✅ Done |
+| [SRC14](#src14) | File Format | `OrcSource` | `batch`, `stream` | `.orc(uri)` + `StorageBackendFields` | ✅ Done |
+| [SRC15](#src15) | File Format | `AvroSource` | `batch`, `stream` | `.format("avro")` (`spark-avro`) + `StorageBackendFields` | ✅ Done |
+| [SRC16](#src16) | File Format | `CsvSource` | `batch`, `stream` | `.csv(uri)` (`header=true`, `inferSchema=true`, `_corrupt_record`) + `StorageBackendFields` | ✅ Done |
+| [SRC17](#src17) | File Format | `JsonSource` | `batch`, `stream` | `.json(uri)` (`multiLine`, `_corrupt_record`) + `StorageBackendFields` | ✅ Done |
+| [SRC18](#src18) | File Format | `TextSource` | `batch`, `stream` | `.text(uri)` (`wholetext`, `lineSep`) + `StorageBackendFields` | ✅ Done |
+| [SRC19](#src19) | File Format | `XmlSource` | `batch`, `stream` | `.format("xml")` (built-in Spark 4.0, `rowTag`, `_corrupt_record`) + `StorageBackendFields` | ✅ Done |
+| [SRC20](#src20) | File Format | `BinaryFileSource` | `batch`, `stream` | `.format("binaryFile")` (`pathGlobFilter`, `recursiveFileLookup`) + `StorageBackendFields` | ✅ Done |
+| [SRC21](#src21) | File Format | `TFRecordSource` | `batch` | `.format("tfrecords")` (`Example` / `SequenceExample`) + `StorageBackendFields` | ✅ Done |
+| [SRC22](#src22) | Warehouse/DB | `BigQuerySource` | `batch` | `.format("bigquery")` (Storage Read API table or SQL query with `viewsEnabled=true`) | ✅ Done |
+| [SRC23](#src23) | Warehouse/DB | `SpannerSource` | `batch` | `.format("cloud-spanner")` (`gs://spark-lib/spanner/spark-4.0-spanner-1.5.0.jar`) | ✅ Done |
+| [SRC24](#src24) | Warehouse/DB | `BigtableSource` | `batch` | `.format("bigtable")` (`spark-bigtable`) | ✅ Done |
+| [SRC25](#src25) | Warehouse/DB | `CloudSqlSource` | `batch` | `.format("jdbc")` + Cloud SQL Socket Factory (`iam` or `secret_manager`, dynamic `MIN`/`MAX` bounds) | ✅ Done |
+| [SRC26](#src26) | Warehouse/DB | `AlloyDbSource` | `batch` | `.format("jdbc")` + AlloyDB Socket Factory (`dataproc.artifacts.remove=conscrypt`, dynamic bounds) | ✅ Done |
+| [SRC27](#src27) | Warehouse/DB | `JdbcSource` | `batch` | `.format("jdbc")` (PostgreSQL, MySQL, Oracle, SQL Server, DB2 presets + parallel bounds) | ✅ Done |
+| [SRC28](#src28) | Warehouse/DB | `SnowflakeSource` | `batch` | `.format("net.snowflake.spark.snowflake")` | ✅ Done |
+| [SRC29](#src29) | Warehouse/DB | `RedshiftSource` | `batch` | `.format("io.github.spark_redshift_community.spark.redshift")` | ✅ Done |
+| [SRC30](#src30) | Warehouse/DB | `ClickHouseSource` | `batch` | `.format("jdbc")` / ClickHouse Spark V2 connector | ✅ Done |
+| [SRC31](#src31) | Warehouse/DB | `SingleStoreSource` | `batch` | `.format("singlestore")` / `.format("jdbc")` | ✅ Done |
+| [SRC32](#src32) | NoSQL/Graph | `MongoDbSource` | `batch`, `stream` | `.format("mongodb")` (`mongo-spark-connector` v10+ batch & change streams) | ✅ Done |
+| [SRC33](#src33) | NoSQL/Graph | `FirestoreSource` | `batch` | Spark 4.0 Python `DataSourceReader` (`google-cloud-firestore`) | ✅ Done |
+| [SRC34](#src34) | NoSQL/Graph | `CassandraSource` | `batch` | `.format("org.apache.spark.sql.cassandra")` / Spark 4.0 Python `DataSource` | ✅ Done |
+| [SRC35](#src35) | NoSQL/Graph | `RedisSource` | `batch`, `stream` | Spark 4.0 Python `DataSource` (`redis-py` scan / Redis Streams) | ✅ Done |
+| [SRC36](#src36) | NoSQL/Graph | `ElasticsearchSource` | `batch` | `.format("org.elasticsearch.spark.sql")` | ✅ Done |
+| [SRC37](#src37) | NoSQL/Graph | `Neo4jSource` | `batch`, `stream` | `.format("org.neo4j.spark.DataSource")` | ✅ Done |
+| [SRC38](#src38) | Synthetic/API | `CreateDataFrameSource` | `batch` | `spark.createDataFrame(rows, schema)` / `spark.range(...)` / Faker generator | ✅ Done |
 
 ### Phase 6 — Sinks Catalog, Property Forms & Skills (`SNK1`–`SNK37`)
 

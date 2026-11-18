@@ -1,74 +1,77 @@
 /**
- * PulsarIOSourceProperties Component
- * 
+ * PulsarIO Source Properties Component
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam PulsarIO Streaming Source nodes.
- * Supports Apache Beam Java SDK PulsarIO.read() (withClientUrl, withAdminUrl, withTopic,
- * withStartTimestamp, withEndTimestamp, withPublishTime) emitting PCollection<PulsarMessage>,
- * and Python Cross-Language API via the Java expansion service (ReadFromPulsar).
- * 
+ * Renders the property configuration panel for Apache Spark PulsarSource (`PulsarIO`) nodes.
+ * Configures streaming (`spark.readStream.format("pulsar")`) and batch (`spark.read.format("pulsar")`)
+ * reads using the StreamNative `pulsar-spark-connector`.
+ *
  * Architectural Decisions:
- * - Broker connection and authentication configuration delegated to modular shared sub-components
- *   (PulsarConnectionFields, PulsarAuthFields) to preserve strict DRY principles and maintainable file sizes.
- * - Adopts shared ExpansionServiceFields primitive for uniform Python Cross-Language (x-lang) settings.
- * - Enforces topic validation against canonical Pulsar format (persistent://tenant/namespace/topic or non-persistent://).
- * - Queries the VS Code extension for Google Cloud Secret Manager secrets ('getSecrets').
- * - Supports message timestamp policy configuration: Publish Time (withPublishTime) vs processing time, plus epoch timestamp ranges.
- * - Supports bounded stream limits (maxNumRecords, maxReadTime) for hybrid testing and batch execution.
- * - Integrates InfoTooltip components linking field definitions to official Apache Beam documentation.
- * - Adheres strictly to the 8pt grid system for spacing and sizing.
+ * - Supports `readMode` (`'streaming' | 'batch'`, default `'streaming'`).
+ * - Configures `serviceUrl` (`service.url`), `adminUrl` (`admin.url`), `subscriptionMode`
+ *   (`'topic' | 'topics' | 'topicsPattern'`), `topic`, `startingOffsets` (`'latest' | 'earliest'`),
+ *   conditional `endingOffsets` (in batch mode), and `allowDifferentTopicSchemas`.
+ * - Integrates `SecretManagerAuthFields` for Pulsar JWT token / credentials in Google Cloud Secret Manager.
+ * - Uses shared primitives on the 8pt grid system.
  */
 
 import React from 'react';
-import { Layers } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField } from '../../components/common/SelectField';
+import type { SelectFieldOption } from '../../components/common/SelectField';
+import { SecretManagerAuthFields } from '../../components/common/SecretManagerAuthFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { PulsarConnectionFields } from '../../components/common/pulsar/PulsarConnectionFields';
-import { PulsarAuthFields } from '../../components/common/pulsar/PulsarAuthFields';
-import type { PulsarAuthMode, SecretItem } from '../../components/common/pulsar/PulsarAuthFields';
-import { useNodeProperties } from '../../hooks/useNodeProperties';
-import { useSecretOptions } from '../../hooks/useSecretOptions';
 
-export type { SecretItem, PulsarAuthMode };
+/** Read mode options for PulsarSource. */
+export const PULSAR_READ_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'streaming', label: 'Streaming (spark.readStream)' },
+  { value: 'batch', label: 'Batch (spark.read)' },
+];
 
-/** Persisted configuration properties for the Apache Pulsar source node. */
-export interface PulsarIOSourcePropertiesData {
-  clientUrl?: string;
-  adminUrl?: string;
-  topic?: string;
-  authMode?: PulsarAuthMode;
-  tokenSecretName?: string;
-  oauthIssuerUrl?: string;
-  oauthAudience?: string;
-  oauthKeySecretName?: string;
-  tlsCertSecretName?: string;
-  tlsKeySecretName?: string;
-  tlsTrustCertSecretName?: string;
-  timestampType?: 'publishTime' | 'processingTime';
-  consumerPollingTimeout?: string | number;
-  startTimestamp?: string | number;
-  endTimestamp?: string | number;
-  expansionServiceMode?: 'auto' | 'endpoint';
-  expansionServiceEndpoint?: string;
-  system_instructions?: string;
-  special_instructions?: string;
-  codeGenerationPrompt?: string;
-  prompt?: string;
-  [key: string]: any;
-}
+/** Subscription mode options for the Pulsar Spark connector. */
+export const PULSAR_SUBSCRIPTION_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'topic', label: 'Single Topic (topic)' },
+  { value: 'topics', label: 'Multiple Topics (topics)' },
+  { value: 'topicsPattern', label: 'Topics Regex Pattern (topicsPattern)' },
+];
 
-/** React Flow node shape for the PulsarIO source panel, including its persisted configuration data. */
+/** Starting offset options for Pulsar reads. */
+export const PULSAR_STARTING_OFFSETS_OPTIONS: SelectFieldOption[] = [
+  { value: 'latest', label: 'latest (Read latest messages)' },
+  { value: 'earliest', label: 'earliest (Read from earliest retained message)' },
+];
+
+/** Ending offset options for batch Pulsar reads. */
+export const PULSAR_ENDING_OFFSETS_OPTIONS: SelectFieldOption[] = [
+  { value: 'latest', label: 'latest (Read up to latest available message)' },
+];
+
+/** React Flow node shape for the PulsarIO source panel. */
 export interface PulsarIOSourceNode {
   data: {
     label: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
-    properties?: PulsarIOSourcePropertiesData;
+    properties?: {
+      readMode?: 'streaming' | 'batch';
+      serviceUrl?: string;
+      adminUrl?: string;
+      subscriptionMode?: 'topic' | 'topics' | 'topicsPattern';
+      topic?: string;
+      startingOffsets?: 'latest' | 'earliest' | string;
+      endingOffsets?: string;
+      allowDifferentTopicSchemas?: boolean;
+      authMode?: string;
+      secretName?: string;
+      system_instructions?: string;
+      special_instructions?: string;
+      [key: string]: any;
+    };
   };
 }
 
@@ -78,187 +81,189 @@ export interface PulsarIOSourcePropertiesProps {
   onChange: (properties: any) => void;
 }
 
-// NOTE: Canonical regex validating Apache Pulsar persistent and non-persistent topic coordinates: (persistent|non-persistent)://tenant/namespace/topic
-export const PULSAR_TOPIC_REGEX = /^(persistent|non-persistent):\/\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
 /**
- * PulsarIOSourceProperties renders the configuration form for Pulsar streaming source reads.
- * 
+ * PulsarIOSourceProperties renders the configuration form for Apache Spark `.format("pulsar")` reads.
+ *
  * @param props Component properties containing the active node data and onChange callback.
  * @returns React component.
  */
 export const PulsarIOSourceProperties: React.FC<PulsarIOSourcePropertiesProps> = ({ node, onChange }) => {
-  const { properties, handleChange } = useNodeProperties<PulsarIOSourcePropertiesData>(node, onChange);
+  const properties = node.data.properties || {};
 
-  const clientUrl = properties.clientUrl || '';
+  const readMode = properties.readMode || 'streaming';
+  const serviceUrl = properties.serviceUrl || '';
   const adminUrl = properties.adminUrl || '';
+  const subscriptionMode = properties.subscriptionMode || 'topic';
   const topic = properties.topic || '';
-  const authMode = properties.authMode || 'none';
-  const tokenSecretName = properties.tokenSecretName || '';
-  const oauthIssuerUrl = properties.oauthIssuerUrl || '';
-  const oauthAudience = properties.oauthAudience || '';
-  const oauthKeySecretName = properties.oauthKeySecretName || '';
-  const tlsCertSecretName = properties.tlsCertSecretName || '';
-  const tlsKeySecretName = properties.tlsKeySecretName || '';
-  const tlsTrustCertSecretName = properties.tlsTrustCertSecretName || '';
-  const timestampType = properties.timestampType || 'publishTime';
-  const consumerPollingTimeout = properties.consumerPollingTimeout ?? '';
-  const startTimestamp = properties.startTimestamp ?? '';
-  const endTimestamp = properties.endTimestamp ?? '';
-
-  const secrets = useSecretOptions();
+  const startingOffsets = properties.startingOffsets || 'latest';
+  const endingOffsets = properties.endingOffsets || 'latest';
+  const allowDifferentTopicSchemas = properties.allowDifferentTopicSchemas ?? false;
+  const authMode = properties.authMode || 'default';
+  const secretName = properties.secretName || '';
 
   const systemInstructions = resolveSystemInstructions(node);
 
-  const handlePropertyPatch = (name: string, value: any) => {
-    onChange({ ...properties, [name]: value });
+  const isServiceUrlInvalid = !serviceUrl.trim();
+  const isTopicInvalid = !topic.trim();
+
+  /**
+   * Handles generic text, select, and checkbox input changes.
+   *
+   * @param e Form change event from input, select, or textarea.
+   */
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    const isCheckbox = type === 'checkbox';
+    const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
+
+    onChange({
+      ...properties,
+      [name]: isCheckbox ? checked : value,
+    });
   };
 
-  const isTopicMissing = !topic.trim();
-  const isTopicFormatInvalid = !!topic.trim() && !PULSAR_TOPIC_REGEX.test(topic.trim());
-  const topicError = isTopicMissing
-    ? 'Pulsar topic name is required.'
-    : isTopicFormatInvalid
-      ? 'Topic must follow format (persistent|non-persistent)://tenant/namespace/topic (e.g. persistent://public/default/my-topic).'
-      : null;
+  const topicLabel =
+    subscriptionMode === 'topics'
+      ? 'Pulsar Topics (Comma-Separated)'
+      : subscriptionMode === 'topicsPattern'
+        ? 'Pulsar Topics Pattern (Regex)'
+        : 'Pulsar Topic';
+
+  const topicPlaceholder =
+    subscriptionMode === 'topics'
+      ? 'persistent://public/default/topic1,persistent://public/default/topic2'
+      : subscriptionMode === 'topicsPattern'
+        ? 'persistent://public/default/events-.*'
+        : 'persistent://public/default/telemetry';
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* 1. Broker & Admin Connection */}
-      <PulsarConnectionFields
-        idPrefix="pulsar"
-        clientUrl={clientUrl}
-        adminUrl={adminUrl}
-        direction="source"
+      {/* Read Mode Select */}
+      <SelectField
+        id="pulsarReadMode"
+        name="readMode"
+        label="Read Mode"
+        tooltip="Select streaming mode (spark.readStream.format('pulsar')) or batch mode (spark.read.format('pulsar'))."
+        value={readMode}
+        options={PULSAR_READ_MODE_OPTIONS}
         onChange={handleChange}
-        onPropertyChange={handlePropertyPatch}
       />
 
-      {/* 2. Topic Configuration */}
+      {/* Broker Service URL (Required) */}
       <PropertyField
-        id="pulsar-topic"
+        id="pulsarServiceUrl"
+        name="serviceUrl"
+        label="Pulsar Service URL"
+        required="Pulsar Service URL is required."
+        tooltip="Pulsar broker service URL (option service.url, e.g. pulsar://localhost:6650 or pulsar+ssl://broker:6651). Required."
+        value={serviceUrl}
+        onChange={handleChange}
+        placeholder="pulsar://localhost:6650"
+        invalid={isServiceUrlInvalid}
+        error={isServiceUrlInvalid ? 'Pulsar Service URL is required.' : null}
+        mono={true}
+      />
+
+      {/* Admin HTTP URL */}
+      <PropertyField
+        id="pulsarAdminUrl"
+        name="adminUrl"
+        label="Pulsar Admin URL"
+        tooltip="Optional Pulsar web admin service URL used for schema and topic metadata lookup (option admin.url, e.g. http://localhost:8080)."
+        value={adminUrl}
+        onChange={handleChange}
+        placeholder="http://localhost:8080"
+        mono={true}
+      />
+
+      {/* Subscription Mode */}
+      <SelectField
+        id="pulsarSubscriptionMode"
+        name="subscriptionMode"
+        label="Subscription Mode"
+        tooltip="Choose how Spark subscribes to streams: single destination (topic), comma-separated list (topics), or regular expression (topicsPattern)."
+        value={subscriptionMode}
+        options={PULSAR_SUBSCRIPTION_MODE_OPTIONS}
+        onChange={handleChange}
+      />
+
+      {/* Topic / Topics / Pattern Input */}
+      <PropertyField
+        id="pulsarTopic"
         name="topic"
-        label="Pulsar Topic"
-        required="Pulsar topic name is required."
-        tooltip="Canonical topic coordinates (e.g. persistent://public/default/telemetry). Validated against persistent:// or non-persistent:// format. Configured via PulsarIO.read().withTopic()."
-        aria-required="true"
-        aria-invalid={isTopicMissing || isTopicFormatInvalid}
+        label={topicLabel}
+        required="Pulsar topic is required."
+        tooltip="Destination URI, comma-separated list of URIs, or regex pattern matching subscriptionMode."
         value={topic}
         onChange={handleChange}
-        placeholder="persistent://public/default/telemetry"
-        invalid={isTopicMissing || isTopicFormatInvalid}
-        error={topicError}
+        placeholder={topicPlaceholder}
+        invalid={isTopicInvalid}
+        error={isTopicInvalid ? 'Pulsar topic is required.' : null}
         mono={true}
-        helperText={
-          !isTopicMissing && !isTopicFormatInvalid ? (
-            <span>
-              Pulsar topic format: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded font-mono">persistent://tenant/namespace/topic</code>
-            </span>
-          ) : null
-        }
       />
 
-      {/* 3. Authentication & Credentials */}
-      <PulsarAuthFields
-        idPrefix="pulsar"
+      {/* Offsets Configuration */}
+      <div className="grid grid-cols-2 gap-3">
+        <SelectField
+          id="pulsarStartingOffsets"
+          name="startingOffsets"
+          label="Starting Offsets"
+          tooltip="Starting offset position when reading from Pulsar (option startingOffsets: latest or earliest)."
+          value={startingOffsets}
+          options={PULSAR_STARTING_OFFSETS_OPTIONS}
+          onChange={handleChange}
+        />
+
+        {readMode === 'batch' && (
+          <PropertyField
+            id="pulsarEndingOffsets"
+            name="endingOffsets"
+            label="Ending Offsets (Batch)"
+            tooltip="Ending offset position for bounded batch queries (option endingOffsets, default latest)."
+            value={endingOffsets}
+            onChange={handleChange}
+            placeholder="latest"
+            datalist={['latest']}
+            mono={true}
+          />
+        )}
+      </div>
+
+      {/* Allow Different Topic Schemas Checkbox */}
+      <div className="p-3 bg-slate-800/40 rounded border border-slate-700/50">
+        <label htmlFor="pulsarAllowDifferentTopicSchemas" className="flex items-center gap-2 cursor-pointer">
+          <input
+            id="pulsarAllowDifferentTopicSchemas"
+            type="checkbox"
+            name="allowDifferentTopicSchemas"
+            checked={allowDifferentTopicSchemas}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+          />
+          <div className="flex items-center">
+            <span className="text-sm font-medium text-slate-300">Allow Different Topic Schemas</span>
+            <InfoTooltip text="When enabled, reads raw byte payloads across topics without enforcing a single unified Pulsar schema (option allowDifferentTopicSchemas)." />
+          </div>
+        </label>
+      </div>
+
+      {/* Secret Manager Auth */}
+      <SecretManagerAuthFields
+        idPrefix="pulsarSource"
+        datalistId="pulsar-source-secrets-list"
         authMode={authMode}
-        tokenSecretName={tokenSecretName}
-        oauthIssuerUrl={oauthIssuerUrl}
-        oauthAudience={oauthAudience}
-        oauthKeySecretName={oauthKeySecretName}
-        tlsCertSecretName={tlsCertSecretName}
-        tlsKeySecretName={tlsKeySecretName}
-        tlsTrustCertSecretName={tlsTrustCertSecretName}
-        secrets={secrets.secrets.map((s) => ({ name: s.id, value: s.id, id: s.id, fullName: s.fullName }))}
-        secretError={secrets.error}
-        isLoadingSecrets={secrets.loading}
-        onRefreshSecrets={secrets.refresh}
+        secretName={secretName}
+        serviceName="Apache Pulsar"
+        secretPlaceholder="e.g. pulsar-jwt-token"
         onChange={handleChange}
       />
 
-      {/* 4. Timestamp & Consumer Polling Configuration */}
-      <div className="p-3 bg-[#252836]/60 rounded border border-slate-700 flex flex-col gap-3">
-        <span className="flex items-center text-xs font-bold uppercase text-slate-400 gap-1.5">
-          <Layers size={12} className="text-blue-400" />
-          <span>Timestamp & Consumer Polling</span>
-        </span>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="pulsar-timestamp-type" className="flex items-center text-xs font-bold uppercase text-slate-500">
-            <span>Element Timestamp Policy</span>
-            <InfoTooltip
-              text="Determines how Beam assigns element timestamps. Publish Time assigns when the message was published to Pulsar (.withPublishTime()); Processing Time assigns pipeline ingestion time (.withProcessingTime())."
-              position="auto"
-            />
-          </label>
-          <select
-            id="pulsar-timestamp-type"
-            name="timestampType"
-            value={timestampType}
-            onChange={handleChange}
-            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-          >
-            <option value="publishTime">Publish Time (Beam Default)</option>
-            <option value="processingTime">Processing Time</option>
-          </select>
-          <p className="text-xs text-slate-400">
-            {timestampType === 'publishTime'
-              ? 'Calls PulsarIO.read().withPublishTime() to use message publication epoch timestamp for windowing.'
-              : 'Calls PulsarIO.read().withProcessingTime() to use pipeline processing timestamp.'}
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60">
-          <PropertyField
-            id="pulsar-start-timestamp"
-            type="number"
-            min="0"
-            name="startTimestamp"
-            label="Start Timestamp (ms)"
-            tooltip="Filter messages starting at this epoch timestamp in milliseconds. Configured via PulsarIO.read().withStartTimestamp(long)."
-            value={startTimestamp}
-            onChange={handleChange}
-            placeholder="e.g. 1695400000000"
-            mono={true}
-          />
-          <PropertyField
-            id="pulsar-end-timestamp"
-            type="number"
-            min="0"
-            name="endTimestamp"
-            label="End Timestamp (ms)"
-            tooltip="Filter messages up to this epoch timestamp in milliseconds. Configured via PulsarIO.read().withEndTimestamp(long)."
-            value={endTimestamp}
-            onChange={handleChange}
-            placeholder="e.g. 1695486400000"
-            mono={true}
-          />
-        </div>
-
-        <div className="pt-2 border-t border-slate-700/40">
-          <PropertyField
-            id="pulsar-consumer-polling-timeout"
-            type="number"
-            min="1"
-            name="consumerPollingTimeout"
-            label="Consumer Polling Timeout (s)"
-            tooltip="Timeout in seconds for Pulsar consumer polling request (calls withConsumerPollingTimeout(long), default: 2)."
-            helperText="Timeout in seconds for Pulsar consumer polling request (calls withConsumerPollingTimeout(long), default: 2)."
-            value={consumerPollingTimeout}
-            onChange={handleChange}
-            placeholder="2"
-            mono={true}
-          />
-        </div>
-      </div>
-
-      {/* 5. Code Generation Instructions */}
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="pulsar-instructions"
         value={systemInstructions}
-        tooltip="Custom instructions passed to the AI code generation model for this specific Pulsar Source node (e.g. custom deserializer, message routing, dead-letter queue handling)."
-        placeholder="e.g. Parse PulsarMessage payload as UTF-8 JSON, extract event timestamp from metadata, and route malformed records to DLQ."
-        wrapperClassName="pt-2 border-t border-slate-700/60"
+        tooltip="Custom instructions passed to the AI code generator for this Pulsar source node."
+        placeholder="e.g. Parse Pulsar payload and extract __publishTime for event-time watermarking."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -269,3 +274,6 @@ export const PulsarIOSourceProperties: React.FC<PulsarIOSourcePropertiesProps> =
     </div>
   );
 };
+
+/** Alias matching the canonical Spark transform name `PulsarSource`. */
+export const PulsarSourceProperties = PulsarIOSourceProperties;

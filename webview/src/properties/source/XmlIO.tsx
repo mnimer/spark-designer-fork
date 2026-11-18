@@ -1,37 +1,47 @@
 /**
- * XmlIO Source Properties Component
- * 
+ * @fileoverview XML Source (SRC19 XmlSource / XmlIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam XmlIO Source nodes
- * (XmlIO.<T>read().from(filepattern).withRootElement(root).withRecordElement(record).withRecordClass(Class)...).
- * 
- * Architectural Decisions:
- * - Native Java connector: org.apache.beam.sdk.io.xml.XmlIO requires filepattern, rootElement, and recordElement.
- * - JAXB Unmarshalling: recordClass specifies the fully qualified name of the JAXB-annotated entity class.
- * - Dynamic Discovery: Delegates the file pattern field to the shared StoragePathField, which owns
- *   Cloud Storage bucket discovery, gs:// datalist projection, and the discovery-error alert.
- * - Cross-Language Note: Beam Python has no native XmlIO, requiring cross-language expansion service (ExternalTransform).
- *   Displays read-only informational guidance and optional expansionService configuration.
- * - Read Tuning & Advanced Options: Min bundle size and file validation configurable inside collapsible section.
- * - Adheres strictly to the 8pt grid system, VS Code theme variables, and Tailwind CSS.
+ * Renders the property configuration panel for Apache Spark 4.0 built-in XML source nodes
+ * using spark.read.format("xml") or spark.readStream.format("xml").
+ * Embeds StorageBackendFields, rowTag (required), valueTag (default '_VALUE'),
+ * attributePrefix (default '_'), mode, columnNameOfCorruptRecord, maxFilesPerTrigger
+ * (for streaming), SchemaEditor, and SystemInstructionsField.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
-import { Sliders } from 'lucide-react';
-import { InfoTooltip } from '../../components/InfoTooltip';
+import { FileCode } from 'lucide-react';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
+import {
+  SchemaEditor,
+  resolveSchemaFields,
+  type SchemaField,
+} from '../../components/common/SchemaEditor';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
-import { SelectField } from '../../components/common/SelectField';
-import { StoragePathField } from '../../components/common/StoragePathField';
-import { MappingStrategyField, type MappingStrategy } from '../../components/common/MappingStrategyField';
-import { resolveSchemaFields, type SchemaField } from '../../components/common/SchemaEditor';
 
 /**
- * Node data structure for XmlIO source nodes.
+ * Supported Spark XML parsing modes for malformed records.
+ */
+export const XML_PARSE_MODES: SelectFieldOption[] = [
+  { value: 'PERMISSIVE', label: 'PERMISSIVE (Capture malformed rows in _corrupt_record)' },
+  { value: 'DROPMALFORMED', label: 'DROPMALFORMED (Drop malformed rows silently)' },
+  { value: 'FAILFAST', label: 'FAILFAST (Abort job immediately on malformed row)' },
+];
+
+const READ_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'batch', label: 'BATCH (spark.read.format("xml"))' },
+  { value: 'streaming', label: 'STREAM (spark.readStream.format("xml"))' },
+];
+
+/**
+ * React Flow node shape for the XML source panel.
  */
 export interface XmlIOSourceNode {
   data: {
@@ -40,18 +50,23 @@ export interface XmlIOSourceNode {
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      readMode?: 'batch' | 'streaming';
+      storageBackend?: string;
+      path?: string;
       filePattern?: string;
-      rootElement?: string;
+      uri?: string;
+      pathGlobFilter?: string;
+      recursiveFileLookup?: boolean;
+      rowTag?: string;
       recordElement?: string;
-      mappingStrategy?: MappingStrategy | string;
-      schemaString?: string;
+      valueTag?: string;
+      attributePrefix?: string;
+      mode?: 'PERMISSIVE' | 'DROPMALFORMED' | 'FAILFAST';
+      columnNameOfCorruptRecord?: string;
+      maxFilesPerTrigger?: string | number;
       schema?: string;
+      schemaString?: string;
       schemaFields?: SchemaField[];
-      charset?: string;
-      compression?: string;
-      minBundleSize?: string | number;
-      validate?: boolean;
-      expansionService?: string;
       system_instructions?: string;
       special_instructions?: string;
       [key: string]: any;
@@ -60,292 +75,193 @@ export interface XmlIOSourceNode {
 }
 
 /**
- * Props for the XmlIO source properties component.
+ * Props for the {@link XmlIOSourceProperties} component.
  */
 export interface XmlIOSourcePropertiesProps {
   node: XmlIOSourceNode;
   onChange: (properties: any) => void;
 }
 
-export const XML_CHARSETS = [
-  { value: 'UTF-8', label: 'UTF-8 (Standard)' },
-  { value: 'UTF-16', label: 'UTF-16' },
-  { value: 'ISO-8859-1', label: 'ISO-8859-1 (Latin-1)' }
-];
-
-export const XML_COMPRESSION_TYPES = [
-  { value: 'AUTO', label: 'AUTO (Detect from file extension)' },
-  { value: 'UNCOMPRESSED', label: 'UNCOMPRESSED' },
-  { value: 'GZIP', label: 'GZIP' },
-  { value: 'BZIP2', label: 'BZIP2' },
-  { value: 'ZIP', label: 'ZIP' },
-  { value: 'DEFLATE', label: 'DEFLATE' },
-  { value: 'ZSTD', label: 'ZSTD' }
-];
-
 /**
- * Informational note for Python cross-language expansion requirements.
+ * Dedicated property panel for Apache Spark 4.0 XmlSource / XmlIO source nodes.
+ *
+ * @param props Selected node and change callback.
+ * @returns Rendered XML source property panel.
  */
-export const PythonCrossLanguageNote: React.FC = () => (
-  <div className="text-[11px] text-[var(--vscode-text-muted)] leading-relaxed">
-    <strong>Python Cross-Language:</strong> Apache Beam Python does not provide a native <code>XmlIO</code> connector. Python pipelines connect to <code>XmlIO</code> via the Java expansion service (<code>apache_beam.transforms.xlang</code> / <code>ExternalTransform</code>).
-  </div>
-);
-
-/**
- * XmlIOSourceProperties renders the configuration form for reading XML files with Apache Beam.
- */
-export const XmlIOSourceProperties: React.FC<XmlIOSourcePropertiesProps> = ({ node, onChange }) => {
+export const XmlIOSourceProperties: React.FC<XmlIOSourcePropertiesProps> = ({
+  node,
+  onChange,
+}) => {
   const properties = node.data.properties || {};
-  const filePattern = properties.filePattern || '';
-  const rootElement = properties.rootElement || '';
-  const recordElement = properties.recordElement || '';
-  const schemaFields = React.useMemo(
-    () => resolveSchemaFields(properties),
-    [properties.schemaFields, properties.schema, properties.schemaString]
-  );
-  const mappingStrategy =
-    properties.mappingStrategy || (schemaFields.length > 0 ? 'schema' : 'infer');
-  const charset = properties.charset || 'UTF-8';
-  const compression = properties.compression || 'AUTO';
-  const minBundleSize = properties.minBundleSize ?? '';
-  const validate = properties.validate ?? true;
-  const expansionService = properties.expansionService || '';
-
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
-
-  // Validation: filePattern, rootElement, and recordElement are required for XmlIO.read().
-  // NOTE: the filePattern rule mirrors StoragePathField's; used here only to gate the helper text.
-  const isFilePatternInvalid = !filePattern.trim();
-  const isRootElementInvalid = !rootElement.trim();
-  const isRecordElementInvalid = !recordElement.trim();
-
-  // Extract system instructions with fallbacks
+  const readMode = properties.readMode === 'streaming' ? 'streaming' : 'batch';
+  const rowTag = properties.rowTag ?? properties.recordElement ?? '';
+  const valueTag = properties.valueTag ?? '_VALUE';
+  const attributePrefix = properties.attributePrefix ?? '_';
+  const mode = properties.mode || 'PERMISSIVE';
+  const columnNameOfCorruptRecord =
+    properties.columnNameOfCorruptRecord ?? '_corrupt_record';
+  const maxFilesPerTrigger = properties.maxFilesPerTrigger ?? '';
+  const schemaFields: SchemaField[] = resolveSchemaFields(properties);
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles generic form inputs and checkboxes.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const [isSchemaOpen, setIsSchemaOpen] = useState<boolean>(true);
+  const isRowTagInvalid = !rowTag.trim();
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
-    });
-  };
-
-  /**
-   * Updates schema fields from SchemaEditor.
-   */
-  const handleSchemaChange = (data: { schemaFields: SchemaField[]; schema: string; schemaString: string }) => {
-    onChange({
-      ...properties,
-      schemaFields: data.schemaFields,
-      schema: data.schema,
-      schemaString: data.schemaString
+      [name]: isCheckbox ? checked : value,
     });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Java Only Notice */}
-      <div
-        id="xmlSourceJavaOnlyNotice"
-        data-testid="xml-source-java-only-notice"
-        className="flex items-center justify-between gap-2 p-2.5 rounded border border-[var(--vscode-border)] bg-[var(--vscode-subcard-bg)] text-xs text-[var(--vscode-text-secondary)]"
-      >
-        <span>
-          <strong>Java Only:</strong> <code>XmlIO</code> is a Java-only node type (<code>beam-sdks-java-io-xml</code>) and is only supported in Apache Beam Java pipelines.
+      {/* Read Mode Selector */}
+      <SelectField
+        id="xmlSourceReadMode"
+        name="readMode"
+        label="Read Mode"
+        tooltip="Select batch mode (spark.read.format('xml')) or Structured Streaming mode (spark.readStream.format('xml'))."
+        value={readMode}
+        options={READ_MODE_OPTIONS}
+        onChange={handleChange}
+      />
+
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={properties}
+        onChange={onChange}
+        idPrefix="xmlSource"
+        pathLabel="XML URI / Path"
+        pathPlaceholder="gs://my-bucket/data/*.xml"
+      />
+
+      {/* Spark 4.0 Built-in XML Reader Options */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          Spark 4.0 XML Options (.format(&quot;xml&quot;))
         </span>
-      </div>
 
-      {/* File Pattern Input with Cloud Storage bucket autocomplete */}
-      <StoragePathField
-        id="xmlSourceFilePattern"
-        name="filePattern"
-        label="File Pattern / Path (.from)"
-        tooltip="Target XML file path or glob pattern (e.g. gs://bucket/*.xml, s3://bucket/*.xml, or /local/path/*.xml). Required."
-        value={filePattern}
-        onChange={handleChange}
-        placeholder="gs://bucket/data/*.xml, s3://bucket/data/*.xml, or /local/*.xml"
-        errorMessage="File Pattern is required."
-        helperText={
-          !isFilePatternInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Target file or glob pattern across Cloud Storage, Amazon S3, HDFS, or local storage.
-            </span>
-          ) : null
-        }
-      />
-
-      {/* Root Element Input */}
-      <PropertyField
-        id="xmlSourceRootElement"
-        name="rootElement"
-        label="Root Element (.withRootElement)"
-        required="Root Element is required."
-        tooltip="Name of the root XML element of the document (e.g. 'inventory' or 'catalog'). Required."
-        aria-required="true"
-        aria-invalid={isRootElementInvalid}
-        value={rootElement}
-        onChange={handleChange}
-        placeholder="e.g. inventory, catalog, or root"
-        invalid={isRootElementInvalid}
-        error={isRootElementInvalid ? 'Root Element is required.' : null}
-        mono={true}
-        helperText={
-          !isRootElementInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Enclosing root XML element tag name.
-            </span>
-          ) : null
-        }
-      />
-
-      {/* Record Element Input */}
-      <PropertyField
-        id="xmlSourceRecordElement"
-        name="recordElement"
-        label="Record Element (.withRecordElement)"
-        required="Record Element is required."
-        tooltip="Name of the XML elements containing individual records to parse (e.g. 'item' or 'record'). Required."
-        aria-required="true"
-        aria-invalid={isRecordElementInvalid}
-        value={recordElement}
-        onChange={handleChange}
-        placeholder="e.g. item, record, or entry"
-        invalid={isRecordElementInvalid}
-        error={isRecordElementInvalid ? 'Record Element is required.' : null}
-        mono={true}
-        helperText={
-          !isRecordElementInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              XML tag representing each individual record to unmarshal.
-            </span>
-          ) : null
-        }
-      />
-
-      {/* XML Record & Schema Mapping */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>XML Record &amp; Schema Mapping</span>
-          <InfoTooltip text="Configures how XML record elements map to Beam PCollection elements. Gemini automatically synthesizes the JAXB-annotated POJO (@XmlRootElement) and Beam Row mapping from rootElement + recordElement or from a defined schema." />
-        </label>
-
-        <MappingStrategyField
-          id="xmlSourceMappingStrategy"
-          strategyName="mappingStrategy"
-          strategy={mappingStrategy}
-          options={['infer', 'schema']}
-          optionLabels={{
-            infer: 'Auto-Infer JAXB Record / Row (Recommended)',
-            schema: 'Define Schema (Fields & Types)'
-          }}
-          label="Record Mapping Strategy"
-          tooltip="Select how XML records are mapped. 'Auto-Infer' lets Gemini synthesize the JAXB-annotated POJO (@XmlRootElement) and Beam Row from rootElement + recordElement. 'Define Schema' lets you specify exact fields & types."
-          inferDescription={
-            <>
-              Gemini will automatically synthesize a JAXB{' '}
-              <code className="text-slate-200 bg-slate-800/80 px-1 py-0.5 rounded">@XmlRootElement</code>-annotated POJO and{' '}
-              <code className="text-slate-200 bg-slate-800/80 px-1 py-0.5 rounded">XmlIO.read()</code> mapping from your root and record elements.
-            </>
-          }
-          schemaFields={schemaFields}
-          schemaStringPlaceholder="sku:STRING:REQUIRED, name:STRING, price:DOUBLE, quantity:INTEGER"
-          onSchemaChange={handleSchemaChange}
+        <PropertyField
+          id="xmlSourceRowTag"
+          name="rowTag"
+          label="Row Tag (rowTag)"
+          required="Row Tag is required."
+          aria-required={true}
+          aria-invalid={isRowTagInvalid}
+          invalid={isRowTagInvalid}
+          error={isRowTagInvalid ? 'Row Tag is required.' : null}
+          tooltip="XML element tag name treated as an individual DataFrame row (for example, book, item, or record). Required."
+          value={rowTag}
           onChange={handleChange}
+          placeholder="e.g. item, record, or book"
+          mono={true}
         />
-      </div>
 
-      {/* Charset Select */}
-      <SelectField
-        id="xmlSourceCharset"
-        name="charset"
-        label="Character Set (.withCharset)"
-        tooltip="Character encoding of the XML files. Defaults to UTF-8."
-        value={charset}
-        options={XML_CHARSETS}
-        onChange={handleChange}
-      />
-
-      {/* Compression Select */}
-      <SelectField
-        id="xmlSourceCompression"
-        name="compression"
-        label="Decompression (.withCompression)"
-        tooltip="Decompression algorithm used when reading XML files. Defaults to AUTO (detect from file extension)."
-        value={compression}
-        options={XML_COMPRESSION_TYPES}
-        onChange={handleChange}
-      />
-
-      {/* Advanced Settings Accordion */}
-      <CollapsibleSection
-        title="Read Tuning & Options"
-        icon={<Sliders className="w-4 h-4 text-emerald-400" />}
-        isOpen={isAdvancedOpen}
-        onToggle={() => setIsAdvancedOpen(!isAdvancedOpen)}
-      >
-        {/* Validate file existence */}
-        <label htmlFor="xmlSourceValidate" className="flex items-center gap-2 cursor-pointer mt-1">
-          <input
-            id="xmlSourceValidate"
-            type="checkbox"
-            name="validate"
-            checked={validate}
+        <div className="grid grid-cols-2 gap-3">
+          <PropertyField
+            id="xmlSourceValueTag"
+            name="valueTag"
+            label="Value Tag (valueTag)"
+            tooltip="Column name used for the element text value when an XML element also carries attributes (default '_VALUE')."
+            value={valueTag}
             onChange={handleChange}
-            className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
+            placeholder="_VALUE"
+            mono={true}
           />
-          <span className="text-xs text-[var(--vscode-text-secondary)]">Validate file existence on pipeline startup</span>
-          <InfoTooltip text="Checks whether the input file pattern matches files at pipeline construction time." />
-        </label>
+          <PropertyField
+            id="xmlSourceAttributePrefix"
+            name="attributePrefix"
+            label="Attribute Prefix (attributePrefix)"
+            tooltip="Prefix prepended to XML attribute names to distinguish them from child elements (default '_')."
+            value={attributePrefix}
+            onChange={handleChange}
+            placeholder="_"
+            mono={true}
+          />
+        </div>
 
-        {/* Min Bundle Size */}
-        <PropertyField
-          id="xmlSourceMinBundleSize"
-          type="number"
-          name="minBundleSize"
-          label="Minimum Bundle Size (bytes)"
-          tooltip="Minimum byte size to consider when splitting input XML into bundles for parallel worker execution. Default is 0."
-          value={minBundleSize}
+        <SelectField
+          id="xmlSourceMode"
+          name="mode"
+          label="Parse Mode (mode)"
+          tooltip="Controls how Spark handles malformed XML elements."
+          value={mode}
+          options={XML_PARSE_MODES}
           onChange={handleChange}
-          placeholder="0"
-          min="0"
-          mono={true}
         />
-      </CollapsibleSection>
 
-      {/* Python Cross-Language Section */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
-        <PythonCrossLanguageNote />
-        <PropertyField
-          id="xmlSourceExpansionService"
-          name="expansionService"
-          label="Expansion Service (Python xlang, Optional)"
-          tooltip="Host and port of the Apache Beam Java expansion service used for cross-language XmlIO in Python pipelines (e.g. localhost:8097)."
-          value={expansionService}
-          onChange={handleChange}
-          placeholder="localhost:8097"
-          mono={true}
-          helperText={
-            <span className="text-[11px] text-[var(--vscode-text-muted)]">
-              <strong>Python:</strong> Specify host:port of the Beam expansion service when executing via Python. Not used in Java.
-            </span>
-          }
-        />
+        {mode === 'PERMISSIVE' && (
+          <PropertyField
+            id="xmlSourceCorruptRecordCol"
+            name="columnNameOfCorruptRecord"
+            label="Corrupt Record Column (columnNameOfCorruptRecord)"
+            tooltip="Column name storing raw unparsed XML strings when mode is PERMISSIVE."
+            value={columnNameOfCorruptRecord}
+            onChange={handleChange}
+            placeholder="_corrupt_record"
+            mono={true}
+          />
+        )}
+
+        {readMode === 'streaming' && (
+          <PropertyField
+            id="xmlSourceMaxFilesPerTrigger"
+            type="number"
+            name="maxFilesPerTrigger"
+            label="Max Files Per Trigger (maxFilesPerTrigger)"
+            tooltip="Maximum number of new XML files to process in each streaming micro-batch trigger."
+            value={maxFilesPerTrigger}
+            onChange={handleChange}
+            placeholder="e.g. 100"
+            min="1"
+            mono={true}
+          />
+        )}
       </div>
+
+      {/* Schema Editor Section */}
+      <CollapsibleSection
+        title="DataFrame Schema (StructType)"
+        icon={<FileCode className="w-4 h-4 text-emerald-400" />}
+        isOpen={isSchemaOpen}
+        onToggle={() => setIsSchemaOpen(!isSchemaOpen)}
+      >
+        <div className="mt-2">
+          <SchemaEditor
+            fields={schemaFields}
+            schemaTitle="Spark StructType Schema"
+            jsonTextareaId="xmlSourceSchema"
+            stringTextareaId="xmlSourceSchemaString"
+            onChange={({
+              schemaFields: nextFields,
+              schema: nextSchema,
+              schemaString: nextStr,
+            }) => {
+              onChange({
+                ...properties,
+                schemaFields: nextFields,
+                schema: nextSchema,
+                schemaString: nextStr,
+              });
+            }}
+          />
+        </div>
+      </CollapsibleSection>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="xmlSourceInstructions"
         value={systemInstructions}
-        placeholder="e.g. Unmarshal XML using com.example.model.InventoryItem and handle namespace prefixes."
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline source code for this XmlIO reader step."
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
+        placeholder="e.g. Extract nested XML attributes and route _corrupt_record rows to DLQ."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark XML reader code."
+        helperText="Additional guidance appended to the prompt when generating PySpark code."
         wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
         textareaClassName="h-24"
         onChange={(value) =>
@@ -358,3 +274,5 @@ export const XmlIOSourceProperties: React.FC<XmlIOSourcePropertiesProps> = ({ no
     </div>
   );
 };
+
+export const XmlSourceProperties = XmlIOSourceProperties;

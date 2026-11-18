@@ -1,321 +1,409 @@
 /**
- * CloudSQL Source Properties Component (IO74)
+ * Cloud SQL Source Properties Component (SRC25)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Google Cloud SQL (PostgreSQL) Source nodes
- * in Apache Beam Python pipelines, traced to jccatrinck/dataflow-cloud-sql-python
- * (`transformations/db.py` ReadFromDBFn, `.env-example`, `Makefile`, `devops/entrypoint.sh`).
- *
- * Documentation Traceability:
- * - Repository: https://github.com/jccatrinck/dataflow-cloud-sql-python
- * - ReadFromDBFn(url, query, query_params={}): https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/transformations/db.py#L11-L30
- * - DB_URL & CLOUD_SQL_INSTANCES: https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/.env-example#L5-L6
- * - Drivers (pg8000, psycopg2): https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/Makefile#L17-L20
+ * Renders the property configuration panel for Google Cloud SQL Source nodes
+ * in Apache Spark 4.x pipelines (.format("jdbc") + Cloud SQL JDBC Socket Factory).
  *
  * Architectural Decisions:
- * - Upstream connector is PostgreSQL-only (uses sqlalchemy.dialects.postgresql and pg_isready on .s.PGSQL.5432).
- * - Decomposes DB_URL into cloudSqlInstance, dbDriver, database, username, and passwordSecret so no
- *   plaintext password is ever stored in the pipeline YAML (R3).
- * - Uses useAssetLoader('sqlInstances') and gated useAssetLoader('sqlDatabases') with PropertyField
- *   datalists following the PubSubIO discovery pattern (R2).
- * - Standardized on SQLAlchemy 2.x API (`sqlalchemy.text(query)` with `:name` bind parameters) matching
- *   upstream ReadFromDBFn semantics on Python 3.11 / Beam 2.55+.
+ * - Supports PostgreSQL, MySQL, and SQL Server engines over Cloud SQL Socket Factory.
+ * - Supports IAM database authentication or Google Cloud Secret Manager credentials.
+ * - Configures parallel partitioned reads with dynamic MIN/MAX bounds query toggle
+ *   or manual lowerBound/upperBound, numPartitions (default 8), and fetchsize (default 5000).
+ * - Exposes driverJarUri and socketFactoryJarUri for Dataproc / Serverless Spark --jars.
  */
 
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import { SecretManagerAuthFields, type AuthModeOption } from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { SecretManagerSecretField } from '../../components/common/SecretManagerSecretField';
-import { ExternalDocsLink } from '../../components/common/ExternalDocsLink';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { useNodeProperties } from '../../hooks/useNodeProperties';
 
-export const CLOUD_SQL_DOC_URL = 'https://github.com/jccatrinck/dataflow-cloud-sql-python';
-export const CLOUD_SQL_DB_DOC_URL =
-  'https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/transformations/db.py';
-export const DEFAULT_DB_DRIVER = 'postgresql+pg8000';
+export type CloudSqlDbEngine = 'postgresql' | 'mysql' | 'sqlserver';
+export type CloudSqlAuthMode = 'iam' | 'secret_manager';
 
-/**
- * Matches a Cloud SQL instance connection name `[domain:]project:region:instance`.
- */
 const CONNECTION_NAME_RE = /^(?:[a-z0-9.-]+:)?[a-z0-9-]+:[a-z0-9-]+:[a-z][a-z0-9-]*$/i;
 
-const DB_DRIVER_OPTIONS = [
-  { value: 'postgresql+pg8000', label: 'PostgreSQL (pg8000) — repository default' },
-  { value: 'postgresql+psycopg2', label: 'PostgreSQL (psycopg2)' },
-] as const;
-
-/**
- * Database name cannot contain whitespace or URI delimiter characters.
- */
-const DATABASE_RE = /^[^\s/?#@:]+$/;
-
-/**
- * Username cannot contain whitespace.
- */
-const USERNAME_RE = /^\S+$/;
-
-/**
- * Validates the optional JSON object string for `ReadFromDBFn(query_params=...)`.
- *
- * @param raw Raw textarea string.
- * @returns Validation error message, or null when blank or a valid JSON object.
- */
-function validateQueryParams(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return 'Query parameters must be a JSON object, e.g. {"status": "active"}';
-    }
-    return null;
-  } catch (err) {
-    return `Invalid JSON: ${(err as Error).message}`;
-  }
-}
+const CLOUD_SQL_AUTH_OPTIONS: AuthModeOption[] = [
+  { value: 'iam', label: 'Cloud SQL IAM Database Authentication (enableIamAuth=true)' },
+  { value: 'secret_manager', label: 'Google Cloud Secret Manager (Password Secret)' },
+];
 
 /** Props for the {@link CloudSQLSourceProperties} component. */
 export interface CloudSQLSourcePropertiesProps {
   node: {
     data: {
       properties?: {
+        instanceConnectionName?: string;
         cloudSqlInstance?: string;
-        dbDriver?: string;
+        dbEngine?: CloudSqlDbEngine;
         database?: string;
-        username?: string;
-        passwordSecret?: string;
+        readTargetMode?: 'table' | 'query';
+        table?: string;
         query?: string;
-        queryParams?: string;
+        authMode?: CloudSqlAuthMode | string;
+        username?: string;
+        secretName?: string;
+        passwordSecret?: string;
+        partitionColumn?: string;
+        numPartitions?: number | string;
+        dynamicBounds?: boolean;
+        lowerBound?: number | string;
+        upperBound?: number | string;
+        fetchsize?: number | string;
+        driverJarUri?: string;
+        socketFactoryJarUri?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: unknown;
+        [key: string]: any;
       };
       system_instructions?: string;
       special_instructions?: string;
     };
   };
-  onChange: (properties: Record<string, unknown>) => void;
+  onChange: (properties: Record<string, any>) => void;
 }
 
 /**
- * Dedicated property panel for the Cloud SQL source node. Configures instance connection, database credentials, and query parameters.
- *
- * @param props The selected node and the onChange callback used to persist edits.
+ * Dedicated property panel for the Apache Spark Cloud SQL source node (.format("jdbc")).
  */
 export const CloudSQLSourceProperties: React.FC<CloudSQLSourcePropertiesProps> = ({ node, onChange }) => {
-  const { properties, handleChange } = useNodeProperties(node, onChange);
+  const properties = node?.data?.properties || {};
 
-  const cloudSqlInstance = properties.cloudSqlInstance || '';
-  const dbDriver = properties.dbDriver || DEFAULT_DB_DRIVER;
+  const instanceConnectionName = properties.instanceConnectionName ?? properties.cloudSqlInstance ?? '';
+  const dbEngine: CloudSqlDbEngine = properties.dbEngine || 'postgresql';
   const database = properties.database || '';
-  const username = properties.username || '';
-  const passwordSecret = properties.passwordSecret || '';
+  const table = properties.table || '';
   const query = properties.query || '';
-  const queryParams = properties.queryParams || '';
+  const readTargetMode: 'table' | 'query' =
+    properties.readTargetMode || (query.trim() && !table.trim() ? 'query' : 'table');
+  const authMode = properties.authMode || 'iam';
+  const username = properties.username || '';
+  const secretName = properties.secretName ?? properties.passwordSecret ?? '';
+  const partitionColumn = properties.partitionColumn || '';
+  const numPartitions = properties.numPartitions ?? 8;
+  const dynamicBounds = properties.dynamicBounds ?? true;
+  const lowerBound = properties.lowerBound ?? '';
+  const upperBound = properties.upperBound ?? '';
+  const fetchsize = properties.fetchsize ?? 5000;
+  const driverJarUri = properties.driverJarUri || '';
+  const socketFactoryJarUri = properties.socketFactoryJarUri || '';
 
-  // Dynamic gcloud discovery (R2 PubSubIO datalist pattern)
-  const { items: sqlInstances, loading: sqlInstancesLoading, error: sqlInstancesError } = useAssetLoader<string>('sqlInstances');
+  const { items: sqlInstances, loading: sqlInstancesLoading, error: sqlInstancesError } =
+    useAssetLoader<string>('sqlInstances');
 
-  const instanceTrimmed = cloudSqlInstance.trim();
+  const instanceTrimmed = String(instanceConnectionName).trim();
   const instanceWellFormed = CONNECTION_NAME_RE.test(instanceTrimmed);
 
-  // Gate sqlDatabases discovery on a well-formed connection name to avoid per-keystroke CLI calls
-  const { items: sqlDatabases, loading: sqlDatabasesLoading, error: sqlDatabasesError } = useAssetLoader<string>('sqlDatabases', {
-    params: { instance: instanceTrimmed },
-    enabled: instanceWellFormed,
-  });
+  const { items: sqlDatabases, loading: sqlDatabasesLoading, error: sqlDatabasesError } =
+    useAssetLoader<string>('sqlDatabases', {
+      params: { instance: instanceTrimmed },
+      enabled: instanceWellFormed,
+    });
 
-  const databaseOptions = instanceWellFormed ? sqlDatabases : [];
-  const databaseDiscoveryError = instanceWellFormed ? sqlDatabasesError : null;
-
-  // Field validation
   const isInstanceEmpty = instanceTrimmed.length === 0;
   const instanceFormatError =
     !isInstanceEmpty && !instanceWellFormed
-      ? 'Use the instance connection name PROJECT:REGION:INSTANCE (see gcloud sql instances list).'
+      ? 'Use the instance connection name PROJECT:REGION:INSTANCE'
       : null;
   const instanceError = instanceFormatError ?? sqlInstancesError;
-  const isInstanceInvalid = isInstanceEmpty || Boolean(instanceError);
-
-  const databaseTrimmed = database.trim();
-  const isDatabaseEmpty = databaseTrimmed.length === 0;
-  const databaseFormatError =
-    !isDatabaseEmpty && !DATABASE_RE.test(databaseTrimmed)
-      ? 'Database name cannot contain spaces or / ? # @ :'
-      : null;
-  const databaseError = databaseFormatError ?? databaseDiscoveryError;
-  const isDatabaseInvalid = isDatabaseEmpty || Boolean(databaseError);
-
-  const usernameTrimmed = username.trim();
-  const isUsernameEmpty = usernameTrimmed.length === 0;
-  const usernameError =
-    !isUsernameEmpty && !USERNAME_RE.test(usernameTrimmed) ? 'Username cannot contain whitespace' : null;
-  const isUsernameInvalid = isUsernameEmpty || Boolean(usernameError);
-
-  const isPasswordSecretEmpty = passwordSecret.trim().length === 0;
-  const isQueryEmpty = query.trim().length === 0;
-  const queryParamsError = validateQueryParams(queryParams);
+  const isDatabaseEmpty = !database.trim();
+  const isTableEmpty = readTargetMode === 'table' && !table.trim();
+  const isQueryEmpty = readTargetMode === 'query' && !query.trim();
 
   const systemInstructions = resolveSystemInstructions(node);
 
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value, type } = e.target;
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next = { ...properties, [name]: updatedValue };
+    if (name === 'instanceConnectionName') {
+      delete next.cloudSqlInstance;
+    }
+    onChange(next);
+  };
+
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Header & Documentation Link */}
-      <div className="flex flex-col gap-1.5 p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs text-slate-300">
+      {/* Connector Header Badge */}
+      <div className="flex flex-col gap-1 p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
         <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-200">Cloud SQL (PostgreSQL) Source</span>
-          <ExternalDocsLink
-            url={CLOUD_SQL_DOC_URL}
-            ariaLabel="Open Cloud SQL connector documentation"
-            className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer shrink-0 focus:outline-none"
-          />
+          <span className="font-semibold text-slate-200">Spark Cloud SQL JDBC + Socket Factory</span>
+          <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+            .format(&quot;jdbc&quot;) · BATCH
+          </span>
         </div>
-        <p className="text-slate-400">
-          Queries a Google Cloud SQL for PostgreSQL instance via the Cloud SQL Connector or Auth Proxy.
-        </p>
+        {dbEngine === 'sqlserver' && (
+          <span className="text-[11px] text-amber-300 font-mono">
+            Requires spark property: dataproc.artifacts.remove=conscrypt
+          </span>
+        )}
       </div>
 
-      {/* Instance Connection Name */}
+      {/* Instance Connection Name & Engine */}
       <PropertyField
         id="cloudSqlSourceInstance"
-        name="cloudSqlInstance"
+        name="instanceConnectionName"
         label="Instance Connection Name"
-        required
-        tooltip="Cloud SQL for PostgreSQL instance connection name (PROJECT:REGION:INSTANCE). Reached via Cloud SQL Python Connector or Auth Proxy unix socket /cloudsql/<connection name>. PostgreSQL instances only."
-        value={cloudSqlInstance}
-        invalid={isInstanceInvalid}
-        error={instanceError}
+        required="Instance connection name is required"
+        tooltip="Cloud SQL instance connection name (project:region:instance)."
+        value={instanceConnectionName}
+        invalid={isInstanceEmpty || Boolean(instanceError)}
+        error={isInstanceEmpty ? 'Instance connection name is required' : instanceError}
         onChange={handleChange}
         placeholder="my-project:us-central1:my-instance"
         list="cloudsql-source-instance-options"
         datalist={sqlInstances}
         loading={sqlInstancesLoading}
-        helperText={
-          <span>
-            Sample:{' '}
-            <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">
-              my-project:us-central1:my-instance
-            </code>
-          </span>
-        }
+        mono={true}
       />
 
-      {/* Database Driver */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="cloudSqlSourceDriver" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Database Driver</span>
-          <span className="text-red-400 ml-1 font-bold" title="Required">
-            *
-          </span>
-          <InfoTooltip text="SQLAlchemy dialect+driver prefix of the database engine (postgresql+pg8000 default, or postgresql+psycopg2). Only PostgreSQL is supported because the connector uses PostgreSQL-specific SQL." />
-        </label>
-        <select
-          id="cloudSqlSourceDriver"
-          name="dbDriver"
-          aria-required="true"
-          value={dbDriver}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="cloudSqlSourceDbEngine"
+            className="flex items-center text-xs font-bold uppercase text-slate-500"
+          >
+            <span>Database Engine</span>
+            <InfoTooltip text="Cloud SQL database engine determining the JDBC driver and Socket Factory class." />
+          </label>
+          <select
+            id="cloudSqlSourceDbEngine"
+            name="dbEngine"
+            value={dbEngine}
+            onChange={handleChange}
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="postgresql">PostgreSQL</option>
+            <option value="mysql">MySQL</option>
+            <option value="sqlserver">SQL Server</option>
+          </select>
+        </div>
+
+        <PropertyField
+          id="cloudSqlSourceDatabase"
+          name="database"
+          label="Database"
+          required="Database is required"
+          tooltip="Database name on the Cloud SQL instance."
+          value={database}
+          invalid={isDatabaseEmpty}
+          error={isDatabaseEmpty ? 'Database is required' : instanceWellFormed ? sqlDatabasesError : null}
           onChange={handleChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          {DB_DRIVER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+          placeholder="postgres"
+          list="cloudsql-source-database-options"
+          datalist={instanceWellFormed ? sqlDatabases : []}
+          loading={instanceWellFormed ? sqlDatabasesLoading : false}
+          mono={true}
+        />
       </div>
 
-      {/* Database */}
-      <PropertyField
-        id="cloudSqlSourceDatabase"
-        name="database"
-        label="Database"
-        required
-        tooltip="Database name on the selected Cloud SQL instance (the database_name part of DB_URL). Suggestions load from gcloud sql databases list after a valid instance connection name is entered."
-        value={database}
-        invalid={isDatabaseInvalid}
-        error={databaseError}
-        onChange={handleChange}
-        placeholder="postgres"
-        list="cloudsql-source-database-options"
-        datalist={databaseOptions}
-        loading={instanceWellFormed ? sqlDatabasesLoading : false}
-        helperText={
-          <span>
-            Sample: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">postgres</code>
-          </span>
-        }
-      />
+      {/* Read Target Mode (Table vs Query) */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="cloudSqlSourceReadTargetMode"
+            className="flex items-center text-xs font-bold uppercase text-slate-500"
+          >
+            <span>Read Target</span>
+            <InfoTooltip text="Choose whether to read a database table or execute a custom SQL query." />
+          </label>
+          <select
+            id="cloudSqlSourceReadTargetMode"
+            name="readTargetMode"
+            value={readTargetMode}
+            onChange={handleChange}
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="table">Table (.option(&quot;dbtable&quot;, ...))</option>
+            <option value="query">SQL Query (.option(&quot;query&quot;, ...))</option>
+          </select>
+        </div>
 
-      {/* Username */}
-      <PropertyField
-        id="cloudSqlSourceUsername"
-        name="username"
-        label="Username"
-        required
-        tooltip="Database user (the user part of DB_URL)."
-        value={username}
-        invalid={isUsernameInvalid}
-        error={usernameError}
-        onChange={handleChange}
-        placeholder="postgres"
-      />
+        {readTargetMode === 'table' ? (
+          <PropertyField
+            id="cloudSqlSourceTable"
+            name="table"
+            label="Table Name"
+            required="Table name is required in Table mode"
+            tooltip="Database table name (for example public.orders)."
+            value={table}
+            invalid={isTableEmpty}
+            error={isTableEmpty ? 'Table name is required in Table mode' : null}
+            onChange={handleChange}
+            placeholder="public.orders"
+            mono={true}
+          />
+        ) : (
+          <PropertyField
+            id="cloudSqlSourceQuery"
+            name="query"
+            label="SQL Query"
+            type="textarea"
+            rows={3}
+            required="SQL query is required in Query mode"
+            tooltip="SQL SELECT query executed via Spark JDBC."
+            value={query}
+            invalid={isQueryEmpty}
+            error={isQueryEmpty ? 'SQL query is required in Query mode' : null}
+            onChange={handleChange}
+            placeholder="SELECT order_id, customer_id, total FROM orders WHERE active = true"
+            mono={true}
+          />
+        )}
+      </div>
 
-      {/* Password Secret */}
-      <SecretManagerSecretField
-        id="cloudSqlSourcePasswordSecret"
-        name="passwordSecret"
-        label="Password Secret"
-        required
-        tooltip="Secret Manager secret holding the database password (the password part of DB_URL). Resolved at pipeline construction; the password is never stored in the pipeline."
-        value={passwordSecret}
-        invalid={isPasswordSecretEmpty}
-        onChange={handleChange}
-        datalistId="cloudsql-source-secret-options"
-      />
+      {/* Parallel Partitioning & Bounds */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <label className="flex items-center text-xs font-bold uppercase text-slate-500">
+          <span>Parallel JDBC Partitioning &amp; Fetch Size</span>
+          <InfoTooltip text="Configures parallel partitioned JDBC reads across Spark executors using partitionColumn and numPartitions." />
+        </label>
 
-      {/* SQL Query */}
-      <PropertyField
-        id="cloudSqlSourceQuery"
-        name="query"
-        label="SQL Query"
-        type="textarea"
-        rows={4}
-        required
-        tooltip="SQL executed with sqlalchemy.text() in ReadFromDBFn (SQLAlchemy 2.x conn.execute(sqlalchemy.text(query), params)). Use :name placeholders for bind parameters (e.g. SELECT * FROM orders WHERE status = :status)."
-        value={query}
-        invalid={isQueryEmpty}
-        onChange={handleChange}
-        placeholder="SELECT table_name FROM information_schema.tables WHERE table_schema = :schema"
-      />
+        <div className="grid grid-cols-3 gap-2">
+          <PropertyField
+            id="cloudSqlSourcePartitionColumn"
+            name="partitionColumn"
+            label="Partition Column"
+            tooltip="Numeric, date, or timestamp column used to split parallel JDBC reads."
+            value={partitionColumn}
+            onChange={handleChange}
+            placeholder="order_id"
+            mono={true}
+          />
+          <PropertyField
+            id="cloudSqlSourceNumPartitions"
+            name="numPartitions"
+            label="Num Partitions"
+            type="number"
+            min={1}
+            tooltip="Number of parallel JDBC partitions (default 8)."
+            value={numPartitions}
+            onChange={handleChange}
+            placeholder="8"
+            mono={true}
+          />
+          <PropertyField
+            id="cloudSqlSourceFetchsize"
+            name="fetchsize"
+            label="Fetch Size"
+            type="number"
+            min={1}
+            tooltip="JDBC statement fetch size per round trip (default 5000)."
+            value={fetchsize}
+            onChange={handleChange}
+            placeholder="5000"
+            mono={true}
+          />
+        </div>
 
-      {/* Query Parameters (JSON) */}
-      <PropertyField
-        id="cloudSqlSourceQueryParams"
-        name="queryParams"
-        label="Query Parameters (JSON)"
-        type="textarea"
-        rows={3}
-        tooltip="JSON object of bind values for the :name placeholders in the query (ReadFromDBFn query_params). An input element carrying a db_query_params field overrides these at runtime."
-        value={queryParams}
-        invalid={Boolean(queryParamsError)}
-        error={queryParamsError}
-        onChange={handleChange}
-        placeholder='{"schema": "information_schema"}'
-      />
+        <div className="flex items-center gap-2">
+          <input
+            id="cloudSqlSourceDynamicBounds"
+            type="checkbox"
+            name="dynamicBounds"
+            checked={dynamicBounds}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+          />
+          <label
+            htmlFor="cloudSqlSourceDynamicBounds"
+            className="flex items-center text-xs text-slate-300 cursor-pointer"
+          >
+            <span>Dynamic Bounds Query (SELECT MIN(col), MAX(col))</span>
+            <InfoTooltip text="Automatically runs a pre-flight MIN/MAX query to compute lowerBound and upperBound at runtime." />
+          </label>
+        </div>
+
+        {!dynamicBounds && (
+          <div className="grid grid-cols-2 gap-2">
+            <PropertyField
+              id="cloudSqlSourceLowerBound"
+              name="lowerBound"
+              label="Lower Bound"
+              type="number"
+              tooltip="Manual lower bound for partitionColumn stride calculation."
+              value={lowerBound}
+              onChange={handleChange}
+              placeholder="1"
+              mono={true}
+            />
+            <PropertyField
+              id="cloudSqlSourceUpperBound"
+              name="upperBound"
+              label="Upper Bound"
+              type="number"
+              tooltip="Manual upper bound for partitionColumn stride calculation."
+              value={upperBound}
+              onChange={handleChange}
+              placeholder="1000000"
+              mono={true}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Authentication */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <PropertyField
+          id="cloudSqlSourceUsername"
+          name="username"
+          label="Database Username"
+          tooltip="Database user account or IAM principal name."
+          value={username}
+          onChange={handleChange}
+          placeholder="postgres"
+          mono={true}
+        />
+
+        <SecretManagerAuthFields
+          idPrefix="cloudSqlSource"
+          serviceName="Cloud SQL"
+          authMode={authMode}
+          secretName={secretName}
+          authOptions={CLOUD_SQL_AUTH_OPTIONS}
+          secretManagerValue="secret_manager"
+          datalistId="cloudsql-source-secret-options"
+          secretPlaceholder="e.g. cloudsql-db-password"
+          onChange={handleChange}
+        />
+      </div>
+
+      {/* Runtime JAR URIs */}
+      <div className="grid grid-cols-2 gap-2">
+        <PropertyField
+          id="cloudSqlSourceDriverJarUri"
+          name="driverJarUri"
+          label="JDBC Driver JAR URI (gs://)"
+          tooltip="Cloud Storage URI for the JDBC driver JAR passed to --jars."
+          value={driverJarUri}
+          onChange={handleChange}
+          placeholder="gs://my-bucket/jars/postgresql-42.7.4.jar"
+          mono={true}
+        />
+        <PropertyField
+          id="cloudSqlSourceSocketFactoryJarUri"
+          name="socketFactoryJarUri"
+          label="Socket Factory Uber JAR URI (gs://)"
+          tooltip="Cloud Storage URI for the Cloud SQL JDBC Socket Factory Uber JAR."
+          value={socketFactoryJarUri}
+          onChange={handleChange}
+          placeholder="gs://my-bucket/jars/postgres-socket-factory-1.21.0-jar-with-dependencies.jar"
+          mono={true}
+        />
+      </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="cloudSqlSourceSystemInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for Cloud SQL source code generation..."
+        placeholder="Enter custom instructions for Spark Cloud SQL source code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -326,3 +414,5 @@ export const CloudSQLSourceProperties: React.FC<CloudSQLSourcePropertiesProps> =
     </div>
   );
 };
+
+export const CloudSqlSourceProperties = CloudSQLSourceProperties;

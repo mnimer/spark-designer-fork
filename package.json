@@ -204,6 +204,7 @@
     "build": "npm run build:webview && npm run compile",
     "build:webview": "npm --prefix webview run build",
     "compile": "tsc -p ./",
+    "typecheck": "tsc -p ./ --noEmit",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
     "pretest": "npm run compile && npm run typecheck:webview && npm run lint",

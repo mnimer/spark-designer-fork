@@ -28,6 +28,73 @@ export interface LegacyNodeData {
   [key: string]: any;
 }
 
+/**
+ * Canonical mapping from legacy Beam source transform names to Spark 4.x `sparkTransform` identifiers (SRC1-SRC38).
+ */
+export const LEGACY_SOURCE_TRANSFORM_MAP: Record<string, string> = {
+  KafkaIO: 'KafkaSource',
+  ReadFromKafka: 'KafkaSource',
+  PubSubIO: 'PubSubSource',
+  PubSub: 'PubSubSource',
+  KinesisIO: 'KinesisSource',
+  ReadDataFromKinesis: 'KinesisSource',
+  PulsarIO: 'PulsarSource',
+  MqttIO: 'MqttSource',
+  ReadFromMqtt: 'MqttSource',
+  GenerateSequence: 'RateSource',
+  PeriodicImpulse: 'RateSource',
+  IcebergIO: 'IcebergSource',
+  HCatalogIO: 'HiveSource',
+  ParquetIO: 'ParquetSource',
+  ReadFromParquet: 'ParquetSource',
+  AvroIO: 'AvroSource',
+  ReadFromAvro: 'AvroSource',
+  CsvIO: 'CsvSource',
+  ReadFromCsv: 'CsvSource',
+  JsonIO: 'JsonSource',
+  ReadFromJson: 'JsonSource',
+  TextIO: 'TextSource',
+  XmlIO: 'XmlSource',
+  FileIO: 'BinaryFileSource',
+  'FileIO.match': 'BinaryFileSource',
+  TFRecordIO: 'TFRecordSource',
+  ReadFromTFRecord: 'TFRecordSource',
+  BigQueryIO: 'BigQuerySource',
+  BigQuery: 'BigQuerySource',
+  SpannerIO: 'SpannerSource',
+  BigTableIO: 'BigtableSource',
+  BigtableIO: 'BigtableSource',
+  CloudBigtable: 'BigtableSource',
+  CloudSQL: 'CloudSqlSource',
+  JdbcIO: 'JdbcSource',
+  DatabaseIO: 'JdbcSource',
+  MySQL: 'JdbcSource',
+  MySQLPostgreSQLOracleSQLServer: 'JdbcSource',
+  SnowflakeIO: 'SnowflakeSource',
+  ClickHouseIO: 'ClickHouseSource',
+  SingleStoreDBIO: 'SingleStoreSource',
+  SingleStoreIO: 'SingleStoreSource',
+  MongoDbIO: 'MongoDbSource',
+  FirestoreIO: 'FirestoreSource',
+  DatastoreIO: 'FirestoreSource',
+  CassandraIO: 'CassandraSource',
+  RedisIO: 'RedisSource',
+  ElasticsearchIO: 'ElasticsearchSource',
+  Neo4jIO: 'Neo4jSource',
+  Create: 'CreateDataFrameSource',
+};
+
+/**
+ * Resolves a legacy or canonical source transform identifier to its canonical Spark 4.x `sparkTransform`.
+ *
+ * @param transform Raw transform name from a node or pipeline YAML.
+ * @returns Canonical Spark 4.x source transform name, or the original transform when already canonical.
+ */
+export function resolveCanonicalSourceTransform(transform: string): string {
+  const bare = transform.startsWith('SOURCE:') ? transform.slice('SOURCE:'.length) : transform;
+  return LEGACY_SOURCE_TRANSFORM_MAP[bare] ?? bare;
+}
+
 const KNOWN_AGGREGATIONS = [
   'Approximate Quantiles', 'Approximate Quantile', 'ApproximateQuantiles',
   'Approximate Unique', 'ApproximateUnique',
@@ -76,8 +143,14 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
       case 'ListOrdered':
         return 'GenerateSequence';
       case 'Zap':
+        if (labelLower.includes('redis')) return 'RedisIO';
+        if (labelLower.includes('rate')) return 'RateSource';
         return 'PeriodicImpulse';
+      case 'Terminal':
+        if (labelLower.includes('socket')) return 'SocketSource';
+        break;
       case 'Box':
+        if (labelLower.includes('dataframe')) return 'CreateDataFrameSource';
         return 'Create';
       case 'FileText':
         if (labelLower.includes('tika')) return 'TikaIO';
@@ -87,6 +160,9 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
       case 'HardDrive':
         return 'HadoopFileSystem';
       case 'Cloud':
+        if (labelLower.includes('snowflake')) return 'SnowflakeIO';
+        if (labelLower.includes('redshift')) return 'RedshiftSource';
+        if (labelLower.includes('event hub') || labelLower.includes('eventhub')) return 'EventHubsSource';
         if (labelLower.includes('gcs') || labelLower.includes('google')) return 'GcsFileSystem';
         if (labelLower.includes('s3') || labelLower.includes('amazon') || labelLower.includes('aws')) return 'S3FileSystem';
         if (labelLower.includes('azure') || labelLower.includes('blob')) return 'AzureBlobStoreFileSystem';
@@ -94,19 +170,43 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
       case 'Share2':
         return 'SnsIO';
       case 'Folder':
+        if (labelLower.includes('binary')) return 'BinaryFileSource';
         if (labelLower.includes('local')) return 'LocalFileSystem';
         return 'FileIO.match';
       case 'Radio':
+        if (labelLower.includes('pulsar')) return 'PulsarIO';
         return labelLower.includes('mqtt') ? 'MqttIO' : 'PubSubIO';
       case 'Database':
         if (labelLower.includes('iceberg')) return 'IcebergIO';
+        if (labelLower.includes('hive') || labelLower.includes('hcatalog')) return 'HCatalogIO';
+        if (labelLower.includes('spanner')) return 'SpannerIO';
+        if (labelLower.includes('bigtable')) return 'BigTableIO';
+        if (labelLower.includes('cloud sql') || labelLower.includes('cloudsql')) return 'CloudSQL';
+        if (labelLower.includes('alloydb')) return 'AlloyDbSource';
+        if (labelLower.includes('singlestore')) return 'SingleStoreDBIO';
+        if (labelLower.includes('mongo')) return 'MongoDbIO';
+        if (labelLower.includes('firestore')) return 'FirestoreIO';
+        if (labelLower.includes('cassandra')) return 'CassandraIO';
         return labelLower.includes('jdbc') ? 'JdbcIO' : 'BigQueryIO';
+      case 'BarChart':
+        if (labelLower.includes('clickhouse')) return 'ClickHouseIO';
+        break;
+      case 'Layers':
+        if (labelLower.includes('delta')) return 'DeltaSource';
+        if (labelLower.includes('hudi')) return 'HudiSource';
+        if (labelLower.includes('elasticsearch') || labelLower.includes('elastic')) return 'ElasticsearchIO';
+        if (labelLower.includes('hcatalog') || labelLower.includes('hive')) return 'HCatalogIO';
+        break;
+      case 'GitMerge':
+        if (labelLower.includes('neo4j')) return 'Neo4jIO';
+        break;
       case 'Cable':
         if (labelLower.includes('jms')) return 'JmsIO';
         if (labelLower.includes('sqs')) return 'SqsIO';
         return 'KafkaIO';
       case 'FileCode':
         if (labelLower.includes('xml')) return 'XmlIO';
+        if (labelLower.includes('orc')) return 'OrcSource';
         if (labelLower.includes('thrift')) return 'ThriftIO';
         if (labelLower.includes('tfrecord')) return 'TFRecordIO';
         if (labelLower.includes('json')) return 'JsonIO';

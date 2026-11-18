@@ -88,7 +88,7 @@ describe('PropertyForm', () => {
     // Must render BigQuerySinkProperties (with Table Name placeholder)
     expect(await screen.findByPlaceholderText('my_table')).toBeInTheDocument();
     // Must NOT render PubSub properties
-    expect(screen.queryByPlaceholderText('projects/my-project/topics/my-topic')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('projects/my-project/subscriptions/my-sub')).not.toBeInTheDocument();
   });
 
   it('REGRESSION: renders PubSub form when label contains a different connector name (e.g. "BigQuery Ingestion")', async () => {
@@ -105,7 +105,7 @@ describe('PropertyForm', () => {
     render(<PropertyForm node={mockNode} onChange={mockOnChange} />);
 
     // Must render PubSubProperties
-    expect(await screen.findByPlaceholderText('projects/my-project/topics/my-topic')).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText('projects/my-project/subscriptions/my-sub')).toBeInTheDocument();
     // Must NOT render BigQuery properties
     expect(screen.queryByPlaceholderText('my_table')).not.toBeInTheDocument();
   });
@@ -216,10 +216,10 @@ describe('PropertyForm', () => {
     });
 
     it('branch 2: prevents cross-direction fallback when opposite type is registered', () => {
-      const cosmosSinkNode = { data: { type: 'SINK', spark_transform: 'CosmosIO', properties: {} } };
-      expect(getPropertyFormComponent(cosmosSinkNode)).toBeUndefined();
-      const impulseSinkNode = { data: { type: 'SINK', spark_transform: 'FlinkStreamingImpulseSource', properties: {} } };
-      expect(getPropertyFormComponent(impulseSinkNode)).toBeUndefined();
+      const rateSinkNode = { data: { type: 'SINK', spark_transform: 'RateSource', properties: {} } };
+      expect(getPropertyFormComponent(rateSinkNode)).toBeUndefined();
+      const arrowSourceNode = { data: { type: 'SOURCE', spark_transform: 'ArrowFlightIO', properties: {} } };
+      expect(getPropertyFormComponent(arrowSourceNode)).toBeUndefined();
     });
   });
 
@@ -575,7 +575,7 @@ describe('PropertyForm shared execution & streaming controls (A9 / A11)', () => 
     );
     await waitForPanelToLoad();
 
-    const readModeSelect = screen.getByLabelText(/Read Mode/i);
+    const readModeSelect = screen.getAllByLabelText(/Read Mode/i)[0];
     expect(readModeSelect).toHaveValue('streaming');
     fireEvent.change(readModeSelect, { target: { value: 'batch' } });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ readMode: 'batch' }));

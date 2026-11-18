@@ -1,33 +1,49 @@
 /**
  * PubSub Source Properties Component
- * 
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Google Cloud Pub/Sub Source nodes
- * in Apache Beam pipelines (e.g. PubsubIO.readMessagesWithAttributes() / PubsubIO.readStrings()).
- * 
+ * Renders the property configuration panel for Google Cloud Pub/Sub Source nodes (`PubSubSource` / `PubSubIO`)
+ * in Apache Spark 4.0 pipelines using the Python `DataSourceStreamReader` and `DataSourceReader` APIs
+ * (`google-cloud-pubsub` `SubscriberClient` synchronous micro-batch pull).
+ *
  * Architectural Decisions:
- * - In Apache Beam, a PubSub source requires EITHER a topic OR a subscription.
- * - Enforces mutual clearing: selecting or typing a topic clears subscription, and vice-versa.
- * - Flags validation error and applies red border highlighting when neither topic nor subscription is specified.
- * - Uses shared PropertyField and useAssetLoader primitives to maintain 8pt grid spacing and eliminate DRY violations.
- * - Provides a flexible spacer and Code Generation Instructions textarea for custom LLM prompts.
+ * - Supports both `streaming` (default) and `batch` execution modes (`readMode`).
+ * - Configures `subscription`, `projectId`, `maxMessagesPerBatch`, `ackDeadlineSeconds`, and `includeAttributes`.
+ * - Retains live GCP Pub/Sub subscription and topic discovery via `useAssetLoader` with inline error surfacing.
+ * - Uses shared `PropertyField`, `SelectField`, and `SystemInstructionsField` primitives on the 8pt grid.
  */
 
 import React from 'react';
+import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField } from '../../components/common/SelectField';
+import type { SelectFieldOption } from '../../components/common/SelectField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
 
+/** Read mode options for PubSubSource. */
+export const PUBSUB_READ_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'streaming', label: 'Streaming (DataSourceStreamReader)' },
+  { value: 'batch', label: 'Batch (DataSourceReaderBoundedPull)' },
+];
+
 /** Props for the {@link PubSubProperties} component. */
-interface PubSubPropertiesProps {
+export interface PubSubPropertiesProps {
   node: {
     data: {
+      label?: string;
+      spark_transform?: string;
       properties?: {
-        topic?: string;
+        readMode?: 'streaming' | 'batch';
         subscription?: string;
+        topic?: string;
+        projectId?: string;
+        maxMessagesPerBatch?: string | number;
+        ackDeadlineSeconds?: string | number;
+        includeAttributes?: boolean;
         system_instructions?: string;
         special_instructions?: string;
         [key: string]: any;
@@ -40,114 +56,148 @@ interface PubSubPropertiesProps {
 }
 
 /**
- * Dedicated property panel for the Google Cloud Pub/Sub source node. Configures topic or subscription read sources.
+ * Dedicated property panel for the Google Cloud Pub/Sub Spark source node.
  *
  * @param props The selected node and the onChange callback used to persist edits.
+ * @returns React component.
  */
 export const PubSubProperties: React.FC<PubSubPropertiesProps> = ({ node, onChange }) => {
   const properties = node.data.properties || {};
 
-  // NOTE: Leverage useAssetLoader to request and observe topics and subscriptions with inline error support
-  const { items: topics, error: topicError } = useAssetLoader<string>('topics');
-  const { items: subscriptions, error: subscriptionError } = useAssetLoader<string>('subscriptions');
+  const { items: subscriptions, loading: subscriptionsLoading, error: subscriptionError } =
+    useAssetLoader<string>('subscriptions');
 
-  const topic = properties.topic || '';
+  const readMode = properties.readMode || 'streaming';
   const subscription = properties.subscription || '';
+  const projectId = properties.projectId || '';
+  const maxMessagesPerBatch = properties.maxMessagesPerBatch ?? '1000';
+  const ackDeadlineSeconds = properties.ackDeadlineSeconds ?? '60';
+  const includeAttributes = properties.includeAttributes ?? true;
 
-  // Validation: In Beam PubSub source, either topic or subscription is required
-  const isInvalid = !topic.trim() && !subscription.trim();
+  const isSubscriptionInvalid = !subscription.trim();
 
-  // System instructions text with fallback
   const systemInstructions = resolveSystemInstructions(node);
 
   /**
-   * Handles input changes with mutual exclusivity between topic and subscription.
+   * Handles input, select, and checkbox changes.
    *
-   * @param e Form change event from input or select.
+   * @param e Form change event from input, select, or textarea.
    */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    const newProperties = { ...properties, [name]: value };
+    const { name, value, type } = e.target;
+    const isCheckbox = type === 'checkbox';
+    const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
-    // Mutual clearing for UI
-    if (name === 'topic') {
-      newProperties.subscription = '';
-    } else if (name === 'subscription') {
-      newProperties.topic = '';
-    }
-
-    // Priority validation: save only topic OR subscription
-    if (newProperties.subscription) {
-      delete newProperties.topic;
-    } else if (newProperties.topic) {
-      delete newProperties.subscription;
-    }
-
-    onChange(newProperties);
+    onChange({
+      ...properties,
+      [name]: isCheckbox ? checked : value,
+    });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Topic Input */}
-      <PropertyField
-        id="pubsubTopic"
-        name="topic"
-        label="Topic"
-        required="Either Topic or Subscription is required"
-        tooltip="Cloud Pub/Sub topic to read from (e.g. projects/my-project/topics/my-topic). Beam requires either a Topic or a Subscription."
-        value={topic}
-        invalid={isInvalid}
-        error={topicError}
+      {/* Read Mode Select */}
+      <SelectField
+        id="pubsubReadMode"
+        name="readMode"
+        label="Read Mode"
+        tooltip="Select streaming mode (Spark 4.0 DataSourceStreamReader) for continuous micro-batch pulls or batch mode (DataSourceReader) for a bounded pull."
+        value={readMode}
+        options={PUBSUB_READ_MODE_OPTIONS}
         onChange={handleChange}
-        placeholder="projects/my-project/topics/my-topic"
-        list="topic-options"
-        datalist={topics}
-        helperText={
-          <span>
-            Sample: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">projects/my-project/topics/my-topic</code>
-          </span>
-        }
       />
 
-      <div className="flex items-center gap-2">
-        <div className="flex-1 border-t border-slate-700/60" />
-        <span className="text-xs font-bold uppercase text-slate-500">OR</span>
-        <div className="flex-1 border-t border-slate-700/60" />
-      </div>
-
-      {/* Subscription Input */}
+      {/* Subscription Input (Required) */}
       <PropertyField
         id="pubsubSubscription"
         name="subscription"
         label="Subscription"
-        required="Either Topic or Subscription is required"
-        tooltip="Cloud Pub/Sub subscription to read from (e.g. projects/my-project/subscriptions/my-sub). Beam requires either a Topic or a Subscription."
+        required="Subscription is required."
+        tooltip="Cloud Pub/Sub subscription ID or full resource path to pull messages from (e.g. projects/my-project/subscriptions/my-sub or my-sub). Required."
         value={subscription}
-        invalid={isInvalid}
-        error={subscriptionError}
+        invalid={isSubscriptionInvalid}
+        error={subscriptionError || (isSubscriptionInvalid ? 'Subscription is required.' : null)}
+        loading={subscriptionsLoading}
         onChange={handleChange}
         placeholder="projects/my-project/subscriptions/my-sub"
         list="subscription-options"
         datalist={subscriptions}
+        mono={true}
         helperText={
-          <span>
-            Sample: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">projects/my-project/subscriptions/my-sub</code>
-          </span>
+          !isSubscriptionInvalid ? (
+            <span>
+              Sample: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">projects/my-project/subscriptions/my-sub</code>
+            </span>
+          ) : null
         }
       />
 
-      {/* Validation Warning */}
-      {isInvalid && (
-        <div className="p-2.5 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-400">
-          Either a Topic or a Subscription is required for PubSub source.
-        </div>
-      )}
+      {/* GCP Project ID */}
+      <PropertyField
+        id="pubsubProjectId"
+        name="projectId"
+        label="GCP Project ID"
+        tooltip="Google Cloud project ID owning the Pub/Sub subscription. Leave blank when passing a full subscription path or using the runtime default project."
+        value={projectId}
+        onChange={handleChange}
+        placeholder="e.g. my-gcp-project"
+        mono={true}
+      />
+
+      {/* Micro-Batch Pull Limits */}
+      <div className="grid grid-cols-2 gap-3">
+        <PropertyField
+          id="pubsubMaxMessagesPerBatch"
+          name="maxMessagesPerBatch"
+          label="Max Messages Per Batch"
+          type="number"
+          min="1"
+          tooltip="Maximum number of messages pulled synchronously per Spark micro-batch partition (default 1000)."
+          value={maxMessagesPerBatch}
+          onChange={handleChange}
+          placeholder="1000"
+          mono={true}
+        />
+
+        <PropertyField
+          id="pubsubAckDeadlineSeconds"
+          name="ackDeadlineSeconds"
+          label="Ack Deadline (s)"
+          type="number"
+          min="10"
+          max="600"
+          tooltip="Acknowledgement deadline in seconds for pulled messages before Pub/Sub redelivers them (10 to 600 seconds)."
+          value={ackDeadlineSeconds}
+          onChange={handleChange}
+          placeholder="60"
+          mono={true}
+        />
+      </div>
+
+      {/* Include Attributes Checkbox */}
+      <div className="p-3 bg-slate-800/40 rounded border border-slate-700/50">
+        <label htmlFor="pubsubIncludeAttributes" className="flex items-center gap-2 cursor-pointer">
+          <input
+            id="pubsubIncludeAttributes"
+            type="checkbox"
+            name="includeAttributes"
+            checked={includeAttributes}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+          />
+          <div className="flex items-center">
+            <span className="text-sm font-medium text-slate-300">Include Message Attributes</span>
+            <InfoTooltip text="Include Pub/Sub message attributes as a map<string, string> column alongside message_id, data, and publish_time." />
+          </div>
+        </label>
+      </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="pubsubSourceSystemInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for PubSub source code generation..."
+        tooltip="Custom instructions supplied to the AI code generator for this Pub/Sub source node."
+        placeholder="Enter custom instructions for Pub/Sub source code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -158,3 +208,6 @@ export const PubSubProperties: React.FC<PubSubPropertiesProps> = ({ node, onChan
     </div>
   );
 };
+
+/** Alias matching the canonical Spark transform name `PubSubSource`. */
+export const PubSubSourceProperties = PubSubProperties;

@@ -1,32 +1,48 @@
 /**
- * ParquetIO Source Properties Component
- * 
+ * @fileoverview Parquet Source (SRC13 ParquetSource / ParquetIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam ParquetIO Source nodes
- * (e.g. ParquetIO.read(schema).from(...) in Java or beam.io.ReadFromParquet(...) in Python).
- * 
- * Architectural Decisions:
- * - ParquetIO read operations require a target file or glob pattern (.from(...)).
- * - Designed for multi-cloud and local file systems (Google Cloud Storage gs://, Amazon S3 s3://, HDFS hdfs://, local files).
- * - Provides an Avro/PyArrow schema configuration textarea with a 1-click sample schema generator.
- * - Supports column projection pushdown (.withProjection(...) / columns=[...]) for columnar efficiency.
- * - Supports vectorized batched read mode (ReadFromParquetBatched) and construction-time validation.
- * - Adheres strictly to the 8pt grid system, VS Code theme variables, and Tailwind CSS.
+ * Renders the property configuration panel for Apache Spark Parquet source nodes
+ * using spark.read.parquet(uri) or spark.readStream.format("parquet").load(uri).
+ * Embeds the shared StorageBackendFields component for multi-cloud URI configuration,
+ * schema merging, datetime/INT96 rebase modes, streaming trigger limits, and schema definition.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
+import { FileCode } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
+import {
+  SchemaEditor,
+  resolveSchemaFields,
+  type SchemaField,
+} from '../../components/common/SchemaEditor';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { StoragePathField } from '../../components/common/StoragePathField';
-import { SchemaEditor, resolveSchemaFields, type SchemaField } from '../../components/common/SchemaEditor';
-import { FileCode } from 'lucide-react';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 
-/** React Flow node shape for the ParquetIO source panel, including its persisted configuration data. */
+/**
+ * Supported Spark Parquet datetime and INT96 rebase modes.
+ */
+export const PARQUET_REBASE_MODES: SelectFieldOption[] = [
+  { value: 'EXCEPTION', label: 'EXCEPTION (Fail on ambiguous ancient dates)' },
+  { value: 'CORRECTED', label: 'CORRECTED (Load Proleptic Gregorian verbatim)' },
+  { value: 'LEGACY', label: 'LEGACY (Rebase Julian to Gregorian calendar)' },
+];
+
+const READ_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'batch', label: 'BATCH (spark.read.parquet)' },
+  { value: 'streaming', label: 'STREAM (spark.readStream.format("parquet"))' },
+];
+
+/**
+ * React Flow node shape for the Parquet source panel.
+ */
 export interface ParquetIOSourceNode {
   data: {
     label: string;
@@ -34,14 +50,20 @@ export interface ParquetIOSourceNode {
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      readMode?: 'batch' | 'streaming';
+      storageBackend?: string;
+      path?: string;
       filePattern?: string;
+      uri?: string;
+      pathGlobFilter?: string;
+      recursiveFileLookup?: boolean;
+      mergeSchema?: boolean;
+      datetimeRebaseMode?: 'EXCEPTION' | 'CORRECTED' | 'LEGACY';
+      int96RebaseMode?: 'EXCEPTION' | 'CORRECTED' | 'LEGACY';
+      maxFilesPerTrigger?: string | number;
       schema?: string;
       schemaString?: string;
       schemaFields?: SchemaField[];
-      columns?: string;
-      validate?: boolean;
-      batched?: boolean;
-      minBundleSize?: string | number;
       system_instructions?: string;
       special_instructions?: string;
       [key: string]: any;
@@ -49,84 +71,133 @@ export interface ParquetIOSourceNode {
   };
 }
 
-/** Props for the {@link ParquetIOSourceProperties} component. */
+/**
+ * Props for the {@link ParquetIOSourceProperties} component.
+ */
 export interface ParquetIOSourcePropertiesProps {
   node: ParquetIOSourceNode;
   onChange: (properties: any) => void;
 }
 
 /**
- * Dedicated property panel for the ParquetIO source node. Configures file pattern, schema projection, and batch read settings.
+ * Dedicated property panel for Apache Spark ParquetSource / ParquetIO source nodes.
  *
- * @param props The selected node and the onChange callback used to persist edits.
+ * @param props Selected node and change callback.
+ * @returns Rendered Parquet source property panel.
  */
-export const ParquetIOSourceProperties: React.FC<ParquetIOSourcePropertiesProps> = ({ node, onChange }) => {
+export const ParquetIOSourceProperties: React.FC<ParquetIOSourcePropertiesProps> = ({
+  node,
+  onChange,
+}) => {
   const properties = node.data.properties || {};
-  const filePattern = properties.filePattern || '';
+  const readMode = properties.readMode === 'streaming' ? 'streaming' : 'batch';
+  const mergeSchema = Boolean(properties.mergeSchema);
+  const datetimeRebaseMode = properties.datetimeRebaseMode || 'EXCEPTION';
+  const int96RebaseMode = properties.int96RebaseMode || 'EXCEPTION';
+  const maxFilesPerTrigger = properties.maxFilesPerTrigger ?? '';
   const schemaFields: SchemaField[] = resolveSchemaFields(properties);
-  const columns = properties.columns || '';
-  const validate = properties.validate ?? true;
-  const batched = properties.batched ?? false;
-  const minBundleSize = properties.minBundleSize ?? '';
-
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
-  const [isSchemaOpen, setIsSchemaOpen] = useState<boolean>(true);
-
-  // Validation: filePattern is required for reading Parquet files
-  const isInvalid = !filePattern.trim();
-
-  // System instructions text with fallback
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles generic input changes for form fields
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const [isSchemaOpen, setIsSchemaOpen] = useState<boolean>(true);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: isCheckbox ? checked : value,
     });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* File Pattern Input */}
-      <StoragePathField
-        id="parquetSourceFilePattern"
-        name="filePattern"
-        label="File Pattern / Path (.from)"
-        tooltip="Target Parquet file path or glob pattern (e.g. gs://bucket/*.parquet, s3://bucket/*.parquet, hdfs://path/*.parquet, or /local/path/*.parquet). Required."
-        value={filePattern}
+      {/* Read Mode Selector */}
+      <SelectField
+        id="parquetSourceReadMode"
+        name="readMode"
+        label="Read Mode"
+        tooltip="Select batch mode (spark.read.parquet) or Structured Streaming mode (spark.readStream.format('parquet'))."
+        value={readMode}
+        options={READ_MODE_OPTIONS}
         onChange={handleChange}
-        placeholder="gs://bucket/data/*.parquet, s3://bucket/data/*.parquet, or /local/*.parquet"
-        errorMessage={isInvalid ? 'File Pattern is required.' : undefined}
-        helperText="Target file or glob pattern across Cloud Storage, Amazon S3, HDFS, or local storage."
       />
 
-      {/* Projected Columns (Python: columns=[...]) */}
-      <PropertyField
-        id="parquetSourceColumns"
-        name="columns"
-        label="Projected Columns (Python columns=[...])"
-        tooltip="For Python pipelines: Comma-separated column names to read (e.g. 'id, name, timestamp'). PyArrow reads types directly from the Parquet footer and skips unselected columns. In Java, use the Avro Schema below instead."
-        value={columns}
-        onChange={handleChange}
-        placeholder="id, name, email, timestamp"
-        mono={true}
-        helperText={
-          <span className="text-[11px] text-[var(--vscode-text-muted)]">
-            <strong>Python:</strong> Specify comma-separated column names for projection pruning (leave blank to read all). Not used in Java.
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={properties}
+        onChange={onChange}
+        idPrefix="parquetSource"
+        pathLabel="Parquet URI / Path"
+        pathPlaceholder="gs://my-bucket/data/*.parquet"
+      />
+
+      {/* Parquet Reader Options */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          Parquet Reader Options
+        </span>
+
+        <label
+          htmlFor="parquetSourceMergeSchema"
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <input
+            id="parquetSourceMergeSchema"
+            type="checkbox"
+            name="mergeSchema"
+            checked={mergeSchema}
+            onChange={handleChange}
+            className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
+          />
+          <span className="text-xs text-[var(--vscode-text-secondary)]">
+            Merge Schema Across Partitions (mergeSchema)
           </span>
-        }
-      />
+          <InfoTooltip text="Merges schemas across all Parquet part-files when columns evolve across partitions." />
+        </label>
 
-      {/* Schema Accordion Section (Java: ParquetIO.read(schema)) */}
+        <SelectField
+          id="parquetSourceDatetimeRebaseMode"
+          name="datetimeRebaseMode"
+          label="Datetime Rebase Mode (datetimeRebaseMode)"
+          tooltip="Controls rebasing of DATE and TIMESTAMP values between Julian and Proleptic Gregorian calendars."
+          value={datetimeRebaseMode}
+          options={PARQUET_REBASE_MODES}
+          onChange={handleChange}
+        />
+
+        <SelectField
+          id="parquetSourceInt96RebaseMode"
+          name="int96RebaseMode"
+          label="INT96 Rebase Mode (int96RebaseMode)"
+          tooltip="Controls rebasing of legacy INT96 timestamp values between Julian and Proleptic Gregorian calendars."
+          value={int96RebaseMode}
+          options={PARQUET_REBASE_MODES}
+          onChange={handleChange}
+        />
+
+        {readMode === 'streaming' && (
+          <PropertyField
+            id="parquetSourceMaxFilesPerTrigger"
+            type="number"
+            name="maxFilesPerTrigger"
+            label="Max Files Per Trigger (maxFilesPerTrigger)"
+            tooltip="Maximum number of new Parquet files to process in each streaming micro-batch trigger."
+            value={maxFilesPerTrigger}
+            onChange={handleChange}
+            placeholder="e.g. 100"
+            min="1"
+            mono={true}
+          />
+        )}
+      </div>
+
+      {/* Schema Editor Section */}
       <CollapsibleSection
-        title={<>Avro Schema (Java <code>ParquetIO.read(schema)</code>)</>}
+        title="DataFrame Schema (StructType)"
         icon={<FileCode className="w-4 h-4 text-emerald-400" />}
         isOpen={isSchemaOpen}
         onToggle={() => setIsSchemaOpen(!isSchemaOpen)}
@@ -134,77 +205,32 @@ export const ParquetIOSourceProperties: React.FC<ParquetIOSourcePropertiesProps>
         <div className="mt-2">
           <SchemaEditor
             fields={schemaFields}
-            schemaTitle="Avro Schema (Required for Java, Leave blank for Python)"
+            schemaTitle="Spark StructType Schema (Required for Streaming, Optional for Batch)"
             jsonTextareaId="parquetSourceSchema"
             stringTextareaId="parquetSourceSchemaString"
-            onChange={({ schemaFields: nextFields, schema: nextSchema, schemaString: nextStr }) => {
+            onChange={({
+              schemaFields: nextFields,
+              schema: nextSchema,
+              schemaString: nextStr,
+            }) => {
               onChange({
                 ...properties,
                 schemaFields: nextFields,
                 schema: nextSchema,
-                schemaString: nextStr
+                schemaString: nextStr,
               });
             }}
           />
         </div>
       </CollapsibleSection>
 
-      {/* Advanced Settings Accordion */}
-      <CollapsibleSection
-        title="Read Tuning & Options"
-        isOpen={isAdvancedOpen}
-        onToggle={() => setIsAdvancedOpen(!isAdvancedOpen)}
-      >
-        {/* Batched Reading Toggle */}
-        <label htmlFor="parquetSourceBatched" className="flex items-center gap-2 cursor-pointer mt-2">
-          <input
-            id="parquetSourceBatched"
-            type="checkbox"
-            name="batched"
-            checked={batched}
-            onChange={handleChange}
-            className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
-          />
-          <span className="text-xs text-[var(--vscode-text-secondary)]">Batched Vectorized Mode (ReadFromParquetBatched)</span>
-          <InfoTooltip text="Yields pyarrow.Table instances per row group instead of per-record dictionaries. Ideal for vectorized transformations." />
-        </label>
-
-        {/* Validate File Existence */}
-        <label htmlFor="parquetSourceValidate" className="flex items-center gap-2 cursor-pointer">
-          <input
-            id="parquetSourceValidate"
-            type="checkbox"
-            name="validate"
-            checked={validate}
-            onChange={handleChange}
-            className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
-          />
-          <span className="text-xs text-[var(--vscode-text-secondary)]">Validate file existence on pipeline startup</span>
-          <InfoTooltip text="Checks whether the input file pattern matches files at pipeline construction time." />
-        </label>
-
-        {/* Min Bundle Size */}
-        <PropertyField
-          id="parquetSourceMinBundleSize"
-          type="number"
-          name="minBundleSize"
-          label="Minimum Bundle Size (bytes)"
-          tooltip="Minimum byte size to consider when splitting input into bundles for parallel worker execution. Default 0."
-          value={minBundleSize}
-          onChange={handleChange}
-          placeholder="0"
-          min="0"
-          mono={true}
-        />
-      </CollapsibleSection>
-
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="parquetSourceInstructions"
         value={systemInstructions}
-        placeholder="e.g. Filter records where status is active, or use specific Avro SpecificRecord model class."
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline source code for this ParquetIO reader step."
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
+        placeholder="e.g. Filter partition columns before join to trigger partition pruning."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark Parquet reader code."
+        helperText="Additional guidance appended to the prompt when generating PySpark code."
         wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
         textareaClassName="h-24"
         onChange={(value) =>
@@ -217,3 +243,5 @@ export const ParquetIOSourceProperties: React.FC<ParquetIOSourcePropertiesProps>
     </div>
   );
 };
+
+export const ParquetSourceProperties = ParquetIOSourceProperties;

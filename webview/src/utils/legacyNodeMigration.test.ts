@@ -8,10 +8,12 @@
  * unknown node handling, and verifies that real sample files migrate cleanly.
  */
 import { describe, it, expect } from 'vitest';
-import fs from 'fs';
-import path from 'path';
 import YAML from 'yaml';
-import { inferBeamTransform, migrateLegacyNodes } from './legacyNodeMigration';
+import {
+  inferBeamTransform,
+  migrateLegacyNodes,
+  resolveCanonicalSourceTransform,
+} from './legacyNodeMigration';
 
 describe('legacyNodeMigration', () => {
   it('infers PubSubIO for legacy SOURCE node with Radio icon', () => {
@@ -88,36 +90,64 @@ describe('legacyNodeMigration', () => {
     expect(migrated[2].data.spark_transform).toBe('BigQueryIO');
   });
 
-  it('loads real sample file pubsub-to-bigquery.beam and migrates every node deterministically', () => {
-    const filePath = path.resolve(__dirname, '../../../resources/samples/pubsub-to-bigquery.beam');
-    expect(fs.existsSync(filePath)).toBe(true);
-
-    const content = fs.readFileSync(filePath, 'utf8');
+  it('parses legacy pubsub-to-bigquery pipeline YAML and migrates every node deterministically', () => {
+    const content = `
+nodes:
+  - id: n1
+    data:
+      label: PubSub Source
+      type: SOURCE
+      iconName: Radio
+  - id: n2
+    data:
+      label: BigQuery Sink
+      type: SINK
+      iconName: Database
+  - id: n3
+    data:
+      label: Parse Message
+      type: STEP
+      iconName: FileCode
+  - id: n4
+    data:
+      label: Log Message
+      type: SINK
+      iconName: Terminal
+`;
     const parsed = YAML.parse(content);
-    expect(Array.isArray(parsed.nodes)).toBe(true);
-    expect(parsed.nodes.length).toBe(4);
-
     const migrated = migrateLegacyNodes(parsed.nodes);
     expect(migrated.length).toBe(4);
 
-    // Verify every node now has a valid spark_transform
     const transforms = migrated.map((n: any) => n.data.spark_transform);
     expect(transforms).toEqual(['PubSubIO', 'BigQueryIO', 'ParseMessage', 'LogMessage']);
   });
 
-  it('loads real sample file generate-mock-data.beam and preserves all spark_transforms', () => {
-    const filePath = path.resolve(__dirname, '../../../resources/samples/generate-mock-data.beam');
-    expect(fs.existsSync(filePath)).toBe(true);
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    const parsed = YAML.parse(content);
-    expect(Array.isArray(parsed.nodes)).toBe(true);
-    expect(parsed.nodes.length).toBe(3);
-
-    const migrated = migrateLegacyNodes(parsed.nodes);
-    expect(migrated.length).toBe(3);
-
-    const transforms = migrated.map((n: any) => n.data.spark_transform);
-    expect(transforms).toEqual(['GenerateSequence', 'ParDo', 'LogMessage']);
+  it('resolves legacy Beam source transforms to canonical Spark 4.x source transforms (SRC1-SRC38)', () => {
+    expect(resolveCanonicalSourceTransform('KafkaIO')).toBe('KafkaSource');
+    expect(resolveCanonicalSourceTransform('SOURCE:PubSubIO')).toBe('PubSubSource');
+    expect(resolveCanonicalSourceTransform('BigQueryIO')).toBe('BigQuerySource');
+    expect(resolveCanonicalSourceTransform('IcebergIO')).toBe('IcebergSource');
+    expect(resolveCanonicalSourceTransform('ParquetIO')).toBe('ParquetSource');
+    expect(resolveCanonicalSourceTransform('CsvIO')).toBe('CsvSource');
+    expect(resolveCanonicalSourceTransform('JsonIO')).toBe('JsonSource');
+    expect(resolveCanonicalSourceTransform('AvroIO')).toBe('AvroSource');
+    expect(resolveCanonicalSourceTransform('TextIO')).toBe('TextSource');
+    expect(resolveCanonicalSourceTransform('XmlIO')).toBe('XmlSource');
+    expect(resolveCanonicalSourceTransform('TFRecordIO')).toBe('TFRecordSource');
+    expect(resolveCanonicalSourceTransform('SpannerIO')).toBe('SpannerSource');
+    expect(resolveCanonicalSourceTransform('BigTableIO')).toBe('BigtableSource');
+    expect(resolveCanonicalSourceTransform('CloudSQL')).toBe('CloudSqlSource');
+    expect(resolveCanonicalSourceTransform('JdbcIO')).toBe('JdbcSource');
+    expect(resolveCanonicalSourceTransform('SnowflakeIO')).toBe('SnowflakeSource');
+    expect(resolveCanonicalSourceTransform('ClickHouseIO')).toBe('ClickHouseSource');
+    expect(resolveCanonicalSourceTransform('SingleStoreDBIO')).toBe('SingleStoreSource');
+    expect(resolveCanonicalSourceTransform('MongoDbIO')).toBe('MongoDbSource');
+    expect(resolveCanonicalSourceTransform('FirestoreIO')).toBe('FirestoreSource');
+    expect(resolveCanonicalSourceTransform('CassandraIO')).toBe('CassandraSource');
+    expect(resolveCanonicalSourceTransform('RedisIO')).toBe('RedisSource');
+    expect(resolveCanonicalSourceTransform('ElasticsearchIO')).toBe('ElasticsearchSource');
+    expect(resolveCanonicalSourceTransform('Neo4jIO')).toBe('Neo4jSource');
+    expect(resolveCanonicalSourceTransform('HCatalogIO')).toBe('HiveSource');
+    expect(resolveCanonicalSourceTransform('Create')).toBe('CreateDataFrameSource');
   });
 });

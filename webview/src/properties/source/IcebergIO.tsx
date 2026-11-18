@@ -1,40 +1,31 @@
 /**
  * IcebergIO Source Properties Component
- * 
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam Iceberg source nodes.
- * Configures batch and streaming reads from Apache Iceberg tables across Cloud Storage (gs://),
- * Amazon S3 (s3://), HDFS (hdfs://), or local filesystems using various Iceberg catalogs.
- * 
+ * Renders the property configuration panel for Apache Spark IcebergSource (`IcebergIO`) nodes.
+ * Configures batch (`spark.read.format("iceberg")`) and streaming (`spark.readStream.format("iceberg")`)
+ * reads from Apache Iceberg tables across Cloud Storage (`gs://`), Amazon S3 (`s3a://`), HDFS (`hdfs://`),
+ * or local filesystems using BigLake REST, REST, Hive, or Hadoop catalogs.
+ *
  * Architectural Decisions:
- * - Managed I/O Architecture: Beam accesses Iceberg through Managed I/O, not a bespoke IcebergIO class.
- *   In Java, this is invoked via `org.apache.beam.sdk.managed.Managed.read(Managed.ICEBERG)` with a
- *   configuration map; in Python, via `apache_beam.transforms.managed.Read(managed.ICEBERG, config=...)`.
- *   Config keys include `table` (fully-qualified `db.table`), `catalog_name`, `catalog_properties` (a map
- *   containing `type`, `warehouse`, `uri`), and `config_properties`. There is no standalone `IcebergIO.read()` class.
- * - Warehouse Location Autocomplete: Delegates the required warehouse location field to the shared
- *   StoragePathField primitive. Because Iceberg warehouses on Google Cloud commonly live in Cloud Storage (`gs://`),
- *   GCS bucket discovery is active and provides datalist suggestions alongside always-visible discovery error alerting.
- * - Time-Travel Exclusivity: Iceberg supports querying historical snapshots either by snapshot ID (`snapshotId`)
- *   or commit timestamp (`asOfTimestamp`). These two modes are mutually exclusive; setting both triggers an inline
- *   validation error and marks both input controls as invalid.
- * - Conditional Catalog URI: The `catalogUri` property field is conditionally rendered only when `catalogType` is
- *   `rest` or `hive` (the two catalog types requiring external network endpoints).
- * - Shared Primitives Composition: Reuses shared primitives (StoragePathField, CollapsibleSection, SelectField,
- *   PropertyField, SecretManagerAuthFields) to eliminate code duplication and prevent UI drift.
- * - Credential Management: Integrates SecretManagerAuthFields to securely reference Google Cloud Secret Manager
- *   secrets for catalog or object storage authentication without hardcoding credentials in pipeline specifications.
- * - Design System & Theming: Strictly adheres to the 8pt grid system, VS Code theme tokens (`var(--vscode-*)`),
- *   and Tailwind utility classes without inline styles or raw slate color tokens.
- * - Controlled Component Pattern: Strictly controlled via `node` (props in) and `onChange` (events up).
+ * - Supports `readMode` (`'batch' | 'streaming'`, default `'batch'`).
+ * - Preserves Phase 4 D3 BigLake catalog discovery (`useAssetLoader` `bigLakeCatalogs`) with
+ *   `normalizeBigLakeCatalogOptions` and inline error alerting.
+ * - Supports `catalogName`, `catalogType` (`'biglake' | 'rest' | 'hive' | 'hadoop'`), `namespace`,
+ *   `table`, and `warehouse` (`warehouseLocation`) with Cloud Storage bucket autocomplete via `StoragePathField`.
+ * - Enforces mutual exclusivity between historical `snapshotId` and `asOfTimestamp` in batch mode.
+ * - Exposes streaming incremental options (`streamingFromTimestamp`, `streamingSkipDeleteSnapshots`,
+ *   and `streamingSkipOverwriteSnapshots`) when `readMode === 'streaming'`.
+ * - Integrates `SecretManagerAuthFields`, `CollapsibleSection`, and `SystemInstructionsField` on the 8pt grid.
  */
 
 import React, { useState } from 'react';
 import { Sliders } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import type { PropertyFieldOption } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 import { CollapsibleSection } from '../../components/common/CollapsibleSection';
@@ -43,7 +34,6 @@ import type { SelectFieldOption } from '../../components/common/SelectField';
 import { StoragePathField } from '../../components/common/StoragePathField';
 import { SecretManagerAuthFields } from '../../components/common/SecretManagerAuthFields';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
-import type { PropertyFieldOption } from '../../components/common/PropertyField';
 
 /** Discovered BigLake Iceberg catalog descriptor from the extension host. */
 export interface BigLakeCatalogOption {
@@ -89,7 +79,24 @@ export function normalizeBigLakeCatalogOptions(
   return options;
 }
 
-/** React Flow node shape for the IcebergIO source panel, including its persisted configuration data. */
+/** Read mode options for IcebergSource. */
+export const ICEBERG_READ_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'batch', label: 'Batch (spark.read.format("iceberg"))' },
+  { value: 'streaming', label: 'Streaming (spark.readStream.format("iceberg"))' },
+];
+
+/** Supported Iceberg catalog integration types for Spark Iceberg table resolution. */
+export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
+  { value: 'biglake', label: 'BigLake Metastore / Iceberg REST Catalog' },
+  { value: 'rest', label: 'REST Catalog' },
+  { value: 'hive', label: 'Hive Metastore (HMS)' },
+  { value: 'hadoop', label: 'Hadoop (Filesystem catalog)' },
+  { value: 'glue', label: 'AWS Glue Data Catalog' },
+  { value: 'nessie', label: 'Project Nessie Catalog' },
+  { value: 'bigquery', label: 'BigQuery Metastore' },
+];
+
+/** React Flow node shape for the IcebergIO source panel. */
 export interface IcebergIOSourceNode {
   data: {
     label: string;
@@ -97,13 +104,19 @@ export interface IcebergIOSourceNode {
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      readMode?: 'batch' | 'streaming';
       table?: string;
+      namespace?: string;
       catalogName?: string;
       catalogType?: string;
+      warehouse?: string;
       warehouseLocation?: string;
       catalogUri?: string;
       snapshotId?: string | number;
       asOfTimestamp?: string;
+      streamingFromTimestamp?: string | number;
+      streamingSkipDeleteSnapshots?: boolean;
+      streamingSkipOverwriteSnapshots?: boolean;
       filterExpression?: string;
       columnProjection?: string;
       authMode?: string;
@@ -122,29 +135,26 @@ export interface IcebergIOSourcePropertiesProps {
   onChange: (properties: any) => void;
 }
 
-/** Supported Iceberg catalog integration types for Managed I/O table resolution */
-export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
-  { value: 'hadoop', label: 'Hadoop (Filesystem catalog)' },
-  { value: 'hive', label: 'Hive Metastore (HMS)' },
-  { value: 'rest', label: 'REST Catalog' },
-  { value: 'biglake', label: 'BigLake Metastore / Iceberg REST Catalog' },
-  { value: 'glue', label: 'AWS Glue Data Catalog' },
-  { value: 'nessie', label: 'Project Nessie Catalog' },
-  { value: 'bigquery', label: 'BigQuery Metastore' }
-];
-
 /**
- * IcebergIOSourceProperties component renders configuration fields for Beam Managed I/O Iceberg reads.
+ * IcebergIOSourceProperties component renders configuration fields for Apache Spark `.format("iceberg")` reads.
+ *
+ * @param props Component properties containing the active node data and onChange callback.
+ * @returns React component.
  */
 export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps> = ({ node, onChange }) => {
   const properties = node.data.properties || {};
+  const readMode = properties.readMode || 'batch';
   const table = properties.table || '';
+  const namespace = properties.namespace || '';
   const catalogName = properties.catalogName || '';
   const catalogType = properties.catalogType || 'hadoop';
-  const warehouseLocation = properties.warehouseLocation || '';
+  const warehouseLocation = properties.warehouseLocation ?? properties.warehouse ?? '';
   const catalogUri = properties.catalogUri || '';
   const snapshotId = properties.snapshotId ?? '';
   const asOfTimestamp = properties.asOfTimestamp || '';
+  const streamingFromTimestamp = properties.streamingFromTimestamp ?? '';
+  const streamingSkipDeleteSnapshots = properties.streamingSkipDeleteSnapshots ?? false;
+  const streamingSkipOverwriteSnapshots = properties.streamingSkipOverwriteSnapshots ?? false;
   const filterExpression = properties.filterExpression || '';
   const columnProjection = properties.columnProjection || '';
   const authMode = properties.authMode || 'default';
@@ -161,13 +171,9 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
   } = useAssetLoader<string | BigLakeCatalogOption>('bigLakeCatalogs');
   const catalogOptions = normalizeBigLakeCatalogOptions(rawCatalogs);
 
-  // Validation: table and warehouseLocation are required to locate the Iceberg table and catalog metadata.
   const isTableInvalid = !table.trim();
-  // NOTE: mirrors StoragePathField's own validation rule; used here to gate helper text.
   const isWarehouseLocationInvalid = !warehouseLocation.trim();
 
-  // NOTE: Iceberg time travel supports querying historical snapshots by snapshot ID OR timestamp,
-  // but snapshotId and asOfTimestamp are strictly mutually exclusive.
   const hasSnapshotId = typeof snapshotId === 'string' ? snapshotId.trim().length > 0 : Boolean(snapshotId);
   const hasAsOfTimestamp = typeof asOfTimestamp === 'string' ? asOfTimestamp.trim().length > 0 : Boolean(asOfTimestamp);
   const hasTimeTravelConflict = hasSnapshotId && hasAsOfTimestamp;
@@ -175,31 +181,38 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
     ? 'Cannot specify both Snapshot ID and As Of Timestamp. Time travel parameters are mutually exclusive.'
     : null;
 
-  // Conditional render: catalogUri is required only for REST and Hive metastore catalogs
-  const showCatalogUri = catalogType === 'rest' || catalogType === 'hive';
+  const showCatalogUri = catalogType === 'rest' || catalogType === 'hive' || catalogType === 'biglake';
 
-  // System instructions text with fallback hierarchy
   const systemInstructions = resolveSystemInstructions(node);
 
   /**
-   * Handles generic input, select, and checkbox changes for form fields
+   * Handles generic input, select, and checkbox changes for form fields.
+   *
+   * @param e Form change event from input, select, or textarea.
    */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
+    const nextValue = isCheckbox ? checked : value;
+
+    if (name === 'warehouseLocation' || name === 'warehouse') {
+      onChange({
+        ...properties,
+        warehouse: nextValue,
+        warehouseLocation: nextValue,
+      });
+      return;
+    }
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: nextValue,
     });
   };
 
   /**
-   * Updates AI prompt / system instructions for code generation
-   */
-  /**
-   * Toggles the advanced tuning accordion state
+   * Toggles the advanced tuning accordion state.
    */
   const handleToggleAdvanced = () => {
     setIsAdvancedOpen((prev) => !prev);
@@ -207,36 +220,60 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Table Identifier Input */}
-      <PropertyField
-        id="icebergSourceTable"
-        name="table"
-        label="Table Identifier"
-        required="Table is required."
-        tooltip="Fully-qualified Iceberg table identifier (e.g. db.table or warehouse.db.table). Required."
-        aria-required="true"
-        aria-invalid={isTableInvalid}
-        value={table}
+      {/* Read Mode Select */}
+      <SelectField
+        id="icebergSourceReadMode"
+        name="readMode"
+        label="Read Mode"
+        tooltip="Select batch mode (spark.read.format('iceberg')) for snapshot scans or streaming mode (spark.readStream.format('iceberg')) for incremental append scans."
+        value={readMode}
+        options={ICEBERG_READ_MODE_OPTIONS}
         onChange={handleChange}
-        placeholder="db.table"
-        invalid={isTableInvalid}
-        error={isTableInvalid ? 'Table is required.' : null}
-        mono={true}
-        helperText={
-          !isTableInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Fully-qualified database and table name in the Iceberg catalog.
-            </span>
-          ) : null
-        }
       />
+
+      {/* Namespace & Table Identifier */}
+      <div className="grid grid-cols-2 gap-3">
+        <PropertyField
+          id="icebergSourceNamespace"
+          name="namespace"
+          label="Namespace / Database"
+          tooltip="Optional Iceberg namespace or database name (e.g. analytics). You can also provide a fully-qualified identifier in Table Identifier."
+          value={namespace}
+          onChange={handleChange}
+          placeholder="analytics"
+          mono={true}
+        />
+
+        <PropertyField
+          id="icebergSourceTable"
+          name="table"
+          label="Table Identifier"
+          required="Table is required."
+          tooltip="Iceberg table identifier (e.g. db.table or catalog.db.table). Required."
+          aria-required="true"
+          aria-invalid={isTableInvalid}
+          value={table}
+          onChange={handleChange}
+          placeholder="db.table"
+          invalid={isTableInvalid}
+          error={isTableInvalid ? 'Table is required.' : null}
+          mono={true}
+          helperText={
+            !isTableInvalid ? (
+              <span className="text-xs text-[var(--vscode-text-muted)]">
+                Fully-qualified database and table name in the Iceberg catalog.
+              </span>
+            ) : null
+          }
+        />
+      </div>
 
       {/* Catalog Name Input */}
       <PropertyField
         id="icebergSourceCatalogName"
         name="catalogName"
         label="Catalog Name"
-        tooltip="Name of the Iceberg catalog instance (e.g. lakehouse, default, or prod_catalog)."
+        tooltip="Name of the Spark Iceberg catalog instance configured in spark.sql.catalog.<catalogName> (e.g. lakehouse or biglake)."
         value={catalogName}
         onChange={handleChange}
         placeholder="lakehouse"
@@ -246,7 +283,7 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         mono={true}
         helperText={
           <span className="text-[11px] text-[var(--vscode-text-muted)]">
-            Logical catalog name passed in Managed I/O configuration (<code>catalog_name</code>).
+            Logical catalog name configured under <code>spark.sql.catalog.&lt;catalogName&gt;</code>.
           </span>
         }
       />
@@ -261,7 +298,7 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         id="icebergSourceCatalogType"
         name="catalogType"
         label="Catalog Type"
-        tooltip="Iceberg catalog implementation type (hadoop, hive, rest, glue, nessie, bigquery)."
+        tooltip="Iceberg catalog implementation type (biglake, rest, hive, hadoop, glue, nessie, bigquery)."
         value={catalogType}
         options={ICEBERG_CATALOG_TYPES}
         onChange={handleChange}
@@ -291,13 +328,13 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         }
       />
 
-      {/* Conditional Catalog URI (Shown for REST and Hive metastore catalogs) */}
+      {/* Conditional Catalog URI (Shown for REST, BigLake, and Hive metastore catalogs) */}
       {showCatalogUri && (
         <PropertyField
           id="icebergSourceCatalogUri"
           name="catalogUri"
           label="Catalog URI"
-          tooltip="Endpoint URI for the Iceberg REST catalog or Hive Metastore (e.g. http://rest-catalog:8181 or thrift://metastore:9083)."
+          tooltip="Endpoint URI for the Iceberg REST catalog or Hive Metastore (e.g. https://biglake.googleapis.com/iceberg/v1beta/restcatalog or thrift://metastore:9083)."
           value={catalogUri}
           onChange={handleChange}
           placeholder={catalogType === 'hive' ? 'thrift://metastore:9083' : 'http://rest-catalog:8181'}
@@ -312,47 +349,100 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         />
       )}
 
-      {/* Time-Travel Historical Query Controls */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
-        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)] flex items-center gap-1.5">
-          <span>Time Travel / Historical Snapshot</span>
-          <InfoTooltip text="Query historical snapshots of the Iceberg table either by snapshot ID or timestamp. These modes are mutually exclusive." />
-        </span>
-        <div className="grid grid-cols-2 gap-3">
-          {/* Snapshot ID */}
+      {/* Batch Time-Travel Historical Query Controls */}
+      {readMode === 'batch' && (
+        <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+          <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)] flex items-center gap-1.5">
+            <span>Time Travel / Historical Snapshot</span>
+            <InfoTooltip text="Query historical snapshots of the Iceberg table either by snapshot ID (snapshot-id) or timestamp (as-of-timestamp). These modes are mutually exclusive." />
+          </span>
+          <div className="grid grid-cols-2 gap-3">
+            {/* Snapshot ID */}
+            <PropertyField
+              id="icebergSourceSnapshotId"
+              name="snapshotId"
+              label="Snapshot ID"
+              tooltip="Iceberg snapshot ID (int64) to query for historical time travel (option snapshot-id). Mutually exclusive with As Of Timestamp."
+              value={snapshotId}
+              onChange={handleChange}
+              placeholder="e.g. 1234567890123456789"
+              mono={true}
+              invalid={hasTimeTravelConflict}
+              helperText="Iceberg snapshot ID integer."
+            />
+
+            {/* As Of Timestamp */}
+            <PropertyField
+              id="icebergSourceAsOfTimestamp"
+              name="asOfTimestamp"
+              label="As Of Timestamp"
+              tooltip="Iceberg commit timestamp in epoch milliseconds or ISO-8601 string for historical time travel (option as-of-timestamp). Mutually exclusive with Snapshot ID."
+              value={asOfTimestamp}
+              onChange={handleChange}
+              placeholder="e.g. 2024-01-01T00:00:00Z"
+              mono={true}
+              invalid={hasTimeTravelConflict}
+              helperText="ISO-8601 timestamp string or epoch ms."
+            />
+          </div>
+          {hasTimeTravelConflict && (
+            <span className="text-xs text-red-400 mt-1" role="alert">
+              {timeTravelErrorMessage}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Streaming Incremental Options */}
+      {readMode === 'streaming' && (
+        <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+          <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)] flex items-center gap-1.5">
+            <span>Streaming Incremental Scan Options</span>
+            <InfoTooltip text="Configure Iceberg structured streaming start timestamp and snapshot handling options." />
+          </span>
+
           <PropertyField
-            id="icebergSourceSnapshotId"
-            name="snapshotId"
-            label="Snapshot ID"
-            tooltip="Iceberg snapshot ID (int64) to query for historical time travel. Mutually exclusive with As Of Timestamp."
-            value={snapshotId}
+            id="icebergStreamingFromTimestamp"
+            name="streamingFromTimestamp"
+            label="Streaming From Timestamp (ms)"
+            tooltip="Start streaming from the first snapshot after this epoch millisecond timestamp (option stream-from-timestamp)."
+            value={streamingFromTimestamp}
             onChange={handleChange}
-            placeholder="e.g. 1234567890123456789"
+            placeholder="e.g. 1704067200000"
             mono={true}
-            invalid={hasTimeTravelConflict}
-            helperText="Iceberg snapshot ID integer."
           />
 
-          {/* As Of Timestamp */}
-          <PropertyField
-            id="icebergSourceAsOfTimestamp"
-            name="asOfTimestamp"
-            label="As Of Timestamp"
-            tooltip="Iceberg commit timestamp string (e.g. 2024-01-01T00:00:00Z) or epoch milliseconds for historical time travel. Mutually exclusive with Snapshot ID."
-            value={asOfTimestamp}
-            onChange={handleChange}
-            placeholder="e.g. 2024-01-01T00:00:00Z"
-            mono={true}
-            invalid={hasTimeTravelConflict}
-            helperText="ISO-8601 timestamp string or epoch ms."
-          />
+          <label htmlFor="icebergStreamingSkipDeleteSnapshots" className="flex items-center gap-2 cursor-pointer">
+            <input
+              id="icebergStreamingSkipDeleteSnapshots"
+              type="checkbox"
+              name="streamingSkipDeleteSnapshots"
+              checked={streamingSkipDeleteSnapshots}
+              onChange={handleChange}
+              className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+            />
+            <div className="flex items-center">
+              <span className="text-sm font-medium text-slate-300">Skip Delete Snapshots</span>
+              <InfoTooltip text="Ignore snapshots that contain row deletions during streaming scans (option streaming-skip-delete-snapshots)." />
+            </div>
+          </label>
+
+          <label htmlFor="icebergStreamingSkipOverwriteSnapshots" className="flex items-center gap-2 cursor-pointer">
+            <input
+              id="icebergStreamingSkipOverwriteSnapshots"
+              type="checkbox"
+              name="streamingSkipOverwriteSnapshots"
+              checked={streamingSkipOverwriteSnapshots}
+              onChange={handleChange}
+              className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+            />
+            <div className="flex items-center">
+              <span className="text-sm font-medium text-slate-300">Skip Overwrite Snapshots</span>
+              <InfoTooltip text="Ignore snapshots created by overwrite operations during streaming scans (option streaming-skip-overwrite-snapshots)." />
+            </div>
+          </label>
         </div>
-        {hasTimeTravelConflict && (
-          <span className="text-xs text-red-400 mt-1" role="alert">
-            {timeTravelErrorMessage}
-          </span>
-        )}
-      </div>
+      )}
 
       {/* Filter Expression (Row filter pushdown) */}
       <PropertyField
@@ -376,7 +466,7 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         id="icebergSourceColumnProjection"
         name="columnProjection"
         label="Column Projection"
-        tooltip="Comma-separated list of columns to read. Iceberg will prune unselected columns from disk scan."
+        tooltip="Comma-separated list of columns to read. Iceberg prunes unselected columns from the disk scan."
         value={columnProjection}
         onChange={handleChange}
         placeholder="event_id, timestamp, user_id, action, amount"
@@ -410,7 +500,7 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
           type="textarea"
           name="configProperties"
           label="Configuration Properties"
-          tooltip="Key=value pairs (one per line) passed to Iceberg Managed I/O and catalog configuration (e.g. io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO)."
+          tooltip="Key=value pairs (one per line) passed to Spark Iceberg reader and catalog configuration (e.g. io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO)."
           value={configProperties}
           onChange={handleChange}
           placeholder="io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO&#10;s3.endpoint=https://..."
@@ -418,7 +508,7 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
           mono={true}
           helperText={
             <span className="text-[11px] text-[var(--vscode-text-muted)]">
-              Catalog and Iceberg engine properties passed to Managed I/O config (key=value per line).
+              Catalog and Iceberg engine properties passed to Spark options (key=value per line).
             </span>
           }
         />
@@ -428,9 +518,9 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
       <SystemInstructionsField
         id="icebergSourceInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline source code for this Iceberg reader step via Managed I/O."
-        placeholder="e.g. Read Iceberg table records, apply column pruning, and transform rows into PCollection<Row>."
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
+        tooltip="Custom instructions provided directly to Gemini when generating PySpark code for this Iceberg reader step."
+        placeholder="e.g. Read Iceberg table records, apply column pruning, and return the DataFrame."
+        helperText="Additional guidance appended to prompt when synthesizing PySpark code."
         textareaClassName="h-24"
         wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
         onChange={(value) =>
@@ -443,3 +533,6 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
     </div>
   );
 };
+
+/** Alias matching the canonical Spark transform name `IcebergSource`. */
+export const IcebergSourceProperties = IcebergIOSourceProperties;

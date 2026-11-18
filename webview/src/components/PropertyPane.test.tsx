@@ -86,7 +86,7 @@ describe('PropertyPane', () => {
 
     expect(screen.getByText('SOURCE')).toBeInTheDocument();
     // The Create panel is code-split; wait for its chunk to load.
-    expect(await screen.findByText('In-Memory Elements')).toBeInTheDocument();
+    expect(await screen.findByText(/In-Memory Elements/i)).toBeInTheDocument();
     const textareas = screen.getAllByPlaceholderText(/Element \d/);
     expect(textareas).toHaveLength(2);
     expect(textareas[0]).toHaveValue('{"id": 1, "name": "alpha", "score": 99.5}');

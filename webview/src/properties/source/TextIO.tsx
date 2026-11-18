@@ -1,43 +1,49 @@
 /**
- * TextIO Source Properties Component
- * 
+ * @fileoverview Text Source (SRC18 TextSource / TextIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property panel for Apache Beam TextIO file read operations (TextIO.read().from(...)).
- * 
- * Architectural Decisions:
- * - In Apache Beam, TextIO.read() requires a file pattern or path (.from(...)).
- * - Enforces required field indicators, error messages, and aria attributes on filePattern.
- * - Integrates InfoTooltip components explaining file match semantics, compression, and sharding hints.
- * - Provides Code Generation Instructions textarea at the bottom for custom LLM prompts.
+ * Renders the property configuration panel for Apache Spark Text source nodes
+ * using spark.read.text(uri) or spark.readStream.format("text").load(uri).
+ * Embeds StorageBackendFields, wholetext toggle, lineSep custom separator,
+ * maxFilesPerTrigger (for streaming), and SystemInstructionsField.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
-
-const BEAM_COMPRESSION_TYPES = ['AUTO', 'UNCOMPRESSED', 'GZIP', 'BZIP2', 'ZIP', 'ZSTD', 'LZO', 'SNAPPY', 'DEFLATE'] as const;
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
+const READ_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'batch', label: 'BATCH (spark.read.text)' },
+  { value: 'streaming', label: 'STREAM (spark.readStream.format("text"))' },
+];
+
 /**
- * Node data structure for TextIO source nodes.
+ * React Flow node shape for the Text source panel.
  */
-interface TextIOSourceNode {
+export interface TextIOSourceNode {
   data: {
     label: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      readMode?: 'batch' | 'streaming';
+      storageBackend?: string;
+      path?: string;
       filePattern?: string;
-      withCompression?: boolean;
-      compression?: string;
-      emptyMatchTreatment?: 'ALLOW' | 'DISALLOW' | 'ALLOW_IF_WILDCARD';
-      skipHeaderLines?: string | number;
-      delimiter?: string;
-      hintMatchesManyFiles?: boolean;
+      uri?: string;
+      pathGlobFilter?: string;
+      recursiveFileLookup?: boolean;
+      wholetext?: boolean;
+      lineSep?: string;
+      maxFilesPerTrigger?: string | number;
       system_instructions?: string;
       special_instructions?: string;
       [key: string]: any;
@@ -46,163 +52,121 @@ interface TextIOSourceNode {
 }
 
 /**
- * Props for the TextIOSourceProperties component.
+ * Props for the {@link TextIOSourceProperties} component.
  */
-interface TextIOSourcePropertiesProps {
+export interface TextIOSourcePropertiesProps {
   node: TextIOSourceNode;
   onChange: (properties: any) => void;
 }
 
 /**
- * Properties panel component for configuring TextIO source transforms.
+ * Dedicated property panel for Apache Spark TextSource / TextIO source nodes.
+ *
+ * @param props Selected node and change callback.
+ * @returns Rendered Text source property panel.
  */
-export const TextIOSourceProperties: React.FC<TextIOSourcePropertiesProps> = ({ node, onChange }) => {
+export const TextIOSourceProperties: React.FC<TextIOSourcePropertiesProps> = ({
+  node,
+  onChange,
+}) => {
   const properties = node.data.properties || {};
-  const filePattern = properties.filePattern || '';
-  const withCompression = properties.withCompression ?? false;
-  const compression = properties.compression || 'AUTO';
-  const emptyMatchTreatment = properties.emptyMatchTreatment || 'ALLOW_IF_WILDCARD';
-  const skipHeaderLines = properties.skipHeaderLines ?? '';
-  const delimiter = properties.delimiter || '';
-  const hintMatchesManyFiles = properties.hintMatchesManyFiles ?? false;
-
-  const isInvalid = !filePattern.trim();
-
-  // System instructions text with fallback
+  const readMode = properties.readMode === 'streaming' ? 'streaming' : 'batch';
+  const wholetext = Boolean(properties.wholetext);
+  const lineSep = properties.lineSep ?? properties.delimiter ?? '';
+  const maxFilesPerTrigger = properties.maxFilesPerTrigger ?? '';
   const systemInstructions = resolveSystemInstructions(node);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: isCheckbox ? checked : value,
     });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* File Pattern Input */}
-      <PropertyField
-        id="textFilePattern"
-        name="filePattern"
-        label="File Pattern / Path (.from)"
-        required="Required"
-        tooltip="File or glob pattern to read from (e.g. gs://bucket/data/*.csv or /path/to/files/*.txt). Required."
-        value={filePattern}
-        invalid={isInvalid}
-        error={isInvalid ? 'File Pattern is required.' : null}
-        helperText={!isInvalid ? 'Target file or glob pattern (e.g. gs://bucket/*.txt)' : null}
-        placeholder="gs://my-bucket/data/*.txt or /path/to/files/*.csv"
+      {/* Read Mode Selector */}
+      <SelectField
+        id="textSourceReadMode"
+        name="readMode"
+        label="Read Mode"
+        tooltip="Select batch mode (spark.read.text) or Structured Streaming mode (spark.readStream.format('text'))."
+        value={readMode}
+        options={READ_MODE_OPTIONS}
         onChange={handleChange}
-        mono={true}
       />
 
-      {/* Compression Row */}
-      <div className="flex flex-col gap-2 p-3 bg-slate-800/40 rounded border border-slate-700/50">
-        <label htmlFor="textWithCompression" className="flex items-center gap-2 cursor-pointer">
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={properties}
+        onChange={onChange}
+        idPrefix="textSource"
+        pathLabel="Text URI / Path"
+        pathPlaceholder="gs://my-bucket/logs/*.txt"
+      />
+
+      {/* Text Reader Options */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          Text Reader Options (Emits value: STRING)
+        </span>
+
+        <label htmlFor="textSourceWholetext" className="flex items-center gap-2 cursor-pointer">
           <input
-            id="textWithCompression"
+            id="textSourceWholetext"
             type="checkbox"
-            name="withCompression"
-            checked={withCompression}
+            name="wholetext"
+            checked={wholetext}
             onChange={handleChange}
-            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+            className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
           />
-          <span className="text-sm font-medium text-slate-300">With Compression</span>
-          <InfoTooltip text="Enables decompressing files on read using the specified algorithm or automatic detection." />
+          <span className="text-xs text-[var(--vscode-text-secondary)]">
+            Read Entire File as Single Row (wholetext)
+          </span>
+          <InfoTooltip text="Reads each complete file into a single DataFrame row instead of splitting by line." />
         </label>
 
-        {withCompression && (
-          <div className="flex flex-col gap-1 mt-2">
-            <label htmlFor="textCompression" className="flex items-center text-xs font-semibold text-slate-400">
-              <span>Compression Algorithm</span>
-              <InfoTooltip text="Compression algorithm used by source files (AUTO, GZIP, BZIP2, ZIP, DEFLATE, etc.)." />
-            </label>
-            <select
-              id="textCompression"
-              name="compression"
-              value={compression}
-              onChange={handleChange}
-              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-            >
-              {BEAM_COMPRESSION_TYPES.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-          </div>
+        {!wholetext && (
+          <PropertyField
+            id="textSourceLineSep"
+            name="lineSep"
+            label="Line Separator (lineSep)"
+            tooltip="Custom line separator character or sequence. Leave blank to cover \\r, \\r\\n, and \\n."
+            value={lineSep}
+            onChange={handleChange}
+            placeholder="\n (Default covers \r, \r\n, \n)"
+            mono={true}
+          />
         )}
-      </div>
 
-      {/* Empty Match Treatment */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="textEmptyMatchTreatment" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Empty Match Treatment</span>
-          <InfoTooltip text="Determines behavior when no files match the pattern: ALLOW (ignore), DISALLOW (fail pipeline), ALLOW_IF_WILDCARD (allow only for wildcards)." />
-        </label>
-        <select
-          id="textEmptyMatchTreatment"
-          name="emptyMatchTreatment"
-          value={emptyMatchTreatment}
-          onChange={handleChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          <option value="ALLOW_IF_WILDCARD">ALLOW_IF_WILDCARD</option>
-          <option value="ALLOW">ALLOW</option>
-          <option value="DISALLOW">DISALLOW</option>
-        </select>
-      </div>
-
-      {/* Skip Header Lines */}
-      <PropertyField
-        id="skipHeaderLines"
-        name="skipHeaderLines"
-        label="Skip Header Lines"
-        type="number"
-        min="0"
-        value={skipHeaderLines}
-        onChange={handleChange}
-        placeholder="0 (Do not skip)"
-        tooltip="Number of lines to skip at the beginning of each file before reading records (useful for header rows in CSV/TSV)."
-        helperText="Number of lines to skip at the top of each file (useful for CSV headers)."
-        mono={false}
-      />
-
-      {/* Custom Delimiter */}
-      <PropertyField
-        id="textDelimiter"
-        name="delimiter"
-        label="Custom Delimiter (Optional)"
-        tooltip="Custom byte delimiter separating records (default is newline '\n')."
-        value={delimiter}
-        onChange={handleChange}
-        placeholder="\n (Default newline)"
-        mono={true}
-      />
-
-      {/* Hint Matches Many Files */}
-      <div className="p-3 bg-slate-800/40 rounded border border-slate-700/50">
-        <label htmlFor="hintMatchesManyFiles" className="flex items-center gap-2 cursor-pointer">
-          <input
-            id="hintMatchesManyFiles"
-            type="checkbox"
-            name="hintMatchesManyFiles"
-            checked={hintMatchesManyFiles}
+        {readMode === 'streaming' && (
+          <PropertyField
+            id="textSourceMaxFilesPerTrigger"
+            type="number"
+            name="maxFilesPerTrigger"
+            label="Max Files Per Trigger (maxFilesPerTrigger)"
+            tooltip="Maximum number of new text files to process in each streaming micro-batch trigger."
+            value={maxFilesPerTrigger}
             onChange={handleChange}
-            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+            placeholder="e.g. 100"
+            min="1"
+            mono={true}
           />
-          <span className="text-sm font-medium text-slate-300">Hint Matches Many Files (Optimization)</span>
-          <InfoTooltip text="Hints to the runner that this file pattern expands into a very large number of files, optimizing parallel expansion." />
-        </label>
+        )}
       </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="textSourceSystemInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for TextIO source code generation..."
+        placeholder="e.g. Extract regex groups from the value column after reading."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark Text reader code."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -213,3 +177,5 @@ export const TextIOSourceProperties: React.FC<TextIOSourcePropertiesProps> = ({ 
     </div>
   );
 };
+
+export const TextSourceProperties = TextIOSourceProperties;

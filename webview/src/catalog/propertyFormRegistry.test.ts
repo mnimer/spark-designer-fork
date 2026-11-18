@@ -7,13 +7,27 @@
 import { describe, expect, it } from 'vitest';
 import { PROPERTY_FORM_REGISTRY, loadPropertyForm } from './propertyFormRegistry';
 import { NODE_DOCUMENTATION_REGISTRY } from './documentation';
+import { SOURCE_NODES } from './nodes/sources';
 
 describe('PROPERTY_FORM_REGISTRY', () => {
-  it('has dedicated panel entries matching the documented node catalog count', () => {
+  it('has dedicated panel entries matching the documented node catalog count and exact keys', () => {
     const registryKeys = Object.keys(PROPERTY_FORM_REGISTRY);
     const documentedKeys = Object.keys(NODE_DOCUMENTATION_REGISTRY);
     expect(registryKeys.length).toBe(documentedKeys.length);
     expect(registryKeys.length).toBeGreaterThan(0);
+    expect(new Set(registryKeys)).toEqual(new Set(documentedKeys));
+  });
+
+  it('registers all 38 Phase 5 Spark 4.x SOURCE_NODES under both SOURCE:<transform> and direct <transform> keys', () => {
+    expect(SOURCE_NODES).toHaveLength(38);
+    for (const node of SOURCE_NODES) {
+      const qualifiedKey = `SOURCE:${node.sparkTransform}`;
+      expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
+      expect(PROPERTY_FORM_REGISTRY[node.sparkTransform], `Missing direct form for ${node.sparkTransform}`).toBeDefined();
+      expect(PROPERTY_FORM_REGISTRY[qualifiedKey]).toBe(PROPERTY_FORM_REGISTRY[node.sparkTransform]);
+      expect(NODE_DOCUMENTATION_REGISTRY[qualifiedKey], `Missing docs for ${qualifiedKey}`).toBeDefined();
+      expect(NODE_DOCUMENTATION_REGISTRY[node.sparkTransform], `Missing direct docs for ${node.sparkTransform}`).toBeDefined();
+    }
   });
 
   it('contains valid component functions or objects for every registered key', () => {

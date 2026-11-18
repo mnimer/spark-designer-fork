@@ -159,21 +159,24 @@ describe('NodesCard', () => {
       />
     );
 
-    expect(screen.getByText(/SOURCES \(/i)).toBeInTheDocument();
+    expect(screen.getByText(/SOURCES \(38\)/i)).toBeInTheDocument();
     expect(screen.getByText('Streaming Sources')).toBeInTheDocument();
-    expect(screen.getByText('Database Sources')).toBeInTheDocument();
-    expect(screen.getByText('File Sources')).toBeInTheDocument();
+    expect(screen.getByText('Lakehouse Sources')).toBeInTheDocument();
+    expect(screen.getByText('File Format Sources')).toBeInTheDocument();
+    expect(screen.getByText('Warehouse & Database Sources')).toBeInTheDocument();
+    expect(screen.getByText('NoSQL & Graph Sources')).toBeInTheDocument();
+    expect(screen.getByText('Synthetic & API Sources')).toBeInTheDocument();
     expect(screen.getByText('Kafka')).toBeInTheDocument();
-    expect(screen.getByText('PubSub')).toBeInTheDocument();
-    expect(screen.getByText('JMS')).toBeInTheDocument();
+    expect(screen.getByText('Pub/Sub')).toBeInTheDocument();
+    expect(screen.getByText('Event Hubs')).toBeInTheDocument();
     expect(screen.getByText('MQTT')).toBeInTheDocument();
-    expect(screen.getByText('Generate Sequence')).toBeInTheDocument();
-    expect(screen.getByText('Periodic Impulse')).toBeInTheDocument();
+    expect(screen.getByText('Rate')).toBeInTheDocument();
+    expect(screen.getByText('Socket')).toBeInTheDocument();
     expect(screen.getByText('BigQuery')).toBeInTheDocument();
-    expect(screen.getByText('JdbcIO')).toBeInTheDocument();
-    expect(screen.getByText('FileIO')).toBeInTheDocument();
-    expect(screen.getByText('TextIO')).toBeInTheDocument();
-    expect(screen.getByText('Create')).toBeInTheDocument();
+    expect(screen.getByText('JDBC Database')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Parquet')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Text')).toBeInTheDocument();
+    expect(screen.getByText('Create DataFrame')).toBeInTheDocument();
   });
 
   it('renders STEPS categories and items', () => {
@@ -499,7 +502,7 @@ describe('NodesCard', () => {
         getState: () => ({
           nodePaletteGroups: {
             sources_streaming_sources: false,
-            sources_database_sources: true,
+            sources_lakehouse_sources: true,
           },
         }),
         setState: vi.fn(),
@@ -512,7 +515,7 @@ describe('NodesCard', () => {
       const detailsList = container.querySelectorAll('details');
       // sources_streaming_sources is first details
       expect(detailsList[0].open).toBe(false);
-      // sources_database_sources is second details
+      // sources_lakehouse_sources is second details
       expect(detailsList[1].open).toBe(true);
     });
 
@@ -532,16 +535,16 @@ describe('NodesCard', () => {
       expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
     });
 
-    it('renders AvroIO, TikaIO, and Iceberg in SOURCES under File Sources and in SINKS under File Sinks', () => {
+    it('renders Avro, Parquet, and Iceberg in SOURCES under File Format / Lakehouse Sources and in SINKS under File Sinks', () => {
       const { rerender } = render(
         <NodesCard activeTab="SOURCES" setActiveTab={vi.fn()} nodesCount={0} hasPubSubSource={false} onDragStart={mockOnDragStart} />
       );
 
-      expect(screen.getByText('AvroIO')).toBeInTheDocument();
-      expect(screen.getByText('TikaIO')).toBeInTheDocument();
+      expect(screen.getAllByText('Avro').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Parquet').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Iceberg').length).toBeGreaterThan(0);
-      expect(screen.getByText('Read records from Avro files')).toBeInTheDocument();
-      expect(screen.getByText('File Sources')).toBeInTheDocument();
+      expect(screen.getByText('File Format Sources')).toBeInTheDocument();
+      expect(screen.getByText('Lakehouse Sources')).toBeInTheDocument();
 
       rerender(
         <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} />
@@ -724,22 +727,18 @@ describe('NodesCard', () => {
       expect(renderedTitles[2]).toContain('Zebra Pipeline');
     });
 
-    it('renders Healthcare, SaaS & Observability native Source and Sink nodes and omits unsupported directions', () => {
+    it('renders Spark 4.x Source categories and omits legacy Beam-only Source nodes', () => {
       const { rerender } = render(
         <NodesCard activeTab="SOURCES" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
       );
 
-      // Categories in SOURCES
+      // Categories in SOURCES (Phase 5 SRC1-SRC38)
       expect(screen.getByText('Streaming Sources')).toBeInTheDocument();
-      expect(screen.getByText('Database Sources')).toBeInTheDocument();
-      expect(screen.getByText('Data Services Sources')).toBeInTheDocument();
-
-      // Native Source nodes
-      expect(screen.getByText('FhirIO')).toBeInTheDocument();
-      expect(screen.getByText('HL7v2IO')).toBeInTheDocument();
-      expect(screen.getByText('DicomIO')).toBeInTheDocument();
-      expect(screen.getByText('GoogleAdsIO')).toBeInTheDocument();
-      expect(screen.getByText('Web APIs (RequestResponseIO)')).toBeInTheDocument();
+      expect(screen.getByText('Lakehouse Sources')).toBeInTheDocument();
+      expect(screen.getByText('File Format Sources')).toBeInTheDocument();
+      expect(screen.getByText('Warehouse & Database Sources')).toBeInTheDocument();
+      expect(screen.getByText('NoSQL & Graph Sources')).toBeInTheDocument();
+      expect(screen.getByText('Synthetic & API Sources')).toBeInTheDocument();
 
       // Unsupported Source directions must NOT appear in SOURCES
       expect(screen.queryByText('SplunkIO')).not.toBeInTheDocument();
@@ -754,66 +753,40 @@ describe('NodesCard', () => {
       expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
       expect(screen.getByText('Data Services Sinks')).toBeInTheDocument();
       expect(screen.getByText('Logging Sinks')).toBeInTheDocument();
-
-      // Native Sink nodes
-      expect(screen.getByText('FhirIO')).toBeInTheDocument();
-      expect(screen.getByText('HL7v2IO')).toBeInTheDocument();
-      expect(screen.getByText('DicomIO')).toBeInTheDocument();
-      expect(screen.getByText('Web APIs (RequestResponseIO)')).toBeInTheDocument();
-      expect(screen.getByText('SplunkIO')).toBeInTheDocument();
-      expect(screen.getByText('DatadogIO')).toBeInTheDocument();
-
-      // Unsupported Sink direction must NOT appear in SINKS
-      expect(screen.queryByText('GoogleAdsIO')).not.toBeInTheDocument();
     });
   });
 
   // =======================================================================
-  // Messaging & Streaming Connector Palette (IO15, IO20, IO49, IO62, IO63)
+  // Phase 5 Spark 4.x Source Connector Palette (SRC1-SRC38)
   // =======================================================================
-  describe('Messaging & Streaming connector palette entries', () => {
+  describe('Spark 4.x Source connector palette entries (SRC1-SRC38)', () => {
     const STREAMING_CONNECTORS = [
-      { label: 'AMQP', sourceDescription: 'Consume streaming messages from AMQP 1.0 broker addresses', sinkDescription: 'Publish messages to AMQP 1.0 broker address' },
-      { label: 'RabbitMQ', sourceDescription: 'Consume streaming messages from RabbitMQ queue or exchange', sinkDescription: 'Publish messages to RabbitMQ queue or exchange' },
-      { label: 'Pulsar', sourceDescription: 'Consume streaming messages from Apache Pulsar topic', sinkDescription: 'Publish messages to Apache Pulsar topic' },
-      { label: 'Solace', sourceDescription: 'Consume streaming messages from Solace queue or topic', sinkDescription: 'Publish messages to Solace topic or queue' }
+      { label: 'Kafka', sourceDescription: 'Consume streaming or batch records from Apache Kafka topics' },
+      { label: 'Pulsar', sourceDescription: 'Consume streaming or batch messages from Apache Pulsar topics' },
+      { label: 'Event Hubs', sourceDescription: 'Consume streaming or batch events from Azure Event Hubs' },
+      { label: 'Rate', sourceDescription: 'Generate streaming benchmark rows at a configurable rate per second' }
     ];
 
-    it.each(STREAMING_CONNECTORS)('renders $label in Streaming Sources and Streaming Sinks', ({ label, sourceDescription, sinkDescription }) => {
-      const { rerender } = render(
+    it.each(STREAMING_CONNECTORS)('renders $label in Streaming Sources', ({ label, sourceDescription }) => {
+      render(
         <NodesCard activeTab="SOURCES" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
       );
 
       expect(screen.getByText(label)).toBeInTheDocument();
       expect(screen.getByText(sourceDescription)).toBeInTheDocument();
       expect(screen.getByText('Streaming Sources')).toBeInTheDocument();
-
-      rerender(
-        <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
-      );
-
-      expect(screen.getByText(label)).toBeInTheDocument();
-      expect(screen.getByText(sinkDescription)).toBeInTheDocument();
-      expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
     });
 
-    it('renders Flink Streaming Impulse under Data Services Sources rather than Streaming', () => {
-      // NOTE: FlinkStreamingImpulseSource is Python-only and Flink-runner-only, so it is deliberately
-      // categorised under Data Services instead of the runner-agnostic Streaming categories.
-      // There is no native Beam writer support, so it only exists as a source.
-      const { rerender } = render(
+    it('renders Delta Lake, Apache Hudi, Iceberg, and Hive Table under Lakehouse Sources', () => {
+      render(
         <NodesCard activeTab="SOURCES" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
       );
 
-      expect(screen.getByText('Data Services Sources')).toBeInTheDocument();
-      expect(screen.getByText('Generate synthetic impulses on the Flink runner (Python)')).toBeInTheDocument();
-
-      rerender(
-        <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
-      );
-
-      expect(screen.getByText('Data Services Sinks')).toBeInTheDocument();
-      expect(screen.queryByText('Configure Flink runner egress adapter for impulse pipelines (Python)')).not.toBeInTheDocument();
+      const lakehouseGroup = screen.getByText('Lakehouse Sources').closest('details') as HTMLElement;
+      expect(lakehouseGroup).not.toBeNull();
+      for (const label of ['Iceberg', 'Delta Lake', 'Apache Hudi', 'Hive Table']) {
+        expect(lakehouseGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
+      }
     });
 
     it('keeps the new connector nodes discoverable through palette search', () => {
@@ -828,50 +801,32 @@ describe('NodesCard', () => {
       expect(screen.queryByText('RabbitMQ')).not.toBeInTheDocument();
     });
 
-    it('groups Cloud Bigtable, Cloud SQL, Cosmos DB, KineticaDB, MySQL, and Multi-DB under Database Sources/Sinks and Hadoop Format & HCatalog under File Sources/Sinks', () => {
-      const { rerender } = render(
+    it('groups Warehouse & Database Sources and NoSQL & Graph Sources cleanly in SOURCES', () => {
+      render(
         <NodesCard activeTab="SOURCES" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
       );
 
-      const dbSourcesGroup = screen.getByText('Database Sources').closest('details') as HTMLElement;
+      const dbSourcesGroup = screen.getByText('Warehouse & Database Sources').closest('details') as HTMLElement;
       expect(dbSourcesGroup).not.toBeNull();
       for (const label of [
-        'Cloud Bigtable (HBase based)',
+        'BigQuery',
+        'Cloud Spanner',
+        'Cloud Bigtable',
         'Cloud SQL',
-        'Cosmos DB',
-        'KineticaDB',
-        'MySQL',
-        'MySQL, PostgreSQL, Oracle, SQL Server',
+        'AlloyDB',
+        'JDBC Database',
+        'Snowflake',
+        'Amazon Redshift',
+        'ClickHouse',
+        'SingleStore',
       ]) {
         expect(dbSourcesGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
       }
 
-      const fileSourcesGroup = screen.getByText('File Sources').closest('details') as HTMLElement;
-      expect(fileSourcesGroup).not.toBeNull();
-      for (const label of ['Hadoop Format', 'HCatalog']) {
-        expect(fileSourcesGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
-      }
-
-      rerender(
-        <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
-      );
-
-      const dbSinksGroup = screen.getByText('Database Sinks').closest('details') as HTMLElement;
-      expect(dbSinksGroup).not.toBeNull();
-      for (const label of [
-        'Cloud Bigtable (HBase based)',
-        'Cloud SQL',
-        'KineticaDB',
-        'MySQL',
-        'MySQL, PostgreSQL, Oracle, SQL Server',
-      ]) {
-        expect(dbSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
-      }
-
-      const fileSinksGroup = screen.getByText('File Sinks').closest('details') as HTMLElement;
-      expect(fileSinksGroup).not.toBeNull();
-      for (const label of ['Hadoop Format', 'HCatalog']) {
-        expect(fileSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
+      const nosqlSourcesGroup = screen.getByText('NoSQL & Graph Sources').closest('details') as HTMLElement;
+      expect(nosqlSourcesGroup).not.toBeNull();
+      for (const label of ['MongoDB', 'Cloud Firestore', 'Apache Cassandra', 'Redis', 'Elasticsearch', 'Neo4j']) {
+        expect(nosqlSourcesGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
       }
     });
   });

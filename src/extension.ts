@@ -6,6 +6,7 @@ import { getGcloudProject } from './cli/gcloudClient';
 import { SparkTreeProvider, type SparkJob } from './tree/sparkTree';
 import { SparkEditorProvider } from './editor/SparkEditorProvider';
 import { promptForSparkSaveLocation } from './editor/sparkSaveDialog';
+import { upgradeRestoredSparkTextTabs } from './editor/restoredTabUpgrade';
 
 export type { WebviewHtmlOptions } from './webviewHtml';
 export {
@@ -180,6 +181,15 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.env.openExternal(vscode.Uri.parse(url));
         })
     );
+
+    // VS Code restores tabs with the editor type they were persisted with and never
+    // re-resolves them, so a .spark file once opened while this extension was not loaded
+    // keeps coming back as plain YAML. Reopen such tabs in the designer.
+    void upgradeRestoredSparkTextTabs().catch((err: unknown) => {
+        outputChannel.appendLine(
+            `[${new Date().toLocaleTimeString()}] Failed to reopen restored .spark tabs in the designer: ${err instanceof Error ? err.message : String(err)}`
+        );
+    });
 }
 
 export type {
@@ -311,6 +321,7 @@ export type { DocumentSyncState } from './editor/documentSync';
 export { createSafePostMessage, shouldPushDocumentUpdate } from './editor/documentSync';
 export { savePipelineFiles } from './editor/pipelineFileWriter';
 export { SparkEditorProvider } from './editor/SparkEditorProvider';
+export { isPlainTextSparkTab, upgradeRestoredSparkTextTabs } from './editor/restoredTabUpgrade';
 
 export { getDesignerOutputChannel, disposeDesignerOutputChannel } from './core/outputChannel';
 

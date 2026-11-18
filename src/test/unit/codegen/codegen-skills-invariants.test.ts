@@ -112,6 +112,24 @@ describe('codegen skill library invariants', () => {
         expect(bad).toEqual([]);
     });
 
+    it('resolves all 38 Phase 5 SOURCE_NODES in webview/src/catalog/nodes/sources.ts to an io-* skill', () => {
+        const sourceEntries = CATALOG.filter((entry) => entry.type === 'SOURCE');
+        expect(sourceEntries).toHaveLength(38);
+        const ioTransforms = new Map<string, string>();
+        for (const skill of SKILLS.filter((s) => s.kind === 'io')) {
+            for (const transform of skill.transforms) {
+                ioTransforms.set(transform, skill.name);
+            }
+        }
+        const missing = sourceEntries
+            .filter((entry) => {
+                const skillName = ioTransforms.get(entry.sparkTransform);
+                return !skillName || !skillName.startsWith('io-');
+            })
+            .map((entry) => entry.sparkTransform);
+        expect(missing).toEqual([]);
+    });
+
     it('names only known Spark transforms in metadata.transforms', () => {
         const unknown = SKILLS.flatMap((s) =>
             s.transforms.filter((t) => !KNOWN_SPARK_TRANSFORMS.has(t)).map((t) => `${s.name}: ${t}`)
