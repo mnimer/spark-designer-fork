@@ -14,6 +14,8 @@ import {
   migrateLegacyNodes,
   resolveCanonicalSourceTransform,
   resolveCanonicalSinkTransform,
+  resolveCanonicalStepTransform,
+  type LegacyNodeData,
 } from './legacyNodeMigration';
 
 describe('legacyNodeMigration', () => {
@@ -75,7 +77,7 @@ describe('legacyNodeMigration', () => {
 
   it('returns null for genuinely unknown nodes without guessing', () => {
     expect(inferBeamTransform({ label: 'Unknown Operation', type: 'CUSTOM', iconName: 'HelpCircle' })).toBeNull();
-    expect(inferBeamTransform(null as any)).toBeNull();
+    expect(inferBeamTransform(null as unknown as LegacyNodeData)).toBeNull();
   });
 
   it('migrates legacy nodes array while logging summary and preserving modern nodes', () => {
@@ -119,7 +121,7 @@ nodes:
     const migrated = migrateLegacyNodes(parsed.nodes);
     expect(migrated.length).toBe(4);
 
-    const transforms = migrated.map((n: any) => n.data.spark_transform);
+    const transforms = migrated.map((n: { data?: LegacyNodeData }) => n.data?.spark_transform);
     expect(transforms).toEqual(['PubSubIO', 'BigQueryIO', 'ParseMessage', 'LogMessage']);
   });
 
@@ -191,5 +193,36 @@ nodes:
     expect(resolveCanonicalSinkTransform('SplunkIO')).toBe('ForeachBatchSink');
     expect(resolveCanonicalSinkTransform('RequestResponseIO')).toBe('ForeachBatchSink');
     expect(resolveCanonicalSinkTransform('DeltaSink')).toBe('DeltaSink');
+  });
+
+  it('resolves legacy Beam step transforms to canonical Spark 4.x step transforms (OP1-OP29)', () => {
+    expect(resolveCanonicalStepTransform('ParDo')).toBe('CustomTransform');
+    expect(resolveCanonicalStepTransform('STEP:ParDo')).toBe('CustomTransform');
+    expect(resolveCanonicalStepTransform('ParseMessage')).toBe('ParsePayload');
+    expect(resolveCanonicalStepTransform('STEP:ParseMessage')).toBe('ParsePayload');
+    expect(resolveCanonicalStepTransform('Flatten')).toBe('UnionByName');
+    expect(resolveCanonicalStepTransform('CoGroupByKey')).toBe('Join');
+    expect(resolveCanonicalStepTransform('Co Group By Key')).toBe('Join');
+    expect(resolveCanonicalStepTransform('Reshuffle')).toBe('RepartitionCoalesce');
+    expect(resolveCanonicalStepTransform('ReShuffle')).toBe('RepartitionCoalesce');
+    expect(resolveCanonicalStepTransform('Distinct')).toBe('Deduplicate');
+    expect(resolveCanonicalStepTransform('Sample')).toBe('LimitSample');
+    expect(resolveCanonicalStepTransform('Top')).toBe('TopN');
+    expect(resolveCanonicalStepTransform('WindowInto')).toBe('GroupByAgg');
+    expect(resolveCanonicalStepTransform('Window')).toBe('GroupByAgg');
+    expect(resolveCanonicalStepTransform('WithTimestamps')).toBe('Watermark');
+    expect(resolveCanonicalStepTransform('FlatMap')).toBe('Explode');
+    expect(resolveCanonicalStepTransform('Map')).toBe('WithColumns');
+    expect(resolveCanonicalStepTransform('Keys')).toBe('Select');
+    expect(resolveCanonicalStepTransform('Values')).toBe('Select');
+    expect(resolveCanonicalStepTransform('BatchElements')).toBe('PandasUdfTransform');
+    expect(resolveCanonicalStepTransform('Count')).toBe('GroupByAgg');
+    expect(resolveCanonicalStepTransform('Sum')).toBe('GroupByAgg');
+    expect(resolveCanonicalStepTransform('Filter')).toBe('Filter');
+    expect(resolveCanonicalStepTransform('GroupByAgg')).toBe('GroupByAgg');
+    expect(resolveCanonicalStepTransform('Watermark')).toBe('Watermark');
+    expect(resolveCanonicalStepTransform('SparkMlInference')).toBe('SparkMlAndVertexAi');
+    expect(resolveCanonicalStepTransform('VertexAiInference')).toBe('SparkMlAndVertexAi');
+    expect(resolveCanonicalStepTransform('StatefulTransform')).toBe('StatefulTransform');
   });
 });

@@ -24,6 +24,7 @@ description: >-
    - `verifier` (or split `verifier-a` / `verifier-b` on `workspace: "inherit"`, strictly read-only)
    - `monitor` (when `swarm_monitor` is in `<skills>`)
    Verify every parallel author `swarm{action: "add"}` call explicitly sets `workspace: "share"`. Never leave an author on default `inherit`.
+   Load `swarm_pane` and write `<appDataDir>/brain/<conversation-id>/.system_generated/swarm/plan.json` right after spawning workers (do not add a `narrator` unless requested). Route peer handoffs directly (`author -> verifier [Stage 1] -> integrator -> verifier [Stage 2] -> coordinator`) so `@coordinator` never becomes a bottleneck.
 4. **Reserve shared barrel and registry files for `integrator`**: In catalog phases (`SRC*`, `SNK*`, `OP*`), authors own only isolated `resources/codegen-skills/*` and `webview/src/properties/*` files. Keep `webview/src/catalog/nodes/*.ts`, `webview/src/catalog/propertyFormRegistry.ts`, `webview/src/catalog/documentation/*.ts`, `webview/src/catalog/paletteGroupState.ts`, `webview/src/utils/legacyNodeMigration.ts`, `src/codegen/codegenConfig.ts`, `src/spark/versionMatrix.ts`, `src/test/unit/codegen/CodegenSkillCatalog.test.ts`, `src/test/unit/codegen/codegen-skills-invariants.test.ts`, and `TASKS.md` exclusively in `integrator`.
 5. Leave `model` unset on `swarm{action: "add"}` unless the user requests another model. If a worker hits `503 No capacity available` or quota exhaustion while `waiting`, switch its model in place with `swarm{action: "model", name, model}` and inform the user. Never `kill` and re-`add` a stalled worker because `kill` deletes its worktree and context.
 6. **Assign full vertical IPC call chains**: If a task sends state or actions between the Webview and Extension Host, assign the complete call path (`Leaf Component -> Context -> App.tsx -> useVsCodeBridge.ts -> src/shared/protocol.ts -> src/ipc/handlers/*.ts`) to one owner (or explicitly assign the bridge files) so options are never dropped at unowned middle layers.
@@ -45,6 +46,7 @@ Include these 5 rules in every `workspace: "share"` author brief:
 ## 3. Integration, Bundle Build & Phase Completion
 
 1. **`integrator` workflow** (runs after verifiers approve all author branches):
+   - If `origin/develop` advanced while authors were working, inspect `git diff <initial-base>..origin/develop -- AGENTS.md .agents/` before rebasing onto `origin/develop` and fold any newly landed rule changes into the affected task commits.
    - Cherry-pick all verifier-approved per-task commits onto the phase branch in exact numerical task order (`TASK1`..`TASKN`).
    - Fold any cross-slice integration fix into its target task commit with `git commit --fixup <task-sha>` and `GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash origin/develop` rather than leaving extra fix commits at the branch tip.
    - Wire shared catalog registries, documentation maps, legacy migrations (`webview/src/utils/legacyNodeMigration.ts`), feature detector sets (`src/codegen/codegenConfig.ts`), unreferenced legacy Beam panel removals, and invariant tests.

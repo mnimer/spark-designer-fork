@@ -37,11 +37,12 @@ Every catalog `sparkTransform` must resolve to an `io-*` or `transform-*` skill 
    - Restrict `preloadWhen` to `streaming`, `python_datasource`, `multi_output`, `custom_instructions`, `side_inputs`, and `xlang`.
    - Only `{{spark_version}}`, `{{pipeline_name}}`, `{{pipeline_class_name}}`, and `{{gcs_staging_path}}` are allowed as `{{...}}` placeholders. Any other `{{...}}` token fails the invariant suite. Use shell variables (`${PROJECT_ID}`, `${DEPS_BUCKET}`) inside bash templates, and never reference deleted `code-gen-prompt-*` files.
 2. **One `io-<connector>` Skill Per Connector (Source + Sink Sharing)**:
-   - Each `sparkTransform` can be owned by at most **one** skill across the entire library.
+   - Each `sparkTransform` can be owned by at most **one** `kind: io` or `kind: transform` skill (`TRANSFORM_OWNER_KINDS`). Only `kind: crosscutting` skills (`core-streaming`, `core-python-datasource`) may co-list those transforms in `metadata.transforms` for preloading.
    - When adding a Sink (`<Name>Sink`) whose counterpart Source (`<Name>Source`) already exists in `resources/codegen-skills/io-<connector>/SKILL.md`, extend that existing skill (`transforms: [<Name>Source, <Name>Sink]`) and add the `write_sinks(dfs, config)` batch and streaming write rules to it.
    - Create new `io-*` folders only for sink-only connectors (`io-console`, `io-memory`, `io-foreach-batch`), and group Step nodes under `kind: transform` skills.
    - **Legacy Alias Disambiguation**: `CodegenSkillCatalog.transformKey()` strips trailing `IO`, `Source`, and `Sink`. Once both `KafkaSource` and `KafkaSink` are registered, bare `'KafkaIO'` matches two transforms (`matches.length === 2`) and `resolveTransform('KafkaIO')` will not guess. Always map legacy `BeamIO` names by node `type` (`SOURCE` vs `SINK`) in `webview/src/utils/legacyNodeMigration.ts`.
    - **Feature Detector Config Sync**: When adding or renaming catalog transforms, keep `STREAMING_SOURCE_TRANSFORMS`, `STREAMING_STEP_TRANSFORMS`, and `PYTHON_DATASOURCE_TRANSFORMS` in `src/codegen/codegenConfig.ts` aligned with `src/shared/sparkNodeCapabilities.ts` and `src/spark/versionMatrix.ts`.
+   - **Prompt Builder Fixture Sync**: If you add a new `io-*` or `transform-*` skill for a transform referenced in `src/test/unit/codegen/CodegenPromptBuilder.test.ts` (such as `Watermark` or `PubSubSource`), update the expected selected skill list in that test.
 3. **Managed Spark 4.x Classpath & Testable I/O Rules (`src/spark/versionMatrix.ts`)**:
    - Structure code examples around `read_sources(spark, config)`, pure `transform(dfs, config)` (zero external I/O so `tests/test_pipeline.py` runs offline with in-memory DataFrames), and `write_sinks(dfs, config)`.
    - Never pass pre-installed Managed Spark connectors (`spark-bigquery`, `iceberg-spark-runtime`, `gcs-connector`, `hadoop-aws`, `hadoop-azure`) to `spark.jars.packages` on Serverless Spark or Dataproc Clusters (Maven coordinates apply to `local` runner only).
@@ -64,6 +65,11 @@ Every catalog `sparkTransform` must resolve to an `io-*` or `transform-*` skill 
    - Delete unreferenced legacy Beam panel `.tsx` and `.test.tsx` files under `webview/src/properties/{source,sink,step}/` when replacing legacy palette nodes so no dead chunks remain.
    - Match `NodeDefinition` capability flags (`supportedReadModes`, `defaultReadMode`, `streamingSinkMode`, `errorOutput`, `inputArity`) in `webview/src/catalog/nodes/{sources,sinks,steps}.ts` against `SPARK_NODE_CAPABILITIES` in `src/shared/sparkNodeCapabilities.ts`.
    - Update `defaultGroupOpenState` in `webview/src/catalog/paletteGroupState.ts` whenever palette `category` names change.
+3. **Cross-Boundary `STEP` Property Contracts (`src/shared/*` & `src/spark/versionMatrix.ts`)**:
+   - **`Join`**: Connect incoming edges to `targetHandle: 'left'` and `targetHandle: 'right'`. `PipelineNode.tsx` reads `properties.broadcastRight === true` (`BROADCAST` badge), and `dagValidator.ts` reads `properties.joinType` (`'inner' | 'left_outer' | 'right_outer' | 'full_outer' | 'left_semi' | 'left_anti' | 'cross'`).
+   - **`ConditionalSplit`**: `sparkDagRules.ts` (`getConditionalSplitHandles`) reads `properties.rules` (`Array` of `{ name, condition }` objects where `name` is never `'else'` or duplicated) and automatically appends the terminal `'else'` handle.
+   - **`Watermark` & `GroupByAgg`**: `Watermark` uses `properties.eventTimeColumn` and `properties.delayThreshold`. `GroupByAgg` uses `properties.groupByColumns`, `properties.windowType` (`'None' | 'Tumbling' | 'Sliding' | 'Session'`), `properties.timeColumn`, `properties.windowDuration`, `properties.slideDuration`, `properties.sessionGapDuration`, and `properties.aggregations`.
+   - **`SparkMlAndVertexAi`**: `versionMatrix.ts` (`resolveMlAndVertexConnector`) inspects `properties.engine` (`'spark_ml' | 'xgboost' | 'vertex_ai_endpoint' | 'vertex_ai_gemini'`), `properties.useXgboost`, `properties.useVertexAi`, `properties.endpointId`, and `properties.geminiModel` (default `'gemini-3.8-flash'` with `location: 'global'` enforced for `/^gemini-3\./i`).
 
 ## 3. Verification Checklist
 

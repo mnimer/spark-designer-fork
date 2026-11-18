@@ -25,7 +25,7 @@ export interface LegacyNodeData {
   iconName?: string;
   spark_transform?: string;
   componentType?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -161,6 +161,74 @@ export const LEGACY_SINK_TRANSFORM_MAP: Record<string, string> = {
 export function resolveCanonicalSinkTransform(transform: string): string {
   const bare = transform.startsWith('SINK:') ? transform.slice('SINK:'.length) : transform;
   return LEGACY_SINK_TRANSFORM_MAP[bare] ?? bare;
+}
+
+/**
+ * Canonical mapping from legacy Beam step transform names to Spark 4.x `sparkTransform` identifiers (OP1-OP29).
+ */
+export const LEGACY_STEP_TRANSFORM_MAP: Record<string, string> = {
+  ParDo: 'CustomTransform',
+  FlatMap: 'Explode',
+  Map: 'WithColumns',
+  Keys: 'Select',
+  Values: 'Select',
+  KVMapper: 'WithColumns',
+  KvSwap: 'Select',
+  'KV Swap': 'Select',
+  ToString: 'WithColumns',
+  'To String': 'WithColumns',
+  ParseMessage: 'ParsePayload',
+  'Parse Message': 'ParsePayload',
+  'FileIO.readMatches': 'ParsePayload',
+  WithTimestamps: 'Watermark',
+  'Add Timestamp': 'Watermark',
+  Filter: 'Filter',
+  Flatten: 'UnionByName',
+  CoGroupByKey: 'Join',
+  'Co Group By Key': 'Join',
+  Reshuffle: 'RepartitionCoalesce',
+  ReShuffle: 'RepartitionCoalesce',
+  Distinct: 'Deduplicate',
+  Sample: 'LimitSample',
+  Top: 'TopN',
+  WindowInto: 'GroupByAgg',
+  Window: 'GroupByAgg',
+  GroupByKey: 'GroupByAgg',
+  'Group By Key': 'GroupByAgg',
+  Combine: 'GroupByAgg',
+  CombineWithContext: 'GroupByAgg',
+  'Combine With Context': 'GroupByAgg',
+  Count: 'GroupByAgg',
+  Sum: 'GroupByAgg',
+  Mean: 'GroupByAgg',
+  Min: 'GroupByAgg',
+  Max: 'GroupByAgg',
+  Latest: 'GroupByAgg',
+  ApproximateQuantiles: 'GroupByAgg',
+  'Approximate Quantiles': 'GroupByAgg',
+  'Approximate Quantile': 'GroupByAgg',
+  ApproximateUnique: 'GroupByAgg',
+  'Approximate Unique': 'GroupByAgg',
+  GroupIntoBatches: 'GroupByAgg',
+  'Group Into Batches': 'GroupByAgg',
+  BatchElements: 'PandasUdfTransform',
+  'Batch Elements': 'PandasUdfTransform',
+  GroupByAgg: 'GroupByAgg',
+  'GroupBy & Aggregate': 'GroupByAgg',
+  Watermark: 'Watermark',
+  SparkMlInference: 'SparkMlAndVertexAi',
+  VertexAiInference: 'SparkMlAndVertexAi',
+};
+
+/**
+ * Resolves a legacy or canonical step transform identifier to its canonical Spark 4.x `sparkTransform`.
+ *
+ * @param transform Raw transform name from a node or pipeline YAML.
+ * @returns Canonical Spark 4.x step transform name, or the original transform when already canonical.
+ */
+export function resolveCanonicalStepTransform(transform: string): string {
+  const bare = transform.startsWith('STEP:') ? transform.slice('STEP:'.length) : transform;
+  return LEGACY_STEP_TRANSFORM_MAP[bare] ?? bare;
 }
 
 const KNOWN_AGGREGATIONS = [
@@ -460,7 +528,7 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
  * @param nodes - Array of React Flow node objects
  * @returns Migrated array of React Flow node objects
  */
-export function migrateLegacyNodes(nodes: any[]): any[] {
+export function migrateLegacyNodes<T extends { data?: LegacyNodeData }>(nodes: T[]): T[] {
   if (!Array.isArray(nodes) || nodes.length === 0) {
     return nodes || [];
   }

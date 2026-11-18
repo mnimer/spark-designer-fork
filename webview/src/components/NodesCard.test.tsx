@@ -191,20 +191,28 @@ describe('NodesCard', () => {
       />
     );
 
-    expect(screen.getByText(/STEPS & TRANSFORMS \(/i)).toBeInTheDocument();
-    expect(screen.getByText('Core Transforms')).toBeInTheDocument();
-    expect(screen.getByText('Message Parsers')).toBeInTheDocument();
-    expect(screen.getByText('Element Transforms')).toBeInTheDocument();
+    expect(screen.getByText(/STEPS & TRANSFORMS \(29\)/i)).toBeInTheDocument();
+    expect(screen.getByText('Column & Row')).toBeInTheDocument();
+    expect(screen.getByText('Joins & Sets')).toBeInTheDocument();
     expect(screen.getByText('Aggregations')).toBeInTheDocument();
-    expect(screen.getByText('Windows')).toBeInTheDocument();
+    expect(screen.getByText('Streaming')).toBeInTheDocument();
+    expect(screen.getByText('Custom & SQL')).toBeInTheDocument();
+    expect(screen.getByText('Partitioning')).toBeInTheDocument();
+    expect(screen.getByText('Spark ML & AI')).toBeInTheDocument();
 
-    expect(screen.getByText('ParDo')).toBeInTheDocument();
-    expect(screen.getByText('Parse Message')).toBeInTheDocument();
+    expect(screen.getByText('Select')).toBeInTheDocument();
     expect(screen.getByText('Filter')).toBeInTheDocument();
-    expect(screen.getByText('Count')).toBeInTheDocument();
-    expect(screen.getByText('Window')).toBeInTheDocument();
-    expect(screen.getByText('Flatten')).toBeInTheDocument();
-    expect(screen.getByText('ReShuffle')).toBeInTheDocument();
+    expect(screen.getByText('Parse Payload')).toBeInTheDocument();
+    expect(screen.getByText('Join')).toBeInTheDocument();
+    expect(screen.getByText('Union By Name')).toBeInTheDocument();
+    expect(screen.getByText('GroupBy & Aggregate')).toBeInTheDocument();
+    expect(screen.getByText('Watermark')).toBeInTheDocument();
+    expect(screen.getByText('Stateful Transform')).toBeInTheDocument();
+    expect(screen.getByText('Spark SQL Query')).toBeInTheDocument();
+    expect(screen.getByText('Repartition / Coalesce')).toBeInTheDocument();
+    expect(screen.getByText('Spark ML & Vertex AI')).toBeInTheDocument();
+    expect(screen.queryByText('ParDo')).not.toBeInTheDocument();
+    expect(screen.queryByText('Co Group By Key')).not.toBeInTheDocument();
   });
 
   it('renders SINKS categories and items', () => {
@@ -450,13 +458,13 @@ describe('NodesCard', () => {
         writable: true,
         configurable: true,
       });
-      delete (window as any).vscode;
+      delete (window as unknown as { vscode?: unknown }).vscode;
     });
 
     it('persists group state changes to vscode.setState when available', () => {
       const mockSetState = vi.fn();
       const mockGetState = vi.fn().mockReturnValue({ customProp: 'hello' });
-      (window as any).vscode = {
+      (window as unknown as { vscode?: unknown }).vscode = {
         getState: mockGetState,
         setState: mockSetState,
       };
@@ -502,7 +510,7 @@ describe('NodesCard', () => {
     });
 
     it('restores group state from vscode.getState when opening', () => {
-      (window as any).vscode = {
+      (window as unknown as { vscode?: unknown }).vscode = {
         getState: () => ({
           nodePaletteGroups: {
             sources_streaming_sources: false,

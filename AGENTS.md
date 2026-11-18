@@ -16,7 +16,7 @@
 ## Model Selection Rules
 
 - **Valid Model**: Use `gemini-3.8-flash` on Vertex AI with `location: 'global'`.
-- **Forbidden Models**: Never revert to or map model names to `gemini-2.5*` or Gemini 1.x/2.x, and never use regional Vertex AI endpoints (`us-central1` returns 404 for `gemini-3.7-flash`).
+- **Forbidden Models**: Never revert to or map model names to `gemini-2.5*` or Gemini 1.x/2.x (`/^gemini-(1\.|2\.0|2\.5)/i`). Never use regional Vertex AI endpoints such as `us-central1` for any Gemini 3.x model (`/^gemini-3\./i` requires `location: 'global'` or returns 404).
 
 ## Hard Codebase & Worktree Invariants
 
