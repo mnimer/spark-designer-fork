@@ -1,375 +1,435 @@
 /**
- * JdbcIOSinkProperties Component
- * 
+ * JDBC Sink Properties Component (SNK24)
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property panel for Apache Beam JdbcIO Database Sink nodes.
- * Supports both Java native JdbcIO (write / writeVoid)
- * and Python Cross-Language API (WriteToJdbc).
- * 
+ * Renders the property configuration panel for Apache Spark Generic JDBC Sink nodes
+ * (.write.format("jdbc") and streaming foreachBatch).
+ *
  * Architectural Decisions:
- * - In Apache Beam, a JDBC write requires a driverClassName, connection url, and either a parameterized statement or tableName.
- * - Enforces required field indicators, error messages, aria attributes, and red border highlights on validation failure.
- * - Reuses driver presets and dynamic JDBC URL example generator from source/JdbcIO.
- * - Integrates InfoTooltip components for database sink properties.
- * - Supports authentication mode selection: Google Cloud Secret Manager (passwordSecret) or Plaintext password (with cleartext warning).
- * - Resolves initial authentication mode with backward compatibility for legacy saved pipelines.
- * - Includes a flexible spacer and "Code Generation Instructions" textarea at the bottom for LLM code generation prompt overrides.
+ * - Reuses JDBC_DRIVER_PRESETS and getJdbcUrlExample from source/JdbcIO across PostgreSQL,
+ *   MySQL, Oracle, SQL Server, IBM DB2, and custom drivers.
+ * - Configures destination table, Spark saveMode, safe truncate=true and cascadeTruncate
+ *   on overwrite, batchsize (default 5000), numPartitions connection cap, isolationLevel,
+ *   and createTableOptions.
+ * - Integrates SecretManagerAuthFields and strips legacy plaintext passwords on edit.
  */
 
 import React from 'react';
-import { JDBC_DRIVER_PRESETS, getJdbcUrlExample } from '../source/JdbcIO';
-import type { JdbcAuthMode } from '../source/JdbcIO';
+import { JDBC_DRIVER_PRESETS, getJdbcUrlExample, type JdbcDbEngine } from '../source/JdbcIO';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import { SecretManagerAuthFields, type AuthModeOption } from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import type { SecretItem } from '../../components/common/SecretManagerAuthFields';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
+
+export type JdbcSaveMode = 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+export type JdbcIsolationLevel =
+  | 'READ_COMMITTED'
+  | 'READ_UNCOMMITTED'
+  | 'REPEATABLE_READ'
+  | 'SERIALIZABLE'
+  | 'NONE';
+
+const JDBC_SINK_AUTH_OPTIONS: AuthModeOption[] = [
+  { value: 'secretManager', label: 'Google Cloud Secret Manager' },
+  { value: 'default', label: 'No Password / Embedded Auth' },
+];
 
 /**
- * React Flow node shape for the JDBC sink panel, including its persisted configuration data.
+ * Infers the database engine preset when only a legacy driverClassName is stored.
  */
-interface JdbcIOSinkNode {
-  data: {
-    label: string;
-    spark_transform?: string;
-    system_instructions?: string;
-    special_instructions?: string;
-    properties?: {
-      driverClassName?: string;
-      url?: string;
-      authMode?: JdbcAuthMode;
-      username?: string;
-      password?: string;
-      passwordSecret?: string;
-      connectionProperties?: string;
-      driverJars?: string;
-      statement?: string;
-      tableName?: string;
-      selectType?: 'statement' | 'table';
-      batchSize?: string | number;
-      autosharding?: boolean;
+function inferEngineFromDriver(driverClass?: string): JdbcDbEngine {
+  if (!driverClass) {
+    return 'postgresql';
+  }
+  const matched = JDBC_DRIVER_PRESETS.find((preset) => preset.driverClass === driverClass);
+  return matched ? matched.engine : 'custom';
+}
+
+/** Props for the {@link JdbcIOSinkProperties} component. */
+export interface JdbcIOSinkPropertiesProps {
+  node: {
+    data: {
+      label?: string;
+      spark_transform?: string;
       system_instructions?: string;
       special_instructions?: string;
-      codeGenerationPrompt?: string;
-      prompt?: string;
-      [key: string]: any;
+      properties?: {
+        dbEngine?: JdbcDbEngine;
+        driverClass?: string;
+        driverClassName?: string;
+        jdbcUrl?: string;
+        url?: string;
+        table?: string;
+        dbtable?: string;
+        tableName?: string;
+        saveMode?: JdbcSaveMode;
+        truncate?: boolean;
+        cascadeTruncate?: boolean;
+        batchsize?: number | string;
+        batchSize?: number | string;
+        numPartitions?: number | string;
+        isolationLevel?: JdbcIsolationLevel;
+        createTableOptions?: string;
+        driverJarUri?: string;
+        driverJars?: string;
+        username?: string;
+        authMode?: string;
+        secretName?: string;
+        passwordSecret?: string;
+        system_instructions?: string;
+        special_instructions?: string;
+        [key: string]: unknown;
+      };
     };
   };
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * Props for the JdbcIOSinkProperties component.
- */
-interface JdbcIOSinkPropertiesProps {
-  node: JdbcIOSinkNode;
-  onChange: (properties: any) => void;
-}
-
-/**
- * Dedicated property panel for the JDBC sink node. Configures database URL, driver class, SQL statement or table, and credentials.
- *
- * @param props The selected node and the onChange callback used to persist edits.
+ * Configures properties for Apache Spark Generic JDBC sink nodes (.write.format("jdbc")).
  */
 export const JdbcIOSinkProperties: React.FC<JdbcIOSinkPropertiesProps> = ({ node, onChange }) => {
-  // Extract existing properties or fallback to empty object
-  const properties = node.data.properties || {};
+  const properties = node?.data?.properties || {};
 
-  // NOTE: Request Secret Manager secrets via useAssetLoader
-  const { items: secrets, error: secretError, loading: secretsLoading } = useAssetLoader<SecretItem | string>('secrets');
-
-  const driverClassName = properties.driverClassName || 'org.postgresql.Driver';
-  const url = properties.url || '';
+  const dbEngine: JdbcDbEngine =
+    properties.dbEngine || inferEngineFromDriver(properties.driverClass ?? properties.driverClassName);
+  const preset = JDBC_DRIVER_PRESETS.find((p) => p.engine === dbEngine) || JDBC_DRIVER_PRESETS[0];
+  const driverClass =
+    properties.driverClass ??
+    properties.driverClassName ??
+    (dbEngine === 'custom' ? '' : preset.driverClass || 'org.postgresql.Driver');
+  const jdbcUrl = properties.jdbcUrl ?? properties.url ?? '';
+  const table = properties.table ?? properties.dbtable ?? properties.tableName ?? '';
+  const saveMode: JdbcSaveMode = properties.saveMode || 'append';
+  const truncate = properties.truncate ?? true;
+  const cascadeTruncate = properties.cascadeTruncate ?? false;
+  const batchsize = properties.batchsize ?? properties.batchSize ?? 5000;
+  const numPartitions = properties.numPartitions ?? '';
+  const isolationLevel: JdbcIsolationLevel = properties.isolationLevel || 'READ_COMMITTED';
+  const createTableOptions = properties.createTableOptions || '';
+  const driverJarUri = properties.driverJarUri ?? properties.driverJars ?? '';
   const username = properties.username || '';
-  const passwordSecret = properties.passwordSecret || '';
-  const connectionProperties = properties.connectionProperties || '';
-  const statement = properties.statement || '';
-  const tableName = properties.tableName || '';
-  const selectType = properties.selectType || (properties.tableName && !properties.statement ? 'table' : 'statement');
-  const batchSize = properties.batchSize ?? '1000';
-  const autosharding = properties.autosharding ?? false;
+  const authMode = properties.authMode || 'secretManager';
+  const secretName = properties.secretName ?? properties.passwordSecret ?? '';
 
-  const normalizedSecrets = (secrets || []).map(normalizeSecretItem);
+  const isDriverInvalid = !String(driverClass).trim();
+  const isUrlInvalid = !String(jdbcUrl).trim();
+  const isTableInvalid = !String(table).trim();
 
-  // Validation states
-  const isDriverInvalid = !driverClassName.trim();
-  const isUrlInvalid = !url.trim();
-  const isStatementInvalid = selectType === 'statement' && !statement.trim();
-  const isTableNameInvalid = selectType === 'table' && !tableName.trim();
-
-  // System instructions text with fallback
+  const exampleUrl = getJdbcUrlExample(driverClass || dbEngine);
   const systemInstructions = resolveSystemInstructions(node);
 
-  const exampleUrl = getJdbcUrlExample(driverClassName);
-
-  /**
-   * Handles generic text/checkbox input changes.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    const isCheckbox = type === 'checkbox';
-    const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    delete next.password;
 
-    const newProperties = {
-      ...properties,
-      [name]: isCheckbox ? checked : value
-    };
-
-    // Ensure plaintext password is removed if present
-    delete newProperties.password;
-
-    if (name === 'passwordSecret') {
-      if (!newProperties.passwordSecret) {
-        delete newProperties.passwordSecret;
+    if (name === 'dbEngine') {
+      const selectedPreset = JDBC_DRIVER_PRESETS.find((p) => p.engine === value);
+      if (selectedPreset && selectedPreset.driverClass) {
+        next.driverClass = selectedPreset.driverClass;
+        delete next.driverClassName;
       }
     }
-
-    if (name === 'selectType') {
-      if (value === 'table') {
-        delete newProperties.statement;
-      } else if (value === 'statement') {
-        delete newProperties.tableName;
-      }
+    if (name === 'driverClass') {
+      delete next.driverClassName;
+    }
+    if (name === 'jdbcUrl') {
+      delete next.url;
+    }
+    if (name === 'table') {
+      delete next.dbtable;
+      delete next.tableName;
+    }
+    if (name === 'batchsize') {
+      delete next.batchSize;
+    }
+    if (name === 'driverJarUri') {
+      delete next.driverJars;
+    }
+    if (name === 'secretName') {
+      delete next.passwordSecret;
     }
 
-    onChange(newProperties);
+    onChange(next);
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Driver Class Name with friendly labels */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="jdbcSinkDriverClassName" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Driver Class Name</span>
-          <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-          <InfoTooltip text="Fully qualified Java JDBC driver class name (e.g. org.postgresql.Driver or com.mysql.cj.jdbc.Driver). Required." />
-        </label>
-        <select
-          id="jdbcSinkDriverClassName"
-          name="driverClassName"
-          aria-required="true"
-          aria-invalid={isDriverInvalid}
-          value={driverClassName}
-          onChange={handleChange}
-          className={`bg-[#252836] text-white p-2 rounded border text-sm focus:outline-none ${
-            isDriverInvalid
-              ? 'border-red-500/80 focus:border-red-500'
-              : 'border-slate-700 focus:border-blue-500'
-          }`}
-        >
-          {JDBC_DRIVER_PRESETS.map((preset) => (
-            <option key={preset.driverClass} value={preset.driverClass}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
-        {isDriverInvalid && (
-          <span className="text-xs text-red-400">Driver class name is required.</span>
-        )}
-      </div>
-
-      {/* JDBC Connection URL with dynamic example */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="jdbcSinkUrl" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>JDBC Connection URL</span>
-          <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-          <InfoTooltip text="JDBC database connection URL including host, port, and database name. Required." />
-        </label>
-        <input
-          id="jdbcSinkUrl"
-          type="text"
-          name="url"
-          aria-required="true"
-          aria-invalid={isUrlInvalid}
-          value={url}
-          onChange={handleChange}
-          placeholder={exampleUrl}
-          className={`bg-[#252836] text-white p-2 rounded border text-sm focus:outline-none font-mono ${
-            isUrlInvalid
-              ? 'border-red-500/80 focus:border-red-500'
-              : 'border-slate-700 focus:border-blue-500'
-          }`}
-        />
-        {isUrlInvalid ? (
-          <span className="text-xs text-red-400">JDBC Connection URL is required.</span>
-        ) : (
-          <span className="text-xs text-slate-400">
-            Example: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">{exampleUrl}</code>
+      {/* Connector Header Badge */}
+      <div className="flex flex-col gap-1 p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold text-slate-200">Spark Generic JDBC Sink</span>
+          <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+            .write.format(&quot;jdbc&quot;) · foreachBatch
+          </span>
+        </div>
+        {dbEngine === 'sqlserver' && (
+          <span className="text-[11px] text-amber-300 font-mono">
+            SQL Server TLS note: sets dataproc.artifacts.remove=conscrypt
           </span>
         )}
       </div>
 
-      {/* Credentials */}
-      <div className="flex flex-col gap-3">
+      {/* Database Engine Preset & Driver Class */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="jdbcSinkDbEngine"
+            className="flex items-center text-xs font-bold uppercase text-slate-500"
+          >
+            <span>Database Engine Preset</span>
+            <InfoTooltip text="Select a database engine preset to populate the JDBC driver class and sample URL." />
+          </label>
+          <select
+            id="jdbcSinkDbEngine"
+            name="dbEngine"
+            value={dbEngine}
+            onChange={handleChange}
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+          >
+            {JDBC_DRIVER_PRESETS.map((p) => (
+              <option key={p.engine} value={p.engine}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <PropertyField
+          id="jdbcSinkDriverClass"
+          name="driverClass"
+          label="Driver Class"
+          required="Driver class is required"
+          tooltip="Fully qualified Java JDBC driver class name passed to .option('driver', ...)."
+          value={driverClass}
+          invalid={isDriverInvalid}
+          error={isDriverInvalid ? 'Driver class is required' : null}
+          onChange={handleChange}
+          placeholder="org.postgresql.Driver"
+          mono={true}
+        />
+      </div>
+
+      {/* JDBC Connection URL */}
+      <PropertyField
+        id="jdbcSinkJdbcUrl"
+        name="jdbcUrl"
+        label="JDBC Connection URL"
+        required="JDBC Connection URL is required"
+        tooltip="JDBC connection URL including host, port, and database name."
+        value={jdbcUrl}
+        invalid={isUrlInvalid}
+        error={isUrlInvalid ? 'JDBC Connection URL is required' : null}
+        onChange={handleChange}
+        placeholder={exampleUrl}
+        mono={true}
+      />
+
+      {/* Destination Table & Save Mode */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <label className="flex items-center text-xs font-bold uppercase text-slate-500">
+          <span>Target Table &amp; Save Mode</span>
+          <InfoTooltip text="Configures destination dbtable, Spark save mode, and safe TRUNCATE behavior on overwrite." />
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="jdbcSinkTable"
+            name="table"
+            label="Destination Table (dbtable)"
+            required="Destination table is required"
+            tooltip="Target relational schema and table name passed to .option('dbtable', ...)."
+            value={table}
+            invalid={isTableInvalid}
+            error={isTableInvalid ? 'Destination table is required' : null}
+            onChange={handleChange}
+            placeholder="public.orders_summary"
+            mono={true}
+          />
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="jdbcSinkSaveMode"
+              className="flex items-center text-xs font-bold uppercase text-slate-500"
+            >
+              <span>Save Mode</span>
+              <InfoTooltip text="Controls how Spark handles existing data in the destination table." />
+            </label>
+            <select
+              id="jdbcSinkSaveMode"
+              name="saveMode"
+              value={saveMode}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="append">append</option>
+              <option value="overwrite">overwrite</option>
+              <option value="errorifexists">errorifexists</option>
+              <option value="ignore">ignore</option>
+            </select>
+          </div>
+        </div>
+
+        {saveMode === 'overwrite' && (
+          <div className="flex flex-col gap-2 pt-1">
+            <div className="flex items-center gap-2">
+              <input
+                id="jdbcSinkTruncate"
+                type="checkbox"
+                name="truncate"
+                checked={truncate}
+                onChange={handleChange}
+                className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+              />
+              <label
+                htmlFor="jdbcSinkTruncate"
+                className="flex items-center text-xs text-slate-300 cursor-pointer"
+              >
+                <span>Truncate Table on Overwrite (truncate=true)</span>
+                <InfoTooltip text="Issues TRUNCATE TABLE instead of dropping and recreating the table so indexes, grants, and foreign keys survive." />
+              </label>
+            </div>
+
+            {truncate && (
+              <div className="flex items-center gap-2 pl-6">
+                <input
+                  id="jdbcSinkCascadeTruncate"
+                  type="checkbox"
+                  name="cascadeTruncate"
+                  checked={cascadeTruncate}
+                  onChange={handleChange}
+                  className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+                />
+                <label
+                  htmlFor="jdbcSinkCascadeTruncate"
+                  className="flex items-center text-xs text-slate-300 cursor-pointer"
+                >
+                  <span>Cascade Truncate (cascadeTruncate=true)</span>
+                  <InfoTooltip text="Appends CASCADE to TRUNCATE TABLE on databases such as PostgreSQL and Oracle." />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Write Batching, Connection Cap & Isolation */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <label className="flex items-center text-xs font-bold uppercase text-slate-500">
+          <span>Batching, Connections &amp; Transactions</span>
+          <InfoTooltip text="Controls JDBC batchsize, maximum concurrent write partitions, transaction isolation, and DDL options." />
+        </label>
+
+        <div className="grid grid-cols-3 gap-2">
+          <PropertyField
+            id="jdbcSinkBatchsize"
+            name="batchsize"
+            label="Batch Size (batchsize)"
+            type="number"
+            min={1}
+            tooltip="Rows buffered per JDBC executeBatch call (default 5000)."
+            value={batchsize}
+            onChange={handleChange}
+            placeholder="5000"
+            mono={true}
+          />
+          <PropertyField
+            id="jdbcSinkNumPartitions"
+            name="numPartitions"
+            label="Max Partitions"
+            type="number"
+            min={1}
+            tooltip="Caps concurrent executor JDBC connections during writes (.option('numPartitions', ...))."
+            value={numPartitions}
+            onChange={handleChange}
+            placeholder="8"
+            mono={true}
+          />
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="jdbcSinkIsolationLevel"
+              className="flex items-center text-xs font-bold uppercase text-slate-500"
+            >
+              <span>Isolation Level</span>
+              <InfoTooltip text="JDBC transaction isolation level for each partition write." />
+            </label>
+            <select
+              id="jdbcSinkIsolationLevel"
+              name="isolationLevel"
+              value={isolationLevel}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="READ_COMMITTED">READ_COMMITTED</option>
+              <option value="READ_UNCOMMITTED">READ_UNCOMMITTED</option>
+              <option value="REPEATABLE_READ">REPEATABLE_READ</option>
+              <option value="SERIALIZABLE">SERIALIZABLE</option>
+              <option value="NONE">NONE</option>
+            </select>
+          </div>
+        </div>
+
+        <PropertyField
+          id="jdbcSinkCreateTableOptions"
+          name="createTableOptions"
+          label="Create Table Options (createTableOptions)"
+          tooltip="Optional database-specific DDL clause appended to CREATE TABLE when creating new tables."
+          value={createTableOptions}
+          onChange={handleChange}
+          placeholder="ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+          mono={true}
+        />
+      </div>
+
+      {/* Authentication & Driver JAR */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
         <PropertyField
           id="jdbcSinkUsername"
           name="username"
-          label="Username Secret"
-          tooltip="Select or enter the Google Cloud Secret Manager secret containing the database username."
+          label="Database Username"
+          tooltip="Database login username."
           value={username}
           onChange={handleChange}
-          placeholder="e.g. my-database-username"
-          list="jdbc-sink-username-secrets-list"
-          datalist={normalizedSecrets.map((s) => ({ value: s.id, label: s.name }))}
-          loading={secretsLoading}
+          placeholder="db_writer"
           mono={true}
         />
 
-        <PropertyField
-          id="jdbcSinkPasswordSecret"
-          name="passwordSecret"
-          label="Password Secret"
-          tooltip="Select or enter the Google Cloud Secret Manager secret containing the database password."
-          value={passwordSecret}
+        <SecretManagerAuthFields
+          idPrefix="jdbcSink"
+          serviceName="JDBC Database"
+          authMode={authMode}
+          secretName={secretName}
+          authOptions={JDBC_SINK_AUTH_OPTIONS}
+          secretManagerValue="secretManager"
+          datalistId="jdbc-sink-secrets-list"
+          secretPlaceholder="e.g. jdbc-db-password"
           onChange={handleChange}
-          placeholder="e.g. my-database-password"
-          list="jdbc-sink-secrets-list"
-          datalist={normalizedSecrets.map((s) => ({ value: s.id, label: s.name }))}
-          error={secretError}
-          loading={secretsLoading}
-          helperText={
-            <span>
-              Values auto-populated from{' '}
-              <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">
-                gcloud secrets list
-              </code>
-            </span>
-          }
         />
       </div>
 
-      {/* Connection Properties */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="jdbcSinkConnectionProperties" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Connection Properties</span>
-          <InfoTooltip text="Optional key-value connection properties passed to JDBC driver (e.g. useSSL=false;socketTimeout=30)." />
-        </label>
-        <input
-          id="jdbcSinkConnectionProperties"
-          type="text"
-          name="connectionProperties"
-          value={connectionProperties}
-          onChange={handleChange}
-          placeholder="useSSL=false;allowPublicKeyRetrieval=true"
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500 font-mono"
-        />
-      </div>
+      <PropertyField
+        id="jdbcSinkDriverJarUri"
+        name="driverJarUri"
+        label="JDBC Driver JAR URI (gs://)"
+        tooltip="Cloud Storage URI for the vendor JDBC driver JAR passed to --jars."
+        value={driverJarUri}
+        onChange={handleChange}
+        placeholder="gs://my-bucket/jars/postgresql-42.7.4.jar"
+        mono={true}
+      />
 
-      {/* Select Type (SQL Statement or Table Name) */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="jdbcSinkSelectType" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Select Type</span>
-          <InfoTooltip text="Choose whether to write using a custom parameterized SQL INSERT statement or a target table name." />
-        </label>
-        <select
-          id="jdbcSinkSelectType"
-          name="selectType"
-          value={selectType}
-          onChange={handleChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          <option value="statement">SQL Statement</option>
-          <option value="table">Table Name</option>
-        </select>
-      </div>
-
-      {/* Conditional SQL Statement or Table Name Field */}
-      {selectType === 'statement' ? (
-        <div className="flex flex-col gap-2">
-          <label htmlFor="jdbcSinkStatement" className="flex items-center text-xs font-bold uppercase text-slate-500">
-            <span>SQL Statement</span>
-            <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-            <InfoTooltip text="Parameterized SQL statement for inserting or updating rows (e.g. INSERT INTO my_table (id, name) VALUES (?, ?)). Required." />
-          </label>
-          <textarea
-            id="jdbcSinkStatement"
-            name="statement"
-            aria-required="true"
-            aria-invalid={isStatementInvalid}
-            value={statement}
-            onChange={handleChange}
-            placeholder="INSERT INTO my_table (id, name, created_at) VALUES (?, ?, ?)"
-            rows={3}
-            className={`bg-[#252836] text-white p-2 rounded border text-sm focus:outline-none font-mono resize-y ${
-              isStatementInvalid
-                ? 'border-red-500/80 focus:border-red-500'
-                : 'border-slate-700 focus:border-blue-500'
-            }`}
-          />
-          {isStatementInvalid && (
-            <span className="text-xs text-red-400">SQL Statement is required.</span>
-          )}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <label htmlFor="jdbcSinkTableName" className="flex items-center text-xs font-bold uppercase text-slate-500">
-            <span>Table Name</span>
-            <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-            <InfoTooltip text="Destination database table name to insert rows into. Required." />
-          </label>
-          <input
-            id="jdbcSinkTableName"
-            type="text"
-            name="tableName"
-            aria-required="true"
-            aria-invalid={isTableNameInvalid}
-            value={tableName}
-            onChange={handleChange}
-            placeholder="my_table"
-            className={`bg-[#252836] text-white p-2 rounded border text-sm focus:outline-none ${
-              isTableNameInvalid
-                ? 'border-red-500/80 focus:border-red-500'
-                : 'border-slate-700 focus:border-blue-500'
-            }`}
-          />
-          {isTableNameInvalid && (
-            <span className="text-xs text-red-400">Table Name is required.</span>
-          )}
-        </div>
-      )}
-
-      {/* Batch Size */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="jdbcSinkBatchSize" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Batch Size</span>
-          <InfoTooltip text="Maximum number of statements per batch in JDBC executeBatch()." />
-        </label>
-        <input
-          id="jdbcSinkBatchSize"
-          type="number"
-          name="batchSize"
-          min="1"
-          value={batchSize}
-          onChange={handleChange}
-          placeholder="1000"
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        />
-      </div>
-
-      {/* Auto Sharding */}
-      <div className="p-3 bg-slate-800/40 rounded border border-slate-700/50">
-        <label htmlFor="jdbcSinkAutosharding" className="flex items-center gap-2 cursor-pointer">
-          <input
-            id="jdbcSinkAutosharding"
-            type="checkbox"
-            name="autosharding"
-            checked={autosharding}
-            onChange={handleChange}
-            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
-          />
-          <span className="text-sm font-medium text-slate-300">Auto Sharding</span>
-          <InfoTooltip text="Enables Beam runner to dynamically adjust write sharding and parallelism." />
-        </label>
-      </div>
-
-      {/* Code Generation Instructions Section at Bottom */}
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="jdbcSinkSystemInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for JDBC write code generation..."
+        placeholder="Enter custom instructions for Spark JDBC sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -380,3 +440,5 @@ export const JdbcIOSinkProperties: React.FC<JdbcIOSinkPropertiesProps> = ({ node
     </div>
   );
 };
+
+export const JdbcSinkProperties = JdbcIOSinkProperties;

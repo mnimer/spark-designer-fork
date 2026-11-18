@@ -1,46 +1,37 @@
 /**
- * ClickHouseIOSinkProperties Component
+ * ClickHouse Sink Properties Component (SNK27)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for ClickHouseIO.write(jdbcUrl, table) Database Sink nodes.
- * Writes a PCollection of Beam Row elements to a target ClickHouse table.
+ * Renders the property configuration panel for ClickHouse Sink nodes in Apache Spark 4.x
+ * pipelines (ClickHouse Spark V2 connector / .write.format("jdbc") and foreachBatch).
  *
  * Architectural Decisions:
- * - Positional arguments: ClickHouse JDBC URL and target table name are required.
- * - Format validation warning if JDBC URL does not begin with 'jdbc:clickhouse:'.
- * - Throughput controls: withMaxInsertBlockSize, withInsertQuorum, withInsertDistributedSync, withInsertDeduplicate.
- * - Flush & retry controls: withMaxRetries, withInitialBackoff, withMaxCumulativeBackoff.
- * - Dynamic discovery: Loads GCP Secret Manager secrets via 'getSecrets' IPC message to populate datalist.
- * - Secret normalization supports both raw resource strings and SecretItem objects with short ID extraction.
- * - Collapsible Advanced Sink Settings: extra JDBC/HTTP properties, compression toggle, socket timeout.
- * - Explicitly notes that ClickHouseIO.write requires a PCollection<Row> with an attached Schema.
- * - Preserves system_instructions / special_instructions fallback chain for LLM code generation.
- * - Follows the 8pt grid system and Tailwind CSS styling using VS Code theme tokens.
+ * - Configures ClickHouse host, port, optional JDBC URL override, database, destination table,
+ *   and Spark saveMode with safe truncate=true on overwrite.
+ * - Defaults batchsize to 50000 (warns when batchsize < 1000 to prevent MergeTree part
+ *   explosion) and defaults isolationLevel to NONE.
+ * - Exposes rewriteBatchedStatements and server-side async_insert toggles plus
+ *   SecretManagerAuthFields.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import {
+  SecretManagerAuthFields,
+  type SecretItem,
+} from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 
-/**
- * Secret item loaded from Secret Manager for ClickHouse authentication.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
 
-/**
- * Props for the ClickHouseIOSinkProperties component.
- */
+export type ClickHouseSaveMode = 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+export type ClickHouseIsolationLevel = 'NONE' | 'READ_COMMITTED';
+
+/** Props for the {@link ClickHouseIOSinkProperties} component. */
 export interface ClickHouseIOSinkPropertiesProps {
   node: {
     data: {
@@ -49,131 +40,150 @@ export interface ClickHouseIOSinkPropertiesProps {
       system_instructions?: string;
       special_instructions?: string;
       properties?: {
-        url?: string;
+        host?: string;
+        port?: number | string;
         jdbcUrl?: string;
+        url?: string;
+        database?: string;
         table?: string;
         tableName?: string;
+        saveMode?: ClickHouseSaveMode;
+        truncate?: boolean;
+        batchsize?: number | string;
+        batchSize?: number | string;
         maxInsertBlockSize?: number | string;
-        insertQuorum?: number | string;
-        insertDistributedSync?: boolean;
-        insertDeduplicate?: boolean;
-        maxRetries?: number | string;
-        maxCumulativeBackoff?: number | string;
-        initialBackoff?: number | string;
-        authMode?: 'none' | 'secret_manager';
-        usernameSecret?: string;
+        numPartitions?: number | string;
+        isolationLevel?: ClickHouseIsolationLevel;
+        rewriteBatchedStatements?: boolean;
+        asyncInsert?: boolean;
+        username?: string;
+        authMode?: string;
+        secretName?: string;
         passwordSecret?: string;
-        socketTimeout?: number | string;
-        compress?: boolean;
-        extraJdbcProperties?: string;
-        connectionProperties?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * ClickHouseIOSinkProperties renders the configuration form for ClickHouseIO.write() transforms.
- *
- * @param props - Component props containing the active node data and onChange dispatch callback.
+ * Configures properties for Apache Spark ClickHouse sink nodes.
  */
-export const ClickHouseIOSinkProperties: React.FC<ClickHouseIOSinkPropertiesProps> = ({ node, onChange }) => {
-  const properties = node.data.properties || {};
+export const ClickHouseIOSinkProperties: React.FC<ClickHouseIOSinkPropertiesProps> = ({
+  node,
+  onChange,
+}) => {
+  const properties = node?.data?.properties || {};
 
-  // Form field state extracted from node properties
-  const url = properties.url ?? properties.jdbcUrl ?? '';
+  const host = properties.host || '';
+  const port = properties.port ?? 8123;
+  const jdbcUrl = properties.jdbcUrl ?? properties.url ?? '';
+  const database = properties.database || 'default';
   const table = properties.table ?? properties.tableName ?? '';
-  const maxInsertBlockSize = properties.maxInsertBlockSize ?? '';
-  const insertQuorum = properties.insertQuorum ?? '';
-  const insertDistributedSync = properties.insertDistributedSync ?? false;
-  const insertDeduplicate = properties.insertDeduplicate ?? false;
-  const maxRetries = properties.maxRetries ?? '';
-  const maxCumulativeBackoff = properties.maxCumulativeBackoff ?? '';
-  const initialBackoff = properties.initialBackoff ?? '';
-  const authMode = properties.authMode ?? 'none';
-  const usernameSecret = properties.usernameSecret ?? '';
-  const passwordSecret = properties.passwordSecret ?? '';
-  const socketTimeout = properties.socketTimeout ?? '';
-  const compress = properties.compress ?? false;
-  const extraJdbcProperties = properties.extraJdbcProperties ?? properties.connectionProperties ?? '';
+  const saveMode: ClickHouseSaveMode = properties.saveMode || 'append';
+  const truncate = properties.truncate ?? true;
+  const batchsize =
+    properties.batchsize ?? properties.batchSize ?? properties.maxInsertBlockSize ?? 50000;
+  const numPartitions = properties.numPartitions ?? '';
+  const isolationLevel: ClickHouseIsolationLevel = properties.isolationLevel || 'NONE';
+  const rewriteBatchedStatements = properties.rewriteBatchedStatements ?? true;
+  const asyncInsert = properties.asyncInsert ?? false;
+  const username = properties.username || 'default';
+  const authMode = properties.authMode || 'default';
+  const secretName = properties.secretName ?? properties.passwordSecret ?? '';
 
-  // Local state for dynamically loaded Secret Manager secrets and UI state
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
-  const isUrlEmpty = !String(url).trim();
-  const isUrlFormatWarning = !isUrlEmpty && !String(url).trim().startsWith('jdbc:clickhouse:');
+  const isEndpointEmpty = !host.trim() && !String(jdbcUrl).trim();
+  const isUrlFormatWarning =
+    String(jdbcUrl).trim().length > 0 && !String(jdbcUrl).trim().startsWith('jdbc:clickhouse:');
   const isTableEmpty = !String(table).trim();
 
-  // NOTE: Fallback chain for system instructions per architecture spec
+  const parsedBatchSize = Number(batchsize);
+  const isTinyBatchWarning =
+    String(batchsize).trim().length > 0 &&
+    !Number.isNaN(parsedBatchSize) &&
+    parsedBatchSize > 0 &&
+    parsedBatchSize < 1000;
+
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a single property key and invokes the parent onChange callback.
-   *
-   * @param name - The property field name to update.
-   * @param value - The new value for the property.
-   */
-  const updateProperty = (name: string, value: any) => {
-    // NOTE: Controlled update creating a new properties dictionary while removing legacy alias keys to prevent desync
-    const updated = { ...properties, [name]: value };
-    if (name === 'url') {
-      delete updated.jdbcUrl;
-    } else if (name === 'table') {
-      delete updated.tableName;
-    } else if (name === 'extraJdbcProperties') {
-      delete updated.connectionProperties;
-    }
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, number, and checkbox change events.
-   *
-   * @param e - React change event from inputs or textareas.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
-    }
-  };
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    delete next.password;
 
+    if (name === 'jdbcUrl') {
+      delete next.url;
+    }
+    if (name === 'table') {
+      delete next.tableName;
+    }
+    if (name === 'batchsize') {
+      delete next.batchSize;
+      delete next.maxInsertBlockSize;
+    }
+    if (name === 'secretName') {
+      delete next.passwordSecret;
+    }
+
+    onChange(next);
+  };
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Schema Requirement Notice Banner */}
-      <div className="p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)] text-xs text-[var(--vscode-descriptionForeground)]">
-        <span className="font-semibold text-[var(--vscode-text-primary)]">Important: </span>
-        ClickHouseIO.write requires an input <code className="text-[var(--vscode-text-primary)] font-mono">PCollection&lt;Row&gt;</code> with
-        an explicit Beam Schema matching the destination ClickHouse table columns.
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark ClickHouse V2 / JDBC Sink</span>
+        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px]">
+          clickhouse / jdbc · foreachBatch
+        </span>
       </div>
 
-      {/* Target Destination: JDBC URL & Table Name (ClickHouseIO.write arguments) */}
+      {/* Host, Port, JDBC URL, Database */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Target Destination (ClickHouseIO.write)</span>
-          <InfoTooltip text="Configures the JDBC connection URL and target table name passed as arguments to ClickHouseIO.write(jdbcUrl, table)." />
+          <span>ClickHouse Endpoint &amp; Database</span>
+          <InfoTooltip text="Configure ClickHouse host and HTTP/HTTPS port or an explicit jdbc:clickhouse:// URL." />
         </label>
 
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="clickhouseSinkHost"
+            name="host"
+            label="Host"
+            required="Host or JDBC URL is required"
+            tooltip="ClickHouse hostname or IP address."
+            value={host}
+            invalid={isEndpointEmpty}
+            error={isEndpointEmpty ? 'Host or JDBC URL is required' : null}
+            placeholder="clickhouse.internal"
+            onChange={handleChange}
+            mono={true}
+          />
+          <PropertyField
+            id="clickhouseSinkPort"
+            name="port"
+            label="Port"
+            type="number"
+            tooltip="ClickHouse HTTP (8123) or HTTPS TLS (8443) port."
+            value={port}
+            placeholder="8123"
+            onChange={handleChange}
+            mono={true}
+          />
+        </div>
+
         <PropertyField
-          id="clickhouseSinkUrl"
-          name="url"
-          label="JDBC URL"
-          required="ClickHouse JDBC URL is required"
-          tooltip="ClickHouse JDBC connection URL (e.g. jdbc:clickhouse://localhost:8123/default). Required positional argument."
-          value={url}
-          invalid={isUrlEmpty}
-          error={isUrlEmpty ? 'ClickHouse JDBC URL is required' : null}
+          id="clickhouseSinkJdbcUrl"
+          name="jdbcUrl"
+          label="JDBC URL (Optional Override)"
+          tooltip="Optional explicit ClickHouse JDBC URL using com.clickhouse.jdbc.ClickHouseDriver."
+          value={jdbcUrl}
           helperText={
             isUrlFormatWarning ? (
               <span className="text-amber-400" role="alert">
@@ -181,264 +191,212 @@ export const ClickHouseIOSinkProperties: React.FC<ClickHouseIOSinkPropertiesProp
               </span>
             ) : null
           }
-          placeholder="jdbc:clickhouse://localhost:8123/default"
+          placeholder="jdbc:clickhouse://clickhouse.internal:8443/default?ssl=true"
           onChange={handleChange}
           mono={true}
         />
 
         <PropertyField
-          id="clickhouseSinkTable"
-          name="table"
-          label="Target Table"
-          required="Target table name is required"
-          tooltip="Destination ClickHouse table name. Required positional argument."
-          value={table}
-          invalid={isTableEmpty}
-          error={isTableEmpty ? 'Target table name is required' : null}
-          placeholder="my_table"
+          id="clickhouseSinkDatabase"
+          name="database"
+          label="Database"
+          tooltip="ClickHouse database name (default 'default')."
+          value={database}
+          placeholder="default"
           onChange={handleChange}
           mono={true}
         />
       </div>
 
-      {/* Throughput & Consistency Controls */}
+      {/* Target Table, Save Mode & MergeTree Bulk Tuning */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Throughput &amp; Consistency</span>
-          <InfoTooltip text="Batch size and consistency guarantees for ClickHouse block insertion." />
+          <span>Target Table &amp; MergeTree Bulk Tuning</span>
+          <InfoTooltip text="Configures destination table, saveMode, and large MergeTree bulk insert batch sizing (10000 to 100000 rows)." />
         </label>
 
         <div className="grid grid-cols-2 gap-2">
           <PropertyField
-            id="clickhouseSinkMaxInsertBlockSize"
-            name="maxInsertBlockSize"
-            label="Max Insert Block Size"
-            type="number"
-            tooltip="Maximum number of rows per insert block via ClickHouseIO.write().withMaxInsertBlockSize(long)."
-            value={maxInsertBlockSize}
+            id="clickhouseSinkTable"
+            name="table"
+            label="Destination Table"
+            required="Target table name is required"
+            tooltip="Destination ClickHouse MergeTree or Distributed table name."
+            value={table}
+            invalid={isTableEmpty}
+            error={isTableEmpty ? 'Target table name is required' : null}
+            placeholder="events_rollup"
             onChange={handleChange}
-            placeholder="100000"
             mono={true}
           />
 
-          <PropertyField
-            id="clickhouseSinkInsertQuorum"
-            name="insertQuorum"
-            label="Insert Quorum"
-            type="number"
-            tooltip="Number of replicas that must confirm write for ReplicatedMergeTree tables (0 disables quorum) via withInsertQuorum(long)."
-            value={insertQuorum}
-            onChange={handleChange}
-            placeholder="0"
-            mono={true}
-          />
-        </div>
-
-        <div className="flex flex-col gap-2 mt-1">
-          <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-            <input
-              id="clickhouseSinkInsertDistributedSync"
-              type="checkbox"
-              name="insertDistributedSync"
-              checked={insertDistributedSync}
-              onChange={handleChange}
-              className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
-            />
+          <div className="flex flex-col gap-2">
             <label
-              htmlFor="clickhouseSinkInsertDistributedSync"
-              className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+              htmlFor="clickhouseSinkSaveMode"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
             >
-              <span>Wait for Distributed Sync</span>
-              <InfoTooltip text="Configures withInsertDistributedSync(boolean). If enabled, writes to Distributed tables block until data is written to all shard replicas." />
+              <span>Save Mode</span>
+              <InfoTooltip text="Spark save mode applied when writing into ClickHouse." />
             </label>
-          </div>
-
-          <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-            <input
-              id="clickhouseSinkInsertDeduplicate"
-              type="checkbox"
-              name="insertDeduplicate"
-              checked={insertDeduplicate}
+            <select
+              id="clickhouseSinkSaveMode"
+              name="saveMode"
+              value={saveMode}
               onChange={handleChange}
-              className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
-            />
-            <label
-              htmlFor="clickhouseSinkInsertDeduplicate"
-              className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
             >
-              <span>Enable Deduplication</span>
-              <InfoTooltip text="Configures withInsertDeduplicate(boolean). Enables block-level deduplication for ReplicatedMergeTree tables to guarantee idempotent retries." />
-            </label>
+              <option value="append">append</option>
+              <option value="overwrite">overwrite</option>
+              <option value="errorifexists">errorifexists</option>
+              <option value="ignore">ignore</option>
+            </select>
           </div>
         </div>
-      </div>
 
-      {/* Flush & Retry Controls */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Flush &amp; Retry Behaviour</span>
-          <InfoTooltip text="Configures retry counts and exponential backoff parameters on transient insertion failures." />
-        </label>
+        {saveMode === 'overwrite' && (
+          <div className="flex items-center gap-2">
+            <input
+              id="clickhouseSinkTruncate"
+              type="checkbox"
+              name="truncate"
+              checked={truncate}
+              onChange={handleChange}
+              className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+            />
+            <label
+              htmlFor="clickhouseSinkTruncate"
+              className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+            >
+              <span>Truncate Table on Overwrite (truncate=true)</span>
+              <InfoTooltip text="Preserves ClickHouse MergeTree engine, ORDER BY, and PARTITION BY clauses on overwrite." />
+            </label>
+          </div>
+        )}
 
-        <PropertyField
-          id="clickhouseSinkMaxRetries"
-          name="maxRetries"
-          label="Max Retries"
-          type="number"
-          tooltip="Maximum retry attempts on failed insert via withMaxRetries(int)."
-          value={maxRetries}
-          onChange={handleChange}
-          placeholder="3"
-          mono={true}
-        />
-
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <PropertyField
-            id="clickhouseSinkInitialBackoff"
-            name="initialBackoff"
-            label="Initial Backoff (ms)"
+            id="clickhouseSinkBatchsize"
+            name="batchsize"
+            label="Batch Size (batchsize)"
             type="number"
-            tooltip="Initial backoff duration before first retry via withInitialBackoff(Duration)."
-            value={initialBackoff}
+            min={1}
+            tooltip="Rows per ClickHouse bulk insert block. Keep between 10000 and 100000 to avoid MergeTree Too many parts errors."
+            value={batchsize}
             onChange={handleChange}
-            placeholder="1000"
+            placeholder="50000"
             mono={true}
           />
+
           <PropertyField
-            id="clickhouseSinkMaxCumulativeBackoff"
-            name="maxCumulativeBackoff"
-            label="Max Cumulative Backoff (ms)"
+            id="clickhouseSinkNumPartitions"
+            name="numPartitions"
+            label="Max Partitions"
             type="number"
-            tooltip="Maximum cumulative backoff duration across all retries via withMaxCumulativeBackoff(Duration)."
-            value={maxCumulativeBackoff}
+            min={1}
+            tooltip="Optional cap on concurrent Spark write partitions."
+            value={numPartitions}
             onChange={handleChange}
-            placeholder="300000"
+            placeholder="8"
             mono={true}
           />
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="clickhouseSinkIsolationLevel"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Isolation</span>
+              <InfoTooltip text="Set NONE for ClickHouse JDBC writes." />
+            </label>
+            <select
+              id="clickhouseSinkIsolationLevel"
+              name="isolationLevel"
+              value={isolationLevel}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="NONE">NONE</option>
+              <option value="READ_COMMITTED">READ_COMMITTED</option>
+            </select>
+          </div>
+        </div>
+
+        {isTinyBatchWarning && (
+          <div
+            role="alert"
+            className="p-2 rounded bg-amber-500/10 border border-amber-500/40 text-xs text-amber-300"
+          >
+            Warning: Tiny batch sizes (&lt; 1000) create excessive MergeTree parts in ClickHouse.
+            Use 10000 to 100000 rows per batch.
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <input
+            id="clickhouseSinkRewriteBatched"
+            type="checkbox"
+            name="rewriteBatchedStatements"
+            checked={rewriteBatchedStatements}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+          />
+          <label
+            htmlFor="clickhouseSinkRewriteBatched"
+            className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+          >
+            <span>Rewrite Batched Statements (rewriteBatchedStatements=true)</span>
+            <InfoTooltip text="Packs JDBC executeBatch rows into single multi-row ClickHouse INSERT blocks." />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            id="clickhouseSinkAsyncInsert"
+            type="checkbox"
+            name="asyncInsert"
+            checked={asyncInsert}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+          />
+          <label
+            htmlFor="clickhouseSinkAsyncInsert"
+            className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+          >
+            <span>Enable Server Async Insert (async_insert=1)</span>
+            <InfoTooltip text="Buffers small streaming micro-batches on the ClickHouse server before flushing a MergeTree part." />
+          </label>
         </div>
       </div>
 
       {/* Authentication */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Authentication</span>
-          <InfoTooltip text="Select authentication strategy for ClickHouse sink connection: None or Google Cloud Secret Manager." />
-        </label>
-        <div className="flex gap-4 mt-1">
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="none"
-              checked={authMode === 'none'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>None</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="secret_manager"
-              checked={authMode === 'secret_manager'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Secret Manager</span>
-          </label>
-        </div>
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <PropertyField
+          id="clickhouseSinkUsername"
+          name="username"
+          label="ClickHouse Username"
+          tooltip="ClickHouse user name (default 'default')."
+          value={username}
+          placeholder="default"
+          onChange={handleChange}
+          mono={true}
+        />
 
-        {authMode === 'secret_manager' && (
-          <div className="flex flex-col gap-3 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
-            {secretError && (
-              <span className="text-xs text-[var(--vscode-errorForeground)]" role="alert">
-                Failed to load secrets: {secretError}
-              </span>
-            )}
-            <PropertyField
-              id="clickhouseSinkUsernameSecret"
-              name="usernameSecret"
-              label="Username Secret"
-              tooltip="GCP Secret Manager secret holding ClickHouse username."
-              value={usernameSecret}
-              onChange={handleChange}
-              list="clickhouse-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. clickhouse-username"
-              mono={true}
-            />
-            <PropertyField
-              id="clickhouseSinkPasswordSecret"
-              name="passwordSecret"
-              label="Password Secret"
-              tooltip="GCP Secret Manager secret holding ClickHouse password."
-              value={passwordSecret}
-              onChange={handleChange}
-              list="clickhouse-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. clickhouse-password"
-              mono={true}
-            />
-          </div>
-        )}
+        <SecretManagerAuthFields
+          idPrefix="clickhouseSink"
+          serviceName="ClickHouse"
+          authMode={authMode}
+          secretName={secretName}
+          datalistId="clickhouse-sink-secret-options"
+          secretPlaceholder="e.g. clickhouse-password-secret"
+          onChange={handleChange}
+        />
       </div>
 
-      {/* Collapsible Advanced Sink Settings */}
-      <CollapsibleSection
-        title="Advanced Sink Settings"
-        isOpen={showAdvanced}
-        onToggle={() => setShowAdvanced(!showAdvanced)}
-      >
-        <PropertyField
-          id="clickhouseSinkSocketTimeout"
-          name="socketTimeout"
-          label="Socket Timeout (ms)"
-          type="number"
-          tooltip="ClickHouse socket timeout in milliseconds for sink client."
-          value={socketTimeout}
-          onChange={handleChange}
-          placeholder="30000"
-          mono={true}
-        />
-
-        <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-          <input
-            id="clickhouseSinkCompress"
-            type="checkbox"
-            name="compress"
-            checked={compress}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0 cursor-pointer"
-          />
-          <label
-            htmlFor="clickhouseSinkCompress"
-            className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
-          >
-            <span>Enable Compression</span>
-            <InfoTooltip text="Enables HTTP transport compression when streaming insert blocks to ClickHouse." />
-          </label>
-        </div>
-
-        <PropertyField
-          id="clickhouseSinkExtraJdbcProperties"
-          name="extraJdbcProperties"
-          label="Extra JDBC / HTTP Properties"
-          type="textarea"
-          rows={3}
-          tooltip="Additional ClickHouse connection properties as key=value pairs per line passed to withProperties()."
-          value={extraJdbcProperties}
-          onChange={handleChange}
-          placeholder="ssl=true&#10;sslmode=strict"
-          mono={true}
-        />
-      </CollapsibleSection>
-
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="clickhouseSinkInstructions"
         value={systemInstructions}
-        tooltip="Optional instructions passed to LLM code generator. Explicitly emphasizes that ClickHouseIO.write requires a PCollection<Row> with an attached Schema."
-        placeholder="e.g. Ingest PCollection<Row> with schema matching destination ClickHouse table using ClickHouseIO.write(url, table).withMaxInsertBlockSize(100000)"
+        placeholder="Enter custom instructions for Spark ClickHouse sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -449,3 +407,5 @@ export const ClickHouseIOSinkProperties: React.FC<ClickHouseIOSinkPropertiesProp
     </div>
   );
 };
+
+export const ClickHouseSinkProperties = ClickHouseIOSinkProperties;

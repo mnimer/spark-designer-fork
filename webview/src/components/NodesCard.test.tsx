@@ -219,21 +219,25 @@ describe('NodesCard', () => {
       />
     );
 
-    expect(screen.getByText(/SINKS \(/i)).toBeInTheDocument();
+    expect(screen.getByText(/SINKS \(37\)/i)).toBeInTheDocument();
     expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
-    expect(screen.getByText('Database Sinks')).toBeInTheDocument();
-    expect(screen.getByText('File Sinks')).toBeInTheDocument();
-    expect(screen.getByText('Logging Sinks')).toBeInTheDocument();
+    expect(screen.getByText('Lakehouse Sinks')).toBeInTheDocument();
+    expect(screen.getByText('File Format Sinks')).toBeInTheDocument();
+    expect(screen.getByText('Warehouse & Database Sinks')).toBeInTheDocument();
+    expect(screen.getByText('NoSQL & Graph Sinks')).toBeInTheDocument();
+    expect(screen.getByText('Debug & Custom Sinks')).toBeInTheDocument();
 
     expect(screen.getByText('Kafka')).toBeInTheDocument();
-    expect(screen.getByText('PubSub')).toBeInTheDocument();
-    expect(screen.getByText('JMS')).toBeInTheDocument();
+    expect(screen.getByText('Pub/Sub')).toBeInTheDocument();
+    expect(screen.getByText('Event Hubs')).toBeInTheDocument();
     expect(screen.getByText('MQTT')).toBeInTheDocument();
     expect(screen.getByText('BigQuery')).toBeInTheDocument();
-    expect(screen.getByText('JdbcIO')).toBeInTheDocument();
-    expect(screen.getByText('FileIO')).toBeInTheDocument();
-    expect(screen.getByText('TextIO')).toBeInTheDocument();
-    expect(screen.getByText('Log Message')).toBeInTheDocument();
+    expect(screen.getByText('JDBC Database')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Parquet')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Text')).toBeInTheDocument();
+    expect(screen.getByText('Console')).toBeInTheDocument();
+    expect(screen.getByText('Memory')).toBeInTheDocument();
+    expect(screen.getByText('ForeachBatch')).toBeInTheDocument();
   });
 
   it('applies green theme highlight to SOURCES tab when active', () => {
@@ -535,7 +539,7 @@ describe('NodesCard', () => {
       expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
     });
 
-    it('renders Avro, Parquet, and Iceberg in SOURCES under File Format / Lakehouse Sources and in SINKS under File Sinks', () => {
+    it('renders Avro, Parquet, and Iceberg in SOURCES and SINKS under File Format and Lakehouse groups', () => {
       const { rerender } = render(
         <NodesCard activeTab="SOURCES" setActiveTab={vi.fn()} nodesCount={0} hasPubSubSource={false} onDragStart={mockOnDragStart} />
       );
@@ -550,11 +554,12 @@ describe('NodesCard', () => {
         <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} />
       );
 
-      expect(screen.getByText('AvroIO')).toBeInTheDocument();
-      expect(screen.getByText('TikaIO')).toBeInTheDocument();
+      expect(screen.getAllByText('Avro').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Parquet').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Iceberg').length).toBeGreaterThan(0);
-      expect(screen.getByText('Write records to Avro files')).toBeInTheDocument();
-      expect(screen.getByText('File Sinks')).toBeInTheDocument();
+      expect(screen.queryByText('TikaIO')).not.toBeInTheDocument();
+      expect(screen.getByText('File Format Sinks')).toBeInTheDocument();
+      expect(screen.getByText('Lakehouse Sinks')).toBeInTheDocument();
     });
 
     it('collapses other groups when a user opens/expands a group in a panel', () => {
@@ -749,10 +754,18 @@ describe('NodesCard', () => {
         <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
       );
 
-      // Categories in SINKS
+      // Categories in SINKS (Phase 6 SNK1-SNK37)
       expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
-      expect(screen.getByText('Data Services Sinks')).toBeInTheDocument();
-      expect(screen.getByText('Logging Sinks')).toBeInTheDocument();
+      expect(screen.getByText('Lakehouse Sinks')).toBeInTheDocument();
+      expect(screen.getByText('File Format Sinks')).toBeInTheDocument();
+      expect(screen.getByText('Warehouse & Database Sinks')).toBeInTheDocument();
+      expect(screen.getByText('NoSQL & Graph Sinks')).toBeInTheDocument();
+      expect(screen.getByText('Debug & Custom Sinks')).toBeInTheDocument();
+
+      // Legacy Beam-only sinks must NOT appear in SINKS palette
+      expect(screen.queryByText('Arrow Flight')).not.toBeInTheDocument();
+      expect(screen.queryByText('DatadogIO')).not.toBeInTheDocument();
+      expect(screen.queryByText('SplunkIO')).not.toBeInTheDocument();
     });
   });
 
@@ -827,6 +840,47 @@ describe('NodesCard', () => {
       expect(nosqlSourcesGroup).not.toBeNull();
       for (const label of ['MongoDB', 'Cloud Firestore', 'Apache Cassandra', 'Redis', 'Elasticsearch', 'Neo4j']) {
         expect(nosqlSourcesGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
+      }
+    });
+
+    it('groups Lakehouse, Warehouse & Database, NoSQL & Graph, and Debug & Custom Sinks cleanly in SINKS (SNK1-SNK37)', () => {
+      render(
+        <NodesCard activeTab="SINKS" setActiveTab={vi.fn()} nodesCount={1} hasPubSubSource={false} onDragStart={mockOnDragStart} onAddNode={mockOnAddNode} />
+      );
+
+      const lakehouseSinksGroup = screen.getByText('Lakehouse Sinks').closest('details') as HTMLElement;
+      expect(lakehouseSinksGroup).not.toBeNull();
+      for (const label of ['Iceberg', 'Delta Lake', 'Apache Hudi', 'Hive Table']) {
+        expect(lakehouseSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
+      }
+
+      const dbSinksGroup = screen.getByText('Warehouse & Database Sinks').closest('details') as HTMLElement;
+      expect(dbSinksGroup).not.toBeNull();
+      for (const label of [
+        'BigQuery',
+        'Cloud Spanner',
+        'Cloud Bigtable',
+        'Cloud SQL',
+        'AlloyDB',
+        'JDBC Database',
+        'Snowflake',
+        'Amazon Redshift',
+        'ClickHouse',
+        'SingleStore',
+      ]) {
+        expect(dbSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
+      }
+
+      const nosqlSinksGroup = screen.getByText('NoSQL & Graph Sinks').closest('details') as HTMLElement;
+      expect(nosqlSinksGroup).not.toBeNull();
+      for (const label of ['MongoDB', 'Cloud Firestore', 'Apache Cassandra', 'Redis', 'Elasticsearch', 'Neo4j']) {
+        expect(nosqlSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
+      }
+
+      const debugSinksGroup = screen.getByText('Debug & Custom Sinks').closest('details') as HTMLElement;
+      expect(debugSinksGroup).not.toBeNull();
+      for (const label of ['Console', 'Memory', 'ForeachBatch']) {
+        expect(debugSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
       }
     });
   });

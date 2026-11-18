@@ -1,46 +1,61 @@
 /**
- * KafkaIOSinkProperties Component
- * 
+ * @fileoverview KafkaIO Sink Properties Component for Apache Spark 4.x pipelines.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam KafkaIO Streaming Sink nodes.
- * Supports both Java native KafkaIO (KafkaIO.write()) and Python Cross-Language API (WriteToKafka).
- * 
+ * Renders the property configuration panel for Apache Spark KafkaSink (`KafkaIO`) nodes.
+ * Configures streaming (`df.writeStream.format("kafka")`) and batch (`df.write.format("kafka")`)
+ * writes using the `spark-sql-kafka-0-10` connector.
+ *
  * Architectural Decisions:
- * - Provides preset suggestions for standard Kafka Serializers (String, ByteArray, Long, Integer, Double, Custom).
- * - Implements interactive InfoTooltip components next to each field label containing official Apache Beam documentation.
- * - Supports producer reliability configurations (acks), Exactly-Once Semantics (EOS) settings, and custom producer properties.
- * - Adheres strictly to the 8pt grid system for spacing and sizing.
- * - Includes a flexible spacer and "Code Generation Instructions" textarea at the bottom for LLM prompt customization.
+ * - Maps DataFrame columns to the Spark Kafka envelope (`key`, `value`, `topic`, `partition`, and `headers`).
+ * - Configures producer reliability (`acks`, `enableIdempotence`) and payload compression (`compressionType`).
+ * - Integrates `SecretManagerAuthFields` and SASL or SSL protocol options so credentials resolve via Secret Manager.
+ * - Uses shared `PropertyField`, `SelectField`, `CollapsibleSection`, and `SystemInstructionsField` primitives.
  */
 
-import React from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import React, { useState } from 'react';
+import { Sliders, ShieldCheck } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField } from '../../components/common/SelectField';
+import type { SelectFieldOption } from '../../components/common/SelectField';
+import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { SecretManagerAuthFields } from '../../components/common/SecretManagerAuthFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
+import {
+  KAFKA_SECURITY_PROTOCOL_OPTIONS,
+  KAFKA_SASL_MECHANISM_OPTIONS,
+} from '../source/KafkaIO';
 
-/**
- * Preset configuration for Kafka key or value serializer classes.
- */
-export interface KafkaSerializerPreset {
-  label: string;
-  className: string;
-}
-
-export const KAFKA_SERIALIZER_PRESETS: KafkaSerializerPreset[] = [
-  { label: 'String (StringSerializer)', className: 'org.apache.kafka.common.serialization.StringSerializer' },
-  { label: 'Byte Array (ByteArraySerializer)', className: 'org.apache.kafka.common.serialization.ByteArraySerializer' },
-  { label: 'Long (LongSerializer)', className: 'org.apache.kafka.common.serialization.LongSerializer' },
-  { label: 'Integer (IntegerSerializer)', className: 'org.apache.kafka.common.serialization.IntegerSerializer' },
-  { label: 'Double (DoubleSerializer)', className: 'org.apache.kafka.common.serialization.DoubleSerializer' },
+/** Value serialization mode options for Spark KafkaSink writes. */
+export const KAFKA_VALUE_FORMAT_OPTIONS: SelectFieldOption[] = [
+  { value: 'json', label: 'JSON Object (F.to_json struct)' },
+  { value: 'string', label: 'String Column (UTF-8)' },
+  { value: 'binary', label: 'Binary Column (Raw bytes)' },
 ];
 
-/**
- * React Flow node shape for the Kafka sink panel, including its persisted configuration data.
- */
-interface KafkaIOSinkNode {
+/** Producer acknowledgment durability options for KafkaSink. */
+export const KAFKA_ACKS_OPTIONS: SelectFieldOption[] = [
+  { value: 'all', label: 'all (-1) - Full ISR Durability' },
+  { value: '1', label: '1 - Leader Acknowledgment' },
+  { value: '0', label: '0 - No Guarantee (Fire and Forget)' },
+];
+
+/** Producer compression codec options for KafkaSink. */
+export const KAFKA_COMPRESSION_OPTIONS: SelectFieldOption[] = [
+  { value: 'none', label: 'none (Uncompressed)' },
+  { value: 'snappy', label: 'snappy' },
+  { value: 'lz4', label: 'lz4' },
+  { value: 'zstd', label: 'zstd' },
+  { value: 'gzip', label: 'gzip' },
+];
+
+/** React Flow node shape for the KafkaSink panel. */
+export interface KafkaIOSinkNode {
   data: {
     label: string;
     spark_transform?: string;
@@ -49,97 +64,83 @@ interface KafkaIOSinkNode {
     properties?: {
       bootstrapServers?: string;
       topic?: string;
-      keySerializer?: string;
-      valueSerializer?: string;
+      topicColumn?: string;
+      valueFormat?: 'json' | 'string' | 'binary';
+      keyColumn?: string;
+      valueColumn?: string;
+      partitionColumn?: string;
+      includeHeaders?: boolean;
+      headersColumn?: string;
       acks?: 'all' | '1' | '0';
+      compressionType?: 'none' | 'snappy' | 'lz4' | 'zstd' | 'gzip';
+      enableIdempotence?: boolean;
+      securityProtocol?: string;
+      saslMechanism?: string;
+      saslUsername?: string;
+      authMode?: string;
+      secretName?: string;
       producerProperties?: string;
-      useEOS?: boolean;
-      eosNumPartitions?: string | number;
-      eosSinkGroupId?: string;
       system_instructions?: string;
       special_instructions?: string;
-      codeGenerationPrompt?: string;
-      prompt?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
 
-/**
- * Props for the KafkaIOSinkProperties component.
- */
-interface KafkaIOSinkPropertiesProps {
+/** Props for the {@link KafkaIOSinkProperties} component. */
+export interface KafkaIOSinkPropertiesProps {
   node: KafkaIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * KafkaIOSinkProperties renders the configuration form for Kafka streaming writes.
+ * Renders the Apache Spark `.format("kafka")` sink property configuration form.
  *
- * @param props Component properties containing the active node data and onChange callback.
- * @returns React component.
+ * @param props Active node metadata and property change callback.
+ * @returns Rendered KafkaSink property form.
  */
 export const KafkaIOSinkProperties: React.FC<KafkaIOSinkPropertiesProps> = ({ node, onChange }) => {
-  // Extract existing properties or fallback to sensible defaults
   const properties = node.data.properties || {};
 
   const bootstrapServers = properties.bootstrapServers || '';
   const topic = properties.topic || '';
-  const keySerializer = properties.keySerializer || 'org.apache.kafka.common.serialization.ByteArraySerializer';
-  const valueSerializer = properties.valueSerializer || 'org.apache.kafka.common.serialization.StringSerializer';
+  const topicColumn = properties.topicColumn || '';
+  const valueFormat = properties.valueFormat || 'json';
+  const keyColumn = properties.keyColumn || '';
+  const valueColumn = properties.valueColumn || '';
+  const partitionColumn = properties.partitionColumn || '';
+  const includeHeaders = properties.includeHeaders ?? false;
+  const headersColumn = properties.headersColumn || '';
   const acks = properties.acks || 'all';
+  const compressionType = properties.compressionType || 'none';
+  const enableIdempotence = properties.enableIdempotence ?? true;
+  const securityProtocol = properties.securityProtocol || 'PLAINTEXT';
+  const saslMechanism = properties.saslMechanism || 'PLAIN';
+  const saslUsername = properties.saslUsername || '';
+  const authMode = properties.authMode || 'default';
+  const secretName = properties.secretName || '';
   const producerProperties = properties.producerProperties || '';
-  const useEOS = properties.useEOS ?? false;
-  const eosNumPartitions = properties.eosNumPartitions ?? '';
-  const eosSinkGroupId = properties.eosSinkGroupId || '';
 
-  // System instructions text with fallback
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles generic text, select, and checkbox input changes.
-   * 
-   * @param e Form change event from input, select, or textarea.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const isBootstrapServersInvalid = !bootstrapServers.trim();
+  const isTopicInvalid = !topic.trim() && !topicColumn.trim();
+  const isValueColumnRequired = valueFormat === 'string' || valueFormat === 'binary';
+  const isValueColumnInvalid = isValueColumnRequired && !valueColumn.trim();
+  const showSaslMechanism = securityProtocol === 'SASL_SSL' || securityProtocol === 'SASL_PLAINTEXT';
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
-    const newProperties = {
-      ...properties,
-      [name]: isCheckbox ? checked : value
-    };
-
-    onChange(newProperties);
-  };
-
-  const isKeyPreset = KAFKA_SERIALIZER_PRESETS.some(p => p.className === keySerializer);
-  const selectedKeyPreset = isKeyPreset ? keySerializer : 'org.apache.kafka.common.serialization.ByteArraySerializer';
-
-  const isValuePreset = KAFKA_SERIALIZER_PRESETS.some(p => p.className === valueSerializer);
-  const selectedValuePreset = isValuePreset ? valueSerializer : 'org.apache.kafka.common.serialization.StringSerializer';
-
-  // Validation states according to Apache Beam KafkaIO documentation
-  const isBootstrapServersInvalid = !bootstrapServers.trim();
-  const isTopicInvalid = !topic.trim();
-  const isEosNumPartitionsInvalid = useEOS && (!eosNumPartitions || Number(eosNumPartitions) <= 0);
-  const isEosSinkGroupIdInvalid = useEOS && !eosSinkGroupId.trim();
-
-  /**
-   * Handles serializer dropdown changes.
-   */
-  const handleKeySelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     onChange({
       ...properties,
-      keySerializer: e.target.value
-    });
-  };
-
-  const handleValueSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    onChange({
-      ...properties,
-      valueSerializer: e.target.value
+      [name]: isCheckbox ? checked : value,
     });
   };
 
@@ -150,201 +151,259 @@ export const KafkaIOSinkProperties: React.FC<KafkaIOSinkPropertiesProps> = ({ no
         id="kafkaSinkBootstrapServers"
         name="bootstrapServers"
         label="Bootstrap Servers"
-        required={true}
-        tooltip="A comma-separated list of host:port pairs to establish the initial connection to the Kafka cluster (e.g. localhost:9092 or broker1:9092,broker2:9092). Required."
+        required="Bootstrap Servers is required."
+        tooltip="Comma-separated host:port pairs for connecting to the Kafka cluster (option kafka.bootstrap.servers). Required."
         value={bootstrapServers}
         invalid={isBootstrapServersInvalid}
         error={isBootstrapServersInvalid ? 'Bootstrap Servers is required.' : null}
-        onChange={handleChange}
-        placeholder="localhost:9092"
         helperText={
-          isBootstrapServersInvalid ? undefined : (
+          !isBootstrapServersInvalid ? (
             <span>
               Example: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">localhost:9092</code>
             </span>
-          )
+          ) : null
         }
+        placeholder="localhost:9092"
+        onChange={handleChange}
+        mono={true}
       />
 
-      {/* Target Topic Input (Required) */}
+      {/* Target Topic Input */}
       <PropertyField
         id="kafkaSinkTopic"
         name="topic"
         label="Topic"
-        required={true}
-        tooltip="The target Kafka topic where output records will be published (e.g. output-events). Required."
+        required={!topicColumn.trim() ? 'Topic is required.' : false}
+        tooltip="Default target Kafka topic for output records (option topic). Required if Topic Column is empty."
         value={topic}
         invalid={isTopicInvalid}
         error={isTopicInvalid ? 'Topic is required.' : null}
-        onChange={handleChange}
-        placeholder="output-topic"
         helperText={
-          isTopicInvalid ? undefined : (
+          !isTopicInvalid ? (
             <span>
               Example: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">output-events</code>
             </span>
-          )
+          ) : null
         }
+        placeholder="output-topic"
+        onChange={handleChange}
+        mono={true}
       />
 
-      {/* Key Serializer (Required) */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="kafkaKeySerializer" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Key Serializer</span>
-          <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-          <InfoTooltip text="Class used to serialize the Kafka record key to bytes (e.g. ByteArraySerializer, StringSerializer). Required." />
-        </label>
-        <select
-          id="kafkaKeySerializer"
-          name="keySerializerSelect"
-          value={selectedKeyPreset}
-          onChange={handleKeySelectChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          {KAFKA_SERIALIZER_PRESETS.map((preset) => (
-            <option key={preset.className} value={preset.className}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
+      {/* Value Serialization Format */}
+      <SelectField
+        id="kafkaSinkValueFormat"
+        name="valueFormat"
+        label="Value Serialization"
+        tooltip="Select how DataFrame columns serialize into the Kafka value payload column."
+        value={valueFormat}
+        options={KAFKA_VALUE_FORMAT_OPTIONS}
+        onChange={handleChange}
+      />
+
+      {/* Key and Value Columns */}
+      <div className="grid grid-cols-2 gap-3">
+        <PropertyField
+          id="kafkaSinkKeyColumn"
+          name="keyColumn"
+          label="Key Column"
+          tooltip="Optional DataFrame column cast to Kafka record key for partition routing and log compaction."
+          value={keyColumn}
+          onChange={handleChange}
+          placeholder="e.g. order_id"
+          mono={true}
+        />
+
+        <PropertyField
+          id="kafkaSinkValueColumn"
+          name="valueColumn"
+          label="Value Column"
+          required={isValueColumnRequired ? 'Value Column is required.' : false}
+          tooltip="DataFrame column containing the message payload. If JSON mode is selected and this field is blank, all columns serialize into JSON."
+          value={valueColumn}
+          invalid={isValueColumnInvalid}
+          error={isValueColumnInvalid ? 'Value Column is required.' : null}
+          onChange={handleChange}
+          placeholder={valueFormat === 'json' ? 'All columns (optional)' : 'value'}
+          mono={true}
+        />
       </div>
 
-      {/* Value Serializer (Required) */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="kafkaValueSerializer" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Value Serializer</span>
-          <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-          <InfoTooltip text="Class used to serialize the Kafka record payload/value to bytes (e.g. StringSerializer, ByteArraySerializer). Required." />
-        </label>
-        <select
-          id="kafkaValueSerializer"
-          name="valueSerializerSelect"
-          value={selectedValuePreset}
-          onChange={handleValueSelectChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          {KAFKA_SERIALIZER_PRESETS.map((preset) => (
-            <option key={preset.className} value={preset.className}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Acks Setting */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="kafkaSinkAcks" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Acks (Durability)</span>
-          <InfoTooltip text="The number of acknowledgments required before considering a write complete ('all'/'-1': full ISR durability, '1': leader ack, '0': fire-and-forget)." />
-        </label>
-        <select
+      {/* Producer Durability and Compression */}
+      <div className="grid grid-cols-2 gap-3">
+        <SelectField
           id="kafkaSinkAcks"
           name="acks"
+          label="Acks (Durability)"
+          tooltip="Number of broker acknowledgments required before marking a write complete (option kafka.acks)."
           value={acks}
+          options={KAFKA_ACKS_OPTIONS}
           onChange={handleChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          <option value="all">all (-1) - Highest Durability</option>
-          <option value="1">1 - Leader Only</option>
-          <option value="0">0 - No Guarantee (Fire & Forget)</option>
-        </select>
+        />
+
+        <SelectField
+          id="kafkaSinkCompressionType"
+          name="compressionType"
+          label="Compression Codec"
+          tooltip="Codec applied to Kafka record batches before network transmission (option kafka.compression.type)."
+          value={compressionType}
+          options={KAFKA_COMPRESSION_OPTIONS}
+          onChange={handleChange}
+        />
       </div>
 
-      {/* Exactly-Once Semantics (EOS) */}
-      <div className="p-3 bg-slate-800/40 rounded border border-slate-700/50 flex flex-col gap-3">
-        <label htmlFor="kafkaUseEOS" className="flex items-center gap-2 cursor-pointer">
+      {/* Producer Toggles: Idempotence and Headers */}
+      <div className="p-3 bg-slate-800/40 rounded border border-slate-700/50 flex flex-col gap-2.5">
+        <label htmlFor="kafkaSinkEnableIdempotence" className="flex items-center gap-2 cursor-pointer">
           <input
-            id="kafkaUseEOS"
+            id="kafkaSinkEnableIdempotence"
             type="checkbox"
-            name="useEOS"
-            checked={useEOS}
+            name="enableIdempotence"
+            checked={enableIdempotence}
             onChange={handleChange}
             className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
           />
           <div className="flex items-center">
-            <span className="text-sm font-medium text-slate-300">Exactly-Once Semantics (EOS)</span>
-            <InfoTooltip text="Provides end-to-end exactly-once publishing by coordinating transactions across Kafka partitions. Requires topic partition count and sink group ID." />
+            <span className="text-sm font-medium text-slate-300">Enable Idempotent Producer</span>
+            <InfoTooltip text="Prevent duplicate Kafka messages during producer retries (option kafka.enable.idempotence)." />
           </div>
         </label>
 
-        {useEOS && (
-          <div className="grid grid-cols-2 items-end gap-2 pt-2 border-t border-slate-700/50">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="kafkaEosNumPartitions" className="flex items-center text-xs font-semibold text-slate-400">
-                <span>Num Partitions</span>
-                <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-                <InfoTooltip text="Total number of partitions for the destination topic, needed to assign dedicated transactional producers. Required when EOS is enabled." />
-              </label>
-              <input
-                id="kafkaEosNumPartitions"
-                type="number"
-                name="eosNumPartitions"
-                required
-                aria-required="true"
-                aria-invalid={isEosNumPartitionsInvalid}
-                min="1"
-                value={eosNumPartitions}
-                onChange={handleChange}
-                placeholder="e.g. 6"
-                className={`bg-[#252836] text-white p-2 rounded border text-sm focus:outline-none ${
-                  isEosNumPartitionsInvalid
-                    ? 'border-red-500/80 focus:border-red-500'
-                    : 'border-slate-700 focus:border-blue-500'
-                }`}
-              />
-              {isEosNumPartitionsInvalid && (
-                <span className="text-xs text-red-400 font-normal">Num Partitions (&gt; 0) is required for EOS.</span>
-              )}
-            </div>
-            <div className="flex flex-col gap-1">
-              <label htmlFor="kafkaEosSinkGroupId" className="flex items-center text-xs font-semibold text-slate-400">
-                <span>Sink Group ID</span>
-                <span className="text-red-400 ml-1 font-bold" title="Required">*</span>
-                <InfoTooltip text="Unique identifier for the EOS sink group used for tracking transaction coordinates. Required when EOS is enabled." />
-              </label>
-              <input
-                id="kafkaEosSinkGroupId"
-                type="text"
-                name="eosSinkGroupId"
-                required
-                aria-required="true"
-                aria-invalid={isEosSinkGroupIdInvalid}
-                value={eosSinkGroupId}
-                onChange={handleChange}
-                placeholder="sink-group-1"
-                className={`bg-[#252836] text-white p-2 rounded border text-sm focus:outline-none font-mono ${
-                  isEosSinkGroupIdInvalid
-                    ? 'border-red-500/80 focus:border-red-500'
-                    : 'border-slate-700 focus:border-blue-500'
-                }`}
-              />
-              {isEosSinkGroupIdInvalid && (
-                <span className="text-xs text-red-400 font-normal">Sink Group ID is required for EOS.</span>
-              )}
-            </div>
+        <label htmlFor="kafkaSinkIncludeHeaders" className="flex items-center gap-2 cursor-pointer">
+          <input
+            id="kafkaSinkIncludeHeaders"
+            type="checkbox"
+            name="includeHeaders"
+            checked={includeHeaders}
+            onChange={handleChange}
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+          />
+          <div className="flex items-center">
+            <span className="text-sm font-medium text-slate-300">Include Kafka Headers</span>
+            <InfoTooltip text="Write an array<struct<key:string, value:binary>> column as Kafka record headers (option includeHeaders)." />
           </div>
+        </label>
+
+        {includeHeaders && (
+          <PropertyField
+            id="kafkaSinkHeadersColumn"
+            name="headersColumn"
+            label="Headers Column"
+            tooltip="DataFrame column containing array<struct<key:string, value:binary>> Kafka headers."
+            value={headersColumn}
+            onChange={handleChange}
+            placeholder="headers"
+            mono={true}
+          />
         )}
       </div>
 
-      {/* Additional Producer Properties */}
-      <PropertyField
-        id="kafkaProducerProperties"
-        name="producerProperties"
-        label="Producer Properties"
-        tooltip="Additional Kafka producer configuration properties formatted as key=value on separate lines (e.g. compression.type=snappy, retries=3, batch.size=16384)."
-        type="textarea"
-        value={producerProperties}
-        onChange={handleChange}
-        placeholder="compression.type=snappy&#10;retries=3&#10;batch.size=16384"
-        rows={3}
-      />
+      {/* Security and Secret Manager Auth */}
+      <div className="p-3 bg-[var(--vscode-subcard-bg)] rounded border border-[var(--vscode-border)] flex flex-col gap-3">
+        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">
+            Security and Authentication
+          </span>
+        </div>
 
-      {/* Code Generation Instructions Section at Bottom */}
+        <SelectField
+          id="kafkaSinkSecurityProtocol"
+          name="securityProtocol"
+          label="Security Protocol"
+          tooltip="Protocol used to communicate with Kafka brokers (option kafka.security.protocol)."
+          value={securityProtocol}
+          options={KAFKA_SECURITY_PROTOCOL_OPTIONS}
+          onChange={handleChange}
+        />
+
+        {showSaslMechanism && (
+          <>
+            <SelectField
+              id="kafkaSinkSaslMechanism"
+              name="saslMechanism"
+              label="SASL Mechanism"
+              tooltip="Authentication mechanism used for SASL broker handshakes (option kafka.sasl.mechanism)."
+              value={saslMechanism}
+              options={KAFKA_SASL_MECHANISM_OPTIONS}
+              onChange={handleChange}
+            />
+
+            <PropertyField
+              id="kafkaSinkSaslUsername"
+              name="saslUsername"
+              label="SASL Username"
+              tooltip="Optional SASL username paired with the password stored in Secret Manager. Leave blank if the secret stores the full JAAS config."
+              value={saslUsername}
+              onChange={handleChange}
+              placeholder="e.g. spark-producer"
+              mono={true}
+            />
+          </>
+        )}
+
+        <SecretManagerAuthFields
+          idPrefix="kafkaSink"
+          datalistId="kafka-sink-secrets-list"
+          authMode={authMode}
+          secretName={secretName}
+          serviceName="Apache Kafka"
+          secretPlaceholder="e.g. kafka-sasl-credentials"
+          onChange={handleChange}
+        />
+      </div>
+
+      {/* Advanced Producer Options */}
+      <CollapsibleSection
+        title="Advanced Kafka Producer Options"
+        icon={<Sliders className="w-4 h-4 text-emerald-400" />}
+        isOpen={isAdvancedOpen}
+        onToggle={() => setIsAdvancedOpen((prev) => !prev)}
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <PropertyField
+            id="kafkaSinkTopicColumn"
+            name="topicColumn"
+            label="Topic Column (Dynamic)"
+            tooltip="Optional DataFrame string column routing each row to its named Kafka topic."
+            value={topicColumn}
+            onChange={handleChange}
+            placeholder="e.g. target_topic"
+            mono={true}
+          />
+
+          <PropertyField
+            id="kafkaSinkPartitionColumn"
+            name="partitionColumn"
+            label="Partition Column"
+            tooltip="Optional DataFrame integer column specifying the exact Kafka partition per record."
+            value={partitionColumn}
+            onChange={handleChange}
+            placeholder="e.g. partition_id"
+            mono={true}
+          />
+        </div>
+
+        <PropertyField
+          id="kafkaProducerProperties"
+          name="producerProperties"
+          label="Additional Kafka Options"
+          tooltip="Extra Spark Kafka producer options formatted as key=value on each line (for example kafka.linger.ms=20)."
+          type="textarea"
+          value={producerProperties}
+          onChange={handleChange}
+          placeholder={`kafka.linger.ms=20\nkafka.batch.size=32768`}
+          rows={3}
+          mono={true}
+        />
+      </CollapsibleSection>
+
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="kafkaSinkSystemInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions supplied to the LLM when generating code for this Kafka write node."
-        placeholder="Enter custom instructions for Kafka write code generation..."
+        tooltip="Custom instructions supplied to the AI code generator for this Kafka sink node."
+        placeholder="Enter custom instructions for Kafka sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -355,3 +414,6 @@ export const KafkaIOSinkProperties: React.FC<KafkaIOSinkPropertiesProps> = ({ no
     </div>
   );
 };
+
+/** Alias matching the canonical Spark transform name `KafkaSink`. */
+export const KafkaSinkProperties = KafkaIOSinkProperties;

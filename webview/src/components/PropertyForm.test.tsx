@@ -218,8 +218,8 @@ describe('PropertyForm', () => {
     it('branch 2: prevents cross-direction fallback when opposite type is registered', () => {
       const rateSinkNode = { data: { type: 'SINK', spark_transform: 'RateSource', properties: {} } };
       expect(getPropertyFormComponent(rateSinkNode)).toBeUndefined();
-      const arrowSourceNode = { data: { type: 'SOURCE', spark_transform: 'ArrowFlightIO', properties: {} } };
-      expect(getPropertyFormComponent(arrowSourceNode)).toBeUndefined();
+      const consoleSourceNode = { data: { type: 'SOURCE', spark_transform: 'ConsoleSink', properties: {} } };
+      expect(getPropertyFormComponent(consoleSourceNode)).toBeUndefined();
     });
   });
 

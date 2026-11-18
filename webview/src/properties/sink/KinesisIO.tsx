@@ -1,41 +1,47 @@
 /**
- * KinesisIOSinkProperties Component
- * 
+ * @fileoverview KinesisIO Sink Properties Component for Apache Spark 4.x pipelines.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam KinesisIO Streaming Sink nodes.
- * Supports both Java native KinesisIO (KinesisIO.write() via AWS SDK v2) and Python Cross-Language
- * API (WriteToKinesis).
- * 
+ * Renders the property configuration panel for Apache Spark KinesisSink (`KinesisIO`) nodes.
+ * Configures batch (`foreachPartition`) and streaming (`foreachBatch`) writes to Amazon Kinesis
+ * Data Streams using `boto3` `put_records` (up to 500 records per request with partial failure retries).
+ *
  * Architectural Decisions:
- * - Emphasizes form usability by grouping settings into intuitive sections: Stream Configuration,
- *   Authentication, Partitioning Strategy, Data Serialization, Producer Tuning, and Advanced Settings.
- * - Integrates with Google Cloud Secret Manager: executes a 'getSecrets' callback to the extension
- *   host to fetch available Secret Manager secrets for secure AWS credential reference without hardcoding.
- * - Supports three Authentication modes: Google Cloud Secret Manager (recommended for Dataflow),
- *   Direct AWS Credentials (with password reveal toggle), and AWS IAM Role / Default Provider Chain.
- * - Exposes Kinesis Partition Key routing strategies (Static Key, Record Key from KV pair, Payload Hash, Custom)
- *   to ensure proper record distribution across Kinesis shards.
- * - Provides pre-configured Data Serialization formats (UTF-8 String bytes, Raw Bytes, JSON, Custom).
- * - Exposes high-throughput Kinesis Producer Library (KPL) batching and timeout properties.
- * - Validates required fields (Stream Name) with visible error states and accessible ARIA attributes.
- * - Fully adheres to the 8pt grid system for spacing, padding, and layout.
- * - Persists custom code generation instructions for LLM prompt tailoring.
+ * - Configures `streamName`, `region`, `partitionKeyMode`, `payloadFormat`, and `payloadColumn`.
+ * - Enforces AWS Kinesis `PutRecords` batch size bounds (1 to 500 records) and `FailedRecordCount` retries.
+ * - Integrates `SecretManagerAuthFields` and optional STS `roleArn` while stripping cleartext AWS keys.
+ * - Uses shared `PropertyField`, `SelectField`, `CollapsibleSection`, and `SystemInstructionsField` primitives.
  */
 
-import React from 'react';
-import { InfoTooltip } from '../../components/InfoTooltip';
+/* eslint-disable react-refresh/only-export-components */
+import React, { useState } from 'react';
+import { Sliders, ShieldCheck } from 'lucide-react';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField } from '../../components/common/SelectField';
+import type { SelectFieldOption } from '../../components/common/SelectField';
+import { CollapsibleSection } from '../../components/common/CollapsibleSection';
+import { SecretManagerAuthFields } from '../../components/common/SecretManagerAuthFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { RefreshCw, ShieldCheck, KeyRound, Radio, SplitSquareVertical } from 'lucide-react';
-import { AWS_REGION_PRESETS } from '../source/KinesisIO';
-import { useSecretOptions } from '../../hooks/useSecretOptions';
+import { AWS_REGION_OPTIONS } from '../source/KinesisIO';
 
-/**
- * React Flow node shape for the Kinesis sink panel, including its persisted configuration data.
- */
+/** Partition key routing modes for KinesisSink PutRecords calls. */
+export const KINESIS_PARTITION_KEY_MODE_OPTIONS: SelectFieldOption[] = [
+  { value: 'column', label: 'Column Value (DataFrame Column)' },
+  { value: 'hash', label: 'Payload Hash (SHA-256 Distribution)' },
+  { value: 'static', label: 'Static Key (Fixed Partition Key)' },
+];
+
+/** Payload encoding modes for KinesisSink Data bytes. */
+export const KINESIS_PAYLOAD_FORMAT_OPTIONS: SelectFieldOption[] = [
+  { value: 'json', label: 'JSON Object (Serialize full row)' },
+  { value: 'string', label: 'String Column (UTF-8)' },
+  { value: 'binary', label: 'Binary Column (Raw bytes)' },
+];
+
+/** React Flow node shape for the KinesisSink panel. */
 export interface KinesisIOSinkNode {
   data: {
     label: string;
@@ -45,500 +51,292 @@ export interface KinesisIOSinkNode {
     properties?: {
       streamName?: string;
       region?: string;
-      customRegion?: string;
-      authMode?: 'secretManager' | 'iam' | string;
+      partitionKeyMode?: 'column' | 'hash' | 'static';
+      partitionKeyColumn?: string;
+      staticPartitionKey?: string;
+      payloadFormat?: 'json' | 'string' | 'binary';
+      payloadColumn?: string;
+      maxBatchSize?: string | number;
+      maxRetries?: string | number;
+      endpointUrl?: string;
+      roleArn?: string;
+      authMode?: string;
+      secretName?: string;
       awsAccessKey?: string;
       awsSecretKey?: string;
-      accessKeySecretName?: string;
-      secretKeySecretName?: string;
-      roleArn?: string;
-      partitionKeyMode?: 'static' | 'recordKey' | 'hash' | 'custom';
-      partitionKey?: string;
-      dataSerialization?: 'stringUtf8' | 'rawBytes' | 'json';
-      collectionMaxCount?: string | number;
-      connectTimeout?: string | number;
-      requestTimeout?: string | number;
-      recordMaxBufferedTime?: string | number;
-      producerProperties?: string;
-      serviceEndpoint?: string;
-      verifyCertificate?: boolean;
-      expansionService?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
 
-/**
- * Props for the KinesisIOSinkProperties component.
- */
-interface KinesisIOSinkPropertiesProps {
+/** Props for the {@link KinesisIOSinkProperties} component. */
+export interface KinesisIOSinkPropertiesProps {
   node: KinesisIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * KinesisIOSinkProperties renders the configuration panel for writing records to Amazon Kinesis.
+ * Renders the Amazon Kinesis Data Streams Spark 4.x sink property configuration form.
  *
- * @param props Component properties containing the active node data and onChange callback.
- * @returns React component.
+ * @param props Active node metadata and property change callback.
+ * @returns Rendered KinesisSink property form.
  */
-export const KinesisIOSinkProperties: React.FC<KinesisIOSinkPropertiesProps> = ({ node, onChange }) => {
-  // Extract existing properties or fallback to sensible defaults
-  const properties = node.data.properties || {};
+export const KinesisIOSinkProperties: React.FC<KinesisIOSinkPropertiesProps> = ({
+  node,
+  onChange,
+}) => {
+  const properties = node?.data?.properties || {};
 
   const streamName = properties.streamName || '';
   const region = properties.region || 'us-east-1';
-  const customRegion = properties.customRegion || '';
-  const authMode = properties.authMode === 'iam' ? 'iam' : 'secretManager';
-  const accessKeySecretName = properties.accessKeySecretName || '';
-  const secretKeySecretName = properties.secretKeySecretName || '';
+  const partitionKeyMode = properties.partitionKeyMode || 'column';
+  const partitionKeyColumn = properties.partitionKeyColumn || '';
+  const staticPartitionKey = properties.staticPartitionKey || '';
+  const payloadFormat = properties.payloadFormat || 'json';
+  const payloadColumn = properties.payloadColumn || '';
+  const maxBatchSize = properties.maxBatchSize ?? '500';
+  const maxRetries = properties.maxRetries ?? '5';
+  const endpointUrl = properties.endpointUrl || '';
   const roleArn = properties.roleArn || '';
-  const partitionKeyMode = properties.partitionKeyMode || 'recordKey';
-  const partitionKey = properties.partitionKey || '';
-  const dataSerialization = properties.dataSerialization || 'stringUtf8';
-  const collectionMaxCount = properties.collectionMaxCount ?? '';
-  const connectTimeout = properties.connectTimeout ?? '';
-  const requestTimeout = properties.requestTimeout ?? '';
-  const recordMaxBufferedTime = properties.recordMaxBufferedTime ?? '';
-  const producerProperties = properties.producerProperties || '';
-  const serviceEndpoint = properties.serviceEndpoint || '';
-  const verifyCertificate = properties.verifyCertificate ?? true;
-  const expansionService = properties.expansionService || '';
+  const authMode = properties.authMode || 'secretManager';
+  const secretName = properties.secretName || '';
 
-  const secrets = useSecretOptions();
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
 
-  // System instructions text with fallback
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles generic text, select, and checkbox input changes.
-   * 
-   * @param e Form change event from input, select, or textarea.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const isStreamNameInvalid = !streamName.trim();
+  const isPartitionKeyColumnInvalid =
+    partitionKeyMode === 'column' && !partitionKeyColumn.trim();
+  const isStaticKeyInvalid = partitionKeyMode === 'static' && !staticPartitionKey.trim();
+  const isPayloadColumnRequired = payloadFormat === 'string' || payloadFormat === 'binary';
+  const isPayloadColumnInvalid = isPayloadColumnRequired && !payloadColumn.trim();
+  const numericBatchSize = Number(maxBatchSize);
+  const isBatchSizeInvalid =
+    String(maxBatchSize).trim() !== '' &&
+    (Number.isNaN(numericBatchSize) || numericBatchSize < 1 || numericBatchSize > 500);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
-    const newProperties = {
+    const nextProperties: Record<string, unknown> = {
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: isCheckbox ? checked : value,
     };
+    delete nextProperties.awsAccessKey;
+    delete nextProperties.awsSecretKey;
 
-    delete newProperties.awsAccessKey;
-    delete newProperties.awsSecretKey;
-
-    onChange(newProperties);
+    onChange(nextProperties);
   };
-
-
-  // Region preset handling
-  const isRegionPreset = AWS_REGION_PRESETS.some(r => r.value === region && r.value !== 'custom');
-  const selectedRegionPreset = isRegionPreset ? region : 'custom';
-  const customRegionValue = isRegionPreset ? customRegion : (customRegion || (region !== 'custom' ? region : ''));
-
-  // Validation state: Stream Name is mandatory in Apache Beam KinesisIO
-  const isStreamNameInvalid = !streamName.trim();
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* SECTION 1: STREAM CONFIGURATION */}
-      <div className="border border-[var(--vscode-border)] rounded-md p-3 bg-[var(--vscode-card-bg)] flex flex-col gap-3">
-        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
-          <Radio className="w-4 h-4 text-rose-400" />
-          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">Target Stream</span>
-        </div>
+      {/* Stream Name Input (Required) */}
+      <PropertyField
+        id="kinesisSinkStreamName"
+        name="streamName"
+        label="Stream Name"
+        required="Stream Name is required."
+        tooltip="Target Amazon Kinesis Data Stream receiving published records. Required."
+        value={streamName}
+        onChange={handleChange}
+        placeholder="e.g. processed-events"
+        invalid={isStreamNameInvalid}
+        error={isStreamNameInvalid ? 'Stream Name is required.' : null}
+        mono={true}
+      />
 
-        {/* Stream Name Input */}
+      {/* AWS Region */}
+      <PropertyField
+        id="kinesisSinkRegion"
+        name="region"
+        label="AWS Region"
+        tooltip="Cloud region hosting the destination Kinesis stream (for example us-east-1 or us-west-2)."
+        value={region}
+        onChange={handleChange}
+        placeholder="us-east-1"
+        datalist={AWS_REGION_OPTIONS}
+        mono={true}
+      />
+
+      {/* Partition Key Routing */}
+      <SelectField
+        id="kinesisSinkPartitionKeyMode"
+        name="partitionKeyMode"
+        label="Partition Key Strategy"
+        tooltip="Determine how each record selects its Kinesis shard routing key."
+        value={partitionKeyMode}
+        options={KINESIS_PARTITION_KEY_MODE_OPTIONS}
+        onChange={handleChange}
+      />
+
+      {partitionKeyMode === 'column' && (
         <PropertyField
-          id="kinesisSinkStreamName"
-          name="streamName"
-          label="Stream Name"
-          required
-          tooltip="The name of the target Amazon Kinesis stream to publish records to (e.g. processed-events). Required."
-          value={streamName}
+          id="kinesisSinkPartitionKeyColumn"
+          name="partitionKeyColumn"
+          label="Partition Key Column"
+          required="Partition Key Column is required."
+          tooltip="DataFrame column converted to UTF-8 string as the Kinesis PartitionKey."
+          value={partitionKeyColumn}
           onChange={handleChange}
-          placeholder="e.g. processed-stream"
-          error={isStreamNameInvalid ? 'Stream Name is required to initialize KinesisIO writer.' : undefined}
+          placeholder="e.g. device_id"
+          invalid={isPartitionKeyColumnInvalid}
+          error={isPartitionKeyColumnInvalid ? 'Partition Key Column is required.' : null}
+          mono={true}
+        />
+      )}
+
+      {partitionKeyMode === 'static' && (
+        <PropertyField
+          id="kinesisSinkStaticPartitionKey"
+          name="staticPartitionKey"
+          label="Static Partition Key"
+          required="Static Partition Key is required."
+          tooltip="Constant PartitionKey value assigned to every record in the micro-batch."
+          value={staticPartitionKey}
+          onChange={handleChange}
+          placeholder="e.g. shard-0"
+          invalid={isStaticKeyInvalid}
+          error={isStaticKeyInvalid ? 'Static Partition Key is required.' : null}
+          mono={true}
+        />
+      )}
+
+      {/* Payload Encoding and Column */}
+      <div className="grid grid-cols-2 gap-3">
+        <SelectField
+          id="kinesisSinkPayloadFormat"
+          name="payloadFormat"
+          label="Payload Format"
+          tooltip="Encoding format used to convert Spark rows into binary Data payloads for put_records."
+          value={payloadFormat}
+          options={KINESIS_PAYLOAD_FORMAT_OPTIONS}
+          onChange={handleChange}
         />
 
-        {/* AWS Region Selector */}
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="kinesisSinkRegion" className="flex items-center text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-            <span>AWS Region</span>
-            <InfoTooltip text="Target cloud region where the stream resides, such as us-east-1 or us-west-2." />
-          </label>
-          <select
-            id="kinesisSinkRegion"
-            name="region"
-            value={selectedRegionPreset}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === 'custom') {
-                onChange({ ...properties, region: 'custom', customRegion: customRegionValue });
-              } else {
-                onChange({ ...properties, region: val, customRegion: '' });
-              }
-            }}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm focus:outline-none focus:border-rose-500"
-          >
-            {AWS_REGION_PRESETS.map((preset) => (
-              <option key={preset.value} value={preset.value}>
-                {preset.label}
-              </option>
-            ))}
-          </select>
-
-          {selectedRegionPreset === 'custom' && (
-            <PropertyField
-              id="kinesisSinkCustomRegion"
-              name="customRegion"
-              aria-label="Custom AWS Region"
-              value={customRegionValue}
-              onChange={(e) => {
-                onChange({
-                  ...properties,
-                  region: 'custom',
-                  customRegion: e.target.value
-                });
-              }}
-              placeholder="e.g. us-gov-west-1 or me-central-1"
-              className="mt-1 font-mono"
-            />
-          )}
-        </div>
-      </div>
-
-      {/* SECTION 2: AUTHENTICATION & CREDENTIALS */}
-      <div className="border border-[var(--vscode-border)] rounded-md p-3 bg-[var(--vscode-card-bg)] flex flex-col gap-3">
-        <div className="flex items-center justify-between pb-1 border-b border-[var(--vscode-border-light)]">
-          <div className="flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-rose-400" />
-            <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">Authentication</span>
-          </div>
-          <InfoTooltip text="Choose how credentials are provided. For Google Cloud Dataflow, Secret Manager references are recommended to prevent credential leakage." />
-        </div>
-
-        {/* Auth Mode Radio Selector */}
-        <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--vscode-subcard-bg)] rounded border border-[var(--vscode-border)]">
-          <button
-            type="button"
-            onClick={() => {
-              const next = { ...properties, authMode: 'secretManager' };
-              delete next.awsAccessKey;
-              delete next.awsSecretKey;
-              onChange(next);
-            }}
-            className={`text-xs py-1.5 px-2 rounded font-medium transition-colors ${
-              authMode === 'secretManager'
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 shadow-sm'
-                : 'bg-[var(--vscode-button-secondary)] text-[var(--vscode-text-secondary)] border border-[var(--vscode-border)] hover:bg-[var(--vscode-hover)]'
-            }`}
-          >
-            Secret Manager
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const next = { ...properties, authMode: 'iam' };
-              delete next.awsAccessKey;
-              delete next.awsSecretKey;
-              onChange(next);
-            }}
-            className={`text-xs py-1.5 px-2 rounded font-medium transition-colors ${
-              authMode === 'iam'
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 shadow-sm'
-                : 'bg-[var(--vscode-button-secondary)] text-[var(--vscode-text-secondary)] border border-[var(--vscode-border)] hover:bg-[var(--vscode-hover)]'
-            }`}
-          >
-            IAM / Default
-          </button>
-        </div>
-
-        {/* Auth Mode: Secret Manager */}
-        {authMode === 'secretManager' && (
-          <div className="flex flex-col gap-2.5 pt-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-rose-400/90 flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                GCP Secret Manager (Live suggestions from gcloud)
-              </span>
-              <button
-                type="button"
-                onClick={secrets.refresh}
-                disabled={secrets.loading}
-                title="Refresh secrets from gcloud"
-                className="text-xs text-[var(--vscode-text-muted)] hover:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors"
-              >
-                <RefreshCw className={`w-3 h-3 ${secrets.loading ? 'animate-spin' : ''}`} />
-                <span>Refresh</span>
-              </button>
-            </div>
-
-            {/* Access Key Secret */}
-            <PropertyField
-              id="kinesisSinkAccessKeySecret"
-              name="accessKeySecretName"
-              label="AWS Access Key Secret Name"
-              tooltip="GCP Secret Manager secret resource name containing the AWS Access Key ID."
-              value={accessKeySecretName}
-              onChange={handleChange}
-              placeholder="e.g. aws-access-key-id"
-              list="kinesis-sink-secrets-list"
-              datalist={secrets.options}
-              loading={secrets.loading}
-              error={secrets.error}
-            />
-
-            {/* Secret Key Secret */}
-            <PropertyField
-              id="kinesisSinkSecretKeySecret"
-              name="secretKeySecretName"
-              label="AWS Secret Key Secret Name"
-              tooltip="GCP Secret Manager secret resource name containing the AWS Secret Access Key."
-              value={secretKeySecretName}
-              onChange={handleChange}
-              placeholder="e.g. aws-secret-access-key"
-              list="kinesis-sink-secrets-list"
-              datalist={secrets.options}
-              loading={secrets.loading}
-              error={secrets.error}
-            />
-          </div>
-        )}
-
-        {/* Auth Mode: IAM / Default */}
-        {authMode === 'iam' && (
-          <div className="flex flex-col gap-2 pt-1 text-xs text-[var(--vscode-text-secondary)]">
-            <p>
-              Uses AWS Default Credential Provider Chain (environment variables, EC2 instance profile, or EKS/GKE IRSA / Web Identity token).
-            </p>
-            <PropertyField
-              id="kinesisSinkRoleArn"
-              name="roleArn"
-              label="Assume Role ARN (Optional)"
-              tooltip="AWS IAM Role ARN to assume via STS for cross-account or fine-grained pipeline access."
-              value={roleArn}
-              onChange={handleChange}
-              placeholder="arn:aws:iam::123456789012:role/BeamKinesisRole"
-              containerClassName="flex flex-col gap-1 mt-1"
-            />
-          </div>
-        )}
-      </div>
-
-      {/* SECTION 3: PARTITIONING STRATEGY */}
-      <div className="border border-[var(--vscode-border)] rounded-md p-3 bg-[var(--vscode-card-bg)] flex flex-col gap-3">
-        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
-          <SplitSquareVertical className="w-4 h-4 text-rose-400" />
-          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">Partitioning Strategy</span>
-          <InfoTooltip text="Kinesis determines shard placement via partition keys. Choose how partition keys are extracted or generated." />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="partitionKeyMode" className="flex items-center text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-            <span>Partition Key Source</span>
-            <InfoTooltip text="Strategy used to determine partition key: upstream key-value pair, static fixed key, hash of payload, or custom expression." />
-          </label>
-          <select
-            id="partitionKeyMode"
-            name="partitionKeyMode"
-            value={partitionKeyMode}
-            onChange={handleChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm focus:outline-none focus:border-rose-500"
-          >
-            <option value="recordKey">Record Key - Use upstream KV pair key (element[0])</option>
-            <option value="static">Static Key - All records use fixed partition key</option>
-            <option value="hash">Payload Hash - Even distribution via SHA-256 / UUID</option>
-            <option value="custom">Custom Expression - Custom partition key lambda / function</option>
-          </select>
-        </div>
-
-        {partitionKeyMode === 'static' && (
-          <PropertyField
-            id="partitionKeyStatic"
-            name="partitionKey"
-            label="Static Partition Key Value"
-            tooltip="Constant string used as the partition key for all emitted records."
-            value={partitionKey}
-            onChange={handleChange}
-            placeholder="e.g. default-partition"
-          />
-        )}
-
-        {partitionKeyMode === 'custom' && (
-          <PropertyField
-            id="partitionKeyCustom"
-            name="partitionKey"
-            label="Partition Key Expression / Extractor"
-            tooltip="Code snippet or function reference to extract partition key from element."
-            value={partitionKey}
-            onChange={handleChange}
-            placeholder="e.g. record.getDeviceId() or lambda x: x['user_id']"
-          />
-        )}
-      </div>
-
-      {/* SECTION 4: DATA SERIALIZATION */}
-      <div className="border border-[var(--vscode-border)] rounded-md p-3 bg-[var(--vscode-card-bg)] flex flex-col gap-3">
-        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
-          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">Data Serialization</span>
-          <InfoTooltip text="How elements in the PCollection are converted into binary byte payloads for Kinesis PutRecords." />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="dataSerialization" className="flex items-center text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-            <span>Serialization Format</span>
-            <InfoTooltip text="Encoding applied to pipeline elements before writing to Amazon Kinesis." />
-          </label>
-          <select
-            id="dataSerialization"
-            name="dataSerialization"
-            value={dataSerialization}
-            onChange={handleChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm focus:outline-none focus:border-rose-500"
-          >
-            <option value="stringUtf8">String (UTF-8 Bytes)</option>
-            <option value="rawBytes">Raw Byte Array / Pass-through</option>
-            <option value="json">JSON String (json.dumps / Jackson)</option>
-          </select>
-        </div>
-      </div>
-
-      {/* SECTION 5: PRODUCER TUNING & BATCHING */}
-      <div className="border border-[var(--vscode-border)] rounded-md p-3 bg-[var(--vscode-card-bg)] flex flex-col gap-3">
-        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
-          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">Producer Configuration (KPL)</span>
-          <InfoTooltip text="Kinesis Producer Library settings for batching, record aggregation, and connection timeouts." />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {/* Collection Max Count */}
-          <PropertyField
-            id="collectionMaxCount"
-            type="number"
-            name="collectionMaxCount"
-            label="Max Batch Items"
-            tooltip="Maximum number of items collected into a single PutRecords call."
-            value={collectionMaxCount}
-            onChange={handleChange}
-            placeholder="e.g. 500"
-            min="1"
-          />
-
-          {/* Record Max Buffered Time */}
-          <PropertyField
-            id="recordMaxBufferedTime"
-            type="number"
-            name="recordMaxBufferedTime"
-            label="Max Buffer Time (ms)"
-            tooltip="Maximum duration to hold records before flushing batch to Kinesis."
-            value={recordMaxBufferedTime}
-            onChange={handleChange}
-            placeholder="e.g. 100"
-            min="0"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {/* Connect Timeout */}
-          <PropertyField
-            id="connectTimeout"
-            type="number"
-            name="connectTimeout"
-            label="Connect Timeout (ms)"
-            tooltip="TCP connection timeout in milliseconds."
-            value={connectTimeout}
-            onChange={handleChange}
-            placeholder="e.g. 6000"
-            min="0"
-          />
-
-          {/* Request Timeout */}
-          <PropertyField
-            id="requestTimeout"
-            type="number"
-            name="requestTimeout"
-            label="Request Timeout (ms)"
-            tooltip="HTTP request timeout in milliseconds for Kinesis API calls."
-            value={requestTimeout}
-            onChange={handleChange}
-            placeholder="e.g. 6000"
-            min="0"
-          />
-        </div>
-
-        {/* Custom Producer Properties Key/Value */}
         <PropertyField
-          id="producerProperties"
-          type="textarea"
-          name="producerProperties"
-          label="Additional Producer Properties (key=value)"
-          tooltip="Optional extra properties for the Kinesis Producer Library in key=value format."
-          value={producerProperties}
+          id="kinesisSinkPayloadColumn"
+          name="payloadColumn"
+          label="Payload Column"
+          required={isPayloadColumnRequired ? 'Payload Column is required.' : false}
+          tooltip="Source column containing the message body. If JSON mode is selected and this field is blank, all columns serialize to JSON."
+          value={payloadColumn}
           onChange={handleChange}
-          placeholder="RateLimit=150&#10;AggregationEnabled=true"
-          rows={2}
-          containerClassName="flex flex-col gap-1 pt-1"
+          placeholder={payloadFormat === 'json' ? 'Full row (optional)' : 'data'}
+          invalid={isPayloadColumnInvalid}
+          error={isPayloadColumnInvalid ? 'Payload Column is required.' : null}
+          mono={true}
         />
       </div>
 
-      {/* SECTION 6: ADVANCED & LOCAL ENDPOINTS */}
-      <div className="border border-[var(--vscode-border)] rounded-md p-3 bg-[var(--vscode-card-bg)] flex flex-col gap-3">
-        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
-          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">Advanced Settings</span>
-          <InfoTooltip text="Connection overrides for LocalStack or custom mock environments, certificate verification, and expansion service." />
-        </div>
-
-        {/* Service Endpoint */}
+      {/* PutRecords Batch Size and FailedRecordCount Retries */}
+      <div className="grid grid-cols-2 gap-3">
         <PropertyField
-          id="kinesisSinkServiceEndpoint"
-          name="serviceEndpoint"
-          label="Custom Service Endpoint"
-          tooltip="Custom endpoint URL for LocalStack, moto, or AWS VPC endpoint gateways (e.g. http://localhost:4566)."
-          value={serviceEndpoint}
+          id="kinesisSinkMaxBatchSize"
+          name="maxBatchSize"
+          label="Max Batch Records"
+          type="number"
+          min="1"
+          max="500"
+          tooltip="Maximum records sent per boto3 put_records call (1 to 500, AWS hard limit 500)."
+          value={maxBatchSize}
           onChange={handleChange}
-          placeholder="http://localhost:4566 (for LocalStack)"
+          placeholder="500"
+          invalid={isBatchSizeInvalid}
+          error={isBatchSizeInvalid ? 'Batch size must be between 1 and 500.' : null}
+          mono={true}
         />
 
-        {/* Expansion Service */}
         <PropertyField
-          id="kinesisSinkExpansionService"
-          name="expansionService"
-          label="Cross-Language Expansion Service (Optional)"
-          tooltip="Host and port of the Apache Beam Java expansion service used for cross-language KinesisIO in Python pipelines."
-          value={expansionService}
+          id="kinesisSinkMaxRetries"
+          name="maxRetries"
+          label="FailedRecord Retries"
+          type="number"
+          min="0"
+          max="20"
+          tooltip="Maximum exponential backoff retries for partial failures when FailedRecordCount exceeds zero."
+          value={maxRetries}
           onChange={handleChange}
-          placeholder="e.g. localhost:8097"
+          placeholder="5"
+          mono={true}
         />
-
-        {/* Verify Certificate */}
-        <div className="flex items-center gap-2 pt-1">
-          <input
-            id="kinesisSinkVerifyCert"
-            type="checkbox"
-            name="verifyCertificate"
-            checked={verifyCertificate}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-rose-500 focus:ring-0 cursor-pointer"
-          />
-          <label htmlFor="kinesisSinkVerifyCert" className="text-xs text-[var(--vscode-text-primary)] cursor-pointer">
-            Verify SSL Certificates
-          </label>
-          <InfoTooltip text="Enforce SSL verification for AWS endpoints. Keep checked for production environments." />
-        </div>
       </div>
 
-      {/* SECTION 7: CODE GENERATION INSTRUCTIONS */}
+      {/* AWS Credentials via Secret Manager */}
+      <div className="p-3 bg-[var(--vscode-subcard-bg)] rounded border border-[var(--vscode-border)] flex flex-col gap-3">
+        <div className="flex items-center gap-2 pb-1 border-b border-[var(--vscode-border-light)]">
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <span className="text-xs font-bold uppercase tracking-wide text-[var(--vscode-text-primary)]">
+            AWS Authentication
+          </span>
+        </div>
+
+        <SecretManagerAuthFields
+          idPrefix="kinesisSink"
+          datalistId="kinesis-sink-secrets-list"
+          authMode={authMode}
+          secretName={secretName}
+          serviceName="Amazon Kinesis"
+          secretPlaceholder="e.g. aws-kinesis-credentials"
+          onChange={handleChange}
+        />
+      </div>
+
+      {/* Advanced STS and Endpoint Settings */}
+      <CollapsibleSection
+        title="Advanced Kinesis Options"
+        icon={<Sliders className="w-4 h-4 text-emerald-400" />}
+        isOpen={isAdvancedOpen}
+        onToggle={() => setIsAdvancedOpen((prev) => !prev)}
+      >
+        <PropertyField
+          id="kinesisSinkRoleArn"
+          name="roleArn"
+          label="Assume Role ARN"
+          tooltip="Optional AWS IAM Role ARN assumed via STS before calling put_records."
+          value={roleArn}
+          onChange={handleChange}
+          placeholder="arn:aws:iam::123456789012:role/SparkKinesisSinkRole"
+          mono={true}
+        />
+
+        <PropertyField
+          id="kinesisSinkEndpointUrl"
+          name="endpointUrl"
+          label="Custom Endpoint URL"
+          tooltip="Optional custom VPC endpoint or LocalStack URL (for example http://localhost:4566)."
+          value={endpointUrl}
+          onChange={handleChange}
+          placeholder="https://kinesis.us-east-1.amazonaws.com"
+          mono={true}
+        />
+      </CollapsibleSection>
+
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="kinesisSinkSystemInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for Kinesis sink code generation (e.g. partition key hashing, retry policies, dead-letter routing)..."
-        wrapperClassName="flex flex-col gap-2 pt-2 border-t border-[var(--vscode-border-light)]"
-        onChange={(value) => onChange({ ...properties, system_instructions: value })}
+        tooltip="Custom instructions supplied to the AI code generator for this Kinesis sink node."
+        placeholder="Enter custom instructions for Kinesis sink code generation..."
+        onChange={(value) => {
+          const nextProperties: Record<string, unknown> = {
+            ...properties,
+            system_instructions: value,
+          };
+          delete nextProperties.awsAccessKey;
+          delete nextProperties.awsSecretKey;
+          onChange(nextProperties);
+        }}
       />
     </div>
   );
 };
+
+/** Alias matching the canonical Spark transform name `KinesisSink`. */
+export const KinesisSinkProperties = KinesisIOSinkProperties;

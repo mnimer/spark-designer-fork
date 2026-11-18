@@ -412,7 +412,7 @@ describe('getCodegenSkillCatalog', () => {
         expect(() => getCodegenSkillCatalog(root)).toThrow(/No code generation skills found/);
     });
 
-    it('loads all bundled Phase 2 core/runner skills and Phase 5 io-* source skills in resources/codegen-skills cleanly (G1-G10, SRC1-SRC38)', () => {
+    it('loads all bundled Phase 2 core/runner skills and Phase 5-6 io-* skills in resources/codegen-skills cleanly (G1-G10, SRC1-SRC38, SNK1-SNK37)', () => {
         const bundledRoot = path.join(__dirname, '..', '..', '..', '..', 'resources', 'codegen-skills');
         clearCodegenSkillCatalogCache();
         const catalog = getCodegenSkillCatalog(bundledRoot);
@@ -428,10 +428,13 @@ describe('getCodegenSkillCatalog', () => {
                 'core-python-datasource',
                 'core-streaming',
                 'verification-gate',
+                'io-console',
+                'io-memory',
+                'io-foreach-batch',
             ])
         );
         const ioSkills = catalog.all().filter((s) => s.kind === 'io');
-        expect(ioSkills.length).toBeGreaterThanOrEqual(38);
+        expect(ioSkills.length).toBeGreaterThanOrEqual(41);
         const common = catalog.all().find((s) => s.name === 'codegen-common')!;
         expect(common.kind).toBe('common');
         expect(common.body).toContain('def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataFrame]:');

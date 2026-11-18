@@ -1,46 +1,26 @@
 /**
- * IcebergIO Sink Properties Component
- * 
+ * @fileoverview IcebergSink (`IcebergIO`) Properties Component.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam Iceberg sink nodes.
- * Configures batch and streaming writes to Apache Iceberg tables across Cloud Storage (gs://),
- * Amazon S3 (s3://), HDFS (hdfs://), or local filesystems using various Iceberg catalogs.
- * 
+ * Renders the property configuration panel for Apache Spark `IcebergSink` (`IcebergIO`) nodes.
+ * Configures DataFrameWriterV2 (`df.writeTo(...).using("iceberg")`), SQL `MERGE INTO`, and
+ * Structured Streaming (`.writeStream.format("iceberg")`) writes across BigLake REST, REST,
+ * Hive, and Hadoop catalogs.
+ *
  * Architectural Decisions:
- * - Managed I/O Architecture: Beam accesses Iceberg through Managed I/O, not a bespoke IcebergIO class.
- *   In Java, this is invoked via `org.apache.beam.sdk.managed.Managed.write(Managed.ICEBERG)` with a
- *   configuration map; in Python, via `apache_beam.transforms.managed.Write(managed.ICEBERG, config=...)`.
- *   Config keys include `table` (fully-qualified `db.table`), `catalog_name`, `catalog_properties` (a map
- *   containing `type`, `warehouse`, `uri`), and `config_properties`. There is no standalone `IcebergIO.write()` class.
- * - Warehouse Location Autocomplete: Delegates the required warehouse location field to the shared
- *   StoragePathField primitive. Because Iceberg warehouses commonly live on Cloud Storage (`gs://`),
- *   GCS bucket discovery is active and provides datalist suggestions alongside always-visible discovery error alerting.
- * - Append-Only Semantics (NO Write Mode field): Beam's Managed Iceberg connector writes are
- *   **append-only**. Its config schema has no `write_mode` key, so `overwrite` and `upsert` are not
- *   reachable. This panel previously offered a Write Mode dropdown with all three; selecting
- *   "upsert" produced silent appends — duplicate rows where the user expected a merge. The field
- *   was removed rather than defaulted, because an inert control still communicates a choice.
- * - Automatic Table Creation (NO checkbox): the connector creates the target table from the
- *   incoming schema when it is missing, unconditionally. There is no `create_table_if_not_exists`
- *   key to bind, so the former checkbox could neither enable nor disable anything.
- * - Streaming Commit Cadence: Exposes `triggeringFrequencySeconds` for configuring commit intervals on streaming
- *   pipelines, explicitly documenting via tooltip and helper text that it only applies to streaming pipelines.
- *   This one IS real — it maps to the `triggering_frequency_seconds` config key.
- * - Conditional Catalog URI: The `catalogUri` property field is conditionally rendered only when `catalogType` is
- *   `rest` or `hive`.
- * - Shared Primitives Composition: Reuses shared primitives (StoragePathField, CollapsibleSection, SelectField,
- *   PropertyField, SecretManagerAuthFields) to eliminate code duplication and prevent UI drift.
- * - Credential Management: Integrates SecretManagerAuthFields to securely reference Google Cloud Secret Manager
- *   secrets for catalog or object storage authentication without hardcoding credentials in pipeline specifications.
- * - Design System & Theming: Strictly adheres to the 8pt grid system, VS Code theme tokens (`var(--vscode-*)`),
- *   and Tailwind utility classes without inline styles or raw slate color tokens.
- * - Controlled Component Pattern: Strictly controlled via `node` (props in) and `onChange` (events up).
+ * - Supports live BigLake Iceberg catalog discovery through `useAssetLoader('bigLakeCatalogs')`.
+ * - Exposes Spark 4.x Iceberg write operations (`append`, `createOrReplace`, `overwritePartitions`, `merge`).
+ * - Validates merge keys or explicit SQL `ON` conditions when `writeOperation` equals `'merge'`.
+ * - Exposes partition transform expressions, fanout writer toggle (`fanout-enabled`), and table properties.
+ * - Integrates `StoragePathField`, `SecretManagerAuthFields`, `CollapsibleSection`, and `SystemInstructionsField`.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { Sliders } from 'lucide-react';
+import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
@@ -55,76 +35,105 @@ import {
   type BigLakeCatalogOption,
 } from '../source/IcebergIO';
 
-/**
- * React Flow node shape for the Iceberg sink panel, including its persisted configuration data.
- */
+/** Supported Iceberg catalog integration types for Spark Iceberg table writes. */
+export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
+  { value: 'biglake', label: 'BigLake Metastore / Iceberg REST Catalog' },
+  { value: 'rest', label: 'REST Catalog' },
+  { value: 'hive', label: 'Hive Metastore (HMS)' },
+  { value: 'hadoop', label: 'Hadoop (Filesystem catalog)' },
+  { value: 'glue', label: 'AWS Glue Data Catalog' },
+  { value: 'nessie', label: 'Project Nessie Catalog' },
+  { value: 'bigquery', label: 'BigQuery Metastore' },
+];
+
+/** Write operation options for Spark 4.x IcebergSink. */
+export const ICEBERG_WRITE_OPERATION_OPTIONS: SelectFieldOption[] = [
+  { value: 'append', label: 'append (df.writeTo(...).append())' },
+  { value: 'createOrReplace', label: 'createOrReplace (df.writeTo(...).createOrReplace())' },
+  { value: 'overwritePartitions', label: 'overwritePartitions (Dynamic partition overwrite)' },
+  { value: 'merge', label: 'merge (SQL MERGE INTO upsert)' },
+];
+
+/** Write operation union type for IcebergSink. */
+export type IcebergWriteOperation =
+  | 'append'
+  | 'createOrReplace'
+  | 'overwritePartitions'
+  | 'merge';
+
+/** React Flow node shape for the IcebergSink panel. */
 export interface IcebergIOSinkNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      namespace?: string;
       table?: string;
       catalogName?: string;
       catalogType?: string;
+      warehouse?: string;
       warehouseLocation?: string;
       catalogUri?: string;
+      writeOperation?: IcebergWriteOperation;
+      mergeKeys?: string;
+      mergeCondition?: string;
       partitionFields?: string;
+      partitionSpec?: string;
+      fanoutEnabled?: boolean;
       tableProperties?: string;
-      triggeringFrequencySeconds?: string | number;
       authMode?: string;
       secretName?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
 
-/**
- * Props for the IcebergIOSinkProperties component.
- */
+/** Props for the {@link IcebergIOSinkProperties} component. */
 export interface IcebergIOSinkPropertiesProps {
   node: IcebergIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
-/** Supported Iceberg catalog integration types for Managed I/O table resolution */
-export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
-  { value: 'hadoop', label: 'Hadoop (Filesystem catalog)' },
-  { value: 'hive', label: 'Hive Metastore (HMS)' },
-  { value: 'rest', label: 'REST Catalog' },
-  { value: 'biglake', label: 'BigLake Metastore / Iceberg REST Catalog' },
-  { value: 'glue', label: 'AWS Glue Data Catalog' },
-  { value: 'nessie', label: 'Project Nessie Catalog' },
-  { value: 'bigquery', label: 'BigQuery Metastore' }
-];
-
-// NOTE: an exported ICEBERG_WRITE_MODES list (append / overwrite / upsert) lived here. Beam's
-// Managed Iceberg connector is append-only and exposes no `write_mode` config key, so two of the
-// three options silently degraded to append. Removed rather than trimmed to a single option: a
-// one-choice dropdown still implies a decision the connector does not offer.
-
 /**
- * IcebergIOSinkProperties component renders configuration fields for Beam Managed I/O Iceberg writes.
+ * Renders configuration fields for Apache Spark 4.x `IcebergSink` writes.
+ *
+ * @param props Component properties containing the active node data and onChange callback.
+ * @returns React element for the Iceberg sink panel.
  */
 export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = ({ node, onChange }) => {
-  const properties = node.data.properties || {};
-  const table = properties.table || '';
-  const catalogName = properties.catalogName || '';
-  const catalogType = properties.catalogType || 'hadoop';
-  const warehouseLocation = properties.warehouseLocation || '';
-  const catalogUri = properties.catalogUri || '';
-  const partitionFields = properties.partitionFields || '';
-  const tableProperties = properties.tableProperties || '';
-  const triggeringFrequencySeconds = properties.triggeringFrequencySeconds ?? '';
-  const authMode = properties.authMode || 'default';
-  const secretName = properties.secretName || '';
+  const properties = node.data?.properties || {};
+  const namespace = typeof properties.namespace === 'string' ? properties.namespace : '';
+  const table = typeof properties.table === 'string' ? properties.table : '';
+  const catalogName = typeof properties.catalogName === 'string' ? properties.catalogName : '';
+  const catalogType = typeof properties.catalogType === 'string' ? properties.catalogType : 'biglake';
+  const warehouseLocation =
+    typeof properties.warehouseLocation === 'string'
+      ? properties.warehouseLocation
+      : typeof properties.warehouse === 'string'
+        ? properties.warehouse
+        : '';
+  const catalogUri = typeof properties.catalogUri === 'string' ? properties.catalogUri : '';
+  const writeOperation: IcebergWriteOperation = properties.writeOperation || 'append';
+  const mergeKeys = typeof properties.mergeKeys === 'string' ? properties.mergeKeys : '';
+  const mergeCondition = typeof properties.mergeCondition === 'string' ? properties.mergeCondition : '';
+  const partitionFields =
+    typeof properties.partitionFields === 'string'
+      ? properties.partitionFields
+      : typeof properties.partitionSpec === 'string'
+        ? properties.partitionSpec
+        : '';
+  const fanoutEnabled = Boolean(properties.fanoutEnabled ?? false);
+  const tableProperties = typeof properties.tableProperties === 'string' ? properties.tableProperties : '';
+  const authMode = typeof properties.authMode === 'string' ? properties.authMode : 'default';
+  const secretName = typeof properties.secretName === 'string' ? properties.secretName : '';
 
   const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
 
-  // D3: Request BigLake Iceberg catalogs via useAssetLoader for datalist autocompletion
+  // Request BigLake Iceberg catalogs from the extension host for datalist autocomplete.
   const {
     items: rawCatalogs,
     loading: catalogsLoading,
@@ -132,32 +141,54 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
   } = useAssetLoader<string | BigLakeCatalogOption>('bigLakeCatalogs');
   const catalogOptions = normalizeBigLakeCatalogOptions(rawCatalogs);
 
-  // Validation: table and warehouseLocation are required to write to the Iceberg table.
   const isTableInvalid = !table.trim();
-  // NOTE: mirrors StoragePathField's own validation rule; used here to gate helper text.
   const isWarehouseLocationInvalid = !warehouseLocation.trim();
+  const isMergeMissingCriteria =
+    writeOperation === 'merge' && !mergeKeys.trim() && !mergeCondition.trim();
 
-  // Conditional render: catalogUri is required only for REST and Hive metastore catalogs
-  const showCatalogUri = catalogType === 'rest' || catalogType === 'hive';
+  const showCatalogUri =
+    catalogType === 'biglake' || catalogType === 'rest' || catalogType === 'hive';
 
-  // System instructions text with fallback hierarchy
   const systemInstructions = resolveSystemInstructions(node);
 
   /**
-   * Handles generic input and select changes for form fields.
-   * NOTE: this panel renders no checkbox inputs, so no boolean coercion branch is needed here.
+   * Updates node properties in response to input, select, checkbox, or textarea events.
+   *
+   * @param e Form change event from a controlled control.
    */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value, type } = e.target;
+    const isCheckbox = type === 'checkbox';
+    const nextValue = isCheckbox ? (e.target as HTMLInputElement).checked : value;
+
+    if (name === 'warehouseLocation' || name === 'warehouse') {
+      onChange({
+        ...properties,
+        warehouse: nextValue,
+        warehouseLocation: nextValue,
+      });
+      return;
+    }
+
+    if (name === 'partitionFields') {
+      onChange({
+        ...properties,
+        partitionFields: nextValue,
+        partitionSpec: nextValue,
+      });
+      return;
+    }
 
     onChange({
       ...properties,
-      [name]: value
+      [name]: nextValue,
     });
   };
 
   /**
-   * Toggles the table write tuning accordion state
+   * Toggles the advanced Iceberg table and writer accordion.
    */
   const handleToggleAdvanced = () => {
     setIsAdvancedOpen((prev) => !prev);
@@ -165,46 +196,109 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Table Identifier Input */}
-      <PropertyField
-        id="icebergSinkTable"
-        name="table"
-        label="Table Identifier"
-        required="Table is required."
-        tooltip="Fully-qualified Iceberg target table identifier (e.g. db.table). Required."
-        aria-required="true"
-        aria-invalid={isTableInvalid}
-        value={table}
+      {/* Write Operation Selector */}
+      <SelectField
+        id="icebergSinkWriteOperation"
+        name="writeOperation"
+        label="Write Operation"
+        tooltip="Select the Spark DataFrameWriterV2 operation (append, createOrReplace, overwritePartitions) or SQL MERGE INTO upsert."
+        value={writeOperation}
+        options={ICEBERG_WRITE_OPERATION_OPTIONS}
         onChange={handleChange}
-        placeholder="db.table"
-        invalid={isTableInvalid}
-        error={isTableInvalid ? 'Table is required.' : null}
-        mono={true}
-        helperText={
-          !isTableInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Fully-qualified target database and table name in the Iceberg catalog.
-            </span>
-          ) : null
-        }
       />
 
-      {/* Catalog Name Input */}
+      {/* Merge Keys and SQL Condition (Visible when writeOperation is merge) */}
+      {writeOperation === 'merge' && (
+        <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+          <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)] flex items-center gap-1.5">
+            <span>MERGE INTO Upsert Configuration</span>
+            <InfoTooltip text="Configure primary key columns or an explicit SQL ON predicate for MERGE INTO target USING source." />
+          </span>
+
+          <PropertyField
+            id="icebergSinkMergeKeys"
+            name="mergeKeys"
+            label="Merge Key Columns"
+            tooltip="Comma-separated key columns matched between target and source tables (for example order_id, tenant_id)."
+            value={mergeKeys}
+            onChange={handleChange}
+            placeholder="order_id, tenant_id"
+            invalid={isMergeMissingCriteria}
+            mono={true}
+          />
+
+          <PropertyField
+            id="icebergSinkMergeCondition"
+            name="mergeCondition"
+            label="Custom Merge ON Condition (Optional)"
+            tooltip="Optional SQL ON predicate overriding Merge Key Columns (for example target.order_id = source.order_id AND target.dt = source.dt)."
+            value={mergeCondition}
+            onChange={handleChange}
+            placeholder="target.order_id = source.order_id"
+            invalid={isMergeMissingCriteria}
+            error={
+              isMergeMissingCriteria
+                ? 'Provide Merge Key Columns or a Custom Merge ON Condition when Write Operation is merge.'
+                : null
+            }
+            mono={true}
+          />
+        </div>
+      )}
+
+      {/* Namespace and Table Identifier */}
+      <div className="grid grid-cols-2 gap-3">
+        <PropertyField
+          id="icebergSinkNamespace"
+          name="namespace"
+          label="Namespace / Database"
+          tooltip="Optional Iceberg namespace or database name (for example analytics). You can also enter a qualified name in Table Identifier."
+          value={namespace}
+          onChange={handleChange}
+          placeholder="analytics"
+          mono={true}
+        />
+
+        <PropertyField
+          id="icebergSinkTable"
+          name="table"
+          label="Table Identifier"
+          required="Table is required."
+          tooltip="Target Iceberg table identifier (for example db.table or catalog.db.table). Required."
+          aria-required="true"
+          aria-invalid={isTableInvalid}
+          value={table}
+          onChange={handleChange}
+          placeholder="db.table"
+          invalid={isTableInvalid}
+          error={isTableInvalid ? 'Table is required.' : null}
+          mono={true}
+          helperText={
+            !isTableInvalid ? (
+              <span className="text-xs text-[var(--vscode-text-muted)]">
+                Target database and table name in the Iceberg catalog.
+              </span>
+            ) : null
+          }
+        />
+      </div>
+
+      {/* Catalog Name & Type */}
       <PropertyField
         id="icebergSinkCatalogName"
         name="catalogName"
         label="Catalog Name"
-        tooltip="Name of the Iceberg catalog instance (e.g. lakehouse, default, or prod_catalog)."
+        tooltip="Spark Iceberg catalog name configured under spark.sql.catalog.<catalogName> (for example biglake or lakehouse)."
         value={catalogName}
         onChange={handleChange}
-        placeholder="lakehouse"
+        placeholder="biglake"
         list="iceberg-sink-catalogs-list"
         datalist={catalogOptions}
         loading={catalogsLoading}
         mono={true}
         helperText={
           <span className="text-[11px] text-[var(--vscode-text-muted)]">
-            Logical catalog name passed in Managed I/O configuration (<code>catalog_name</code>).
+            Logical catalog name configured under <code>spark.sql.catalog.&lt;catalogName&gt;</code>.
           </span>
         }
       />
@@ -214,18 +308,17 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
         </span>
       )}
 
-      {/* Catalog Type Select */}
       <SelectField
         id="icebergSinkCatalogType"
         name="catalogType"
         label="Catalog Type"
-        tooltip="Iceberg catalog implementation type (hadoop, hive, rest, glue, nessie, bigquery)."
+        tooltip="Iceberg catalog implementation type (biglake, rest, hive, hadoop, glue, nessie, or bigquery)."
         value={catalogType}
         options={ICEBERG_CATALOG_TYPES}
         onChange={handleChange}
         helperText={
           <span>
-            Catalog implementation type configuring table metadata lookup. Defaults to <code>hadoop</code>.
+            Catalog implementation configuring table metadata lookup. Defaults to <code>biglake</code>.
           </span>
         }
       />
@@ -235,7 +328,7 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
         id="icebergSinkWarehouseLocation"
         name="warehouseLocation"
         label="Warehouse Location"
-        tooltip="Base storage path for Iceberg metadata and data files (e.g. gs://lakehouse/iceberg/warehouse). Required."
+        tooltip="Base storage path for Iceberg metadata and data files (for example gs://lakehouse/iceberg/warehouse). Required."
         value={warehouseLocation}
         onChange={handleChange}
         placeholder="gs://lakehouse/iceberg/warehouse"
@@ -249,97 +342,86 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
         }
       />
 
-      {/* Conditional Catalog URI (Shown for REST and Hive metastore catalogs) */}
+      {/* Conditional Catalog URI */}
       {showCatalogUri && (
         <PropertyField
           id="icebergSinkCatalogUri"
           name="catalogUri"
           label="Catalog URI"
-          tooltip="Endpoint URI for the Iceberg REST catalog or Hive Metastore (e.g. http://rest-catalog:8181 or thrift://metastore:9083)."
+          tooltip="Endpoint URI for the BigLake REST catalog, Iceberg REST catalog, or Hive Metastore."
           value={catalogUri}
           onChange={handleChange}
-          placeholder={catalogType === 'hive' ? 'thrift://metastore:9083' : 'http://rest-catalog:8181'}
+          placeholder={
+            catalogType === 'hive'
+              ? 'thrift://metastore:9083'
+              : catalogType === 'biglake'
+                ? 'https://biglake.googleapis.com/iceberg/v1beta/restcatalog'
+                : 'http://rest-catalog:8181'
+          }
           mono={true}
           helperText={
             <span className="text-[11px] text-[var(--vscode-text-muted)]">
               {catalogType === 'hive'
                 ? 'Thrift URI for Hive Metastore (HMS).'
-                : 'HTTP/HTTPS endpoint for Iceberg REST Catalog server.'}
+                : 'HTTP or HTTPS endpoint for the Iceberg REST Catalog server.'}
             </span>
           }
         />
       )}
 
-      {/* Partition Fields */}
+      {/* Partition Specs & Fanout Writer */}
       <PropertyField
         id="icebergSinkPartitionFields"
         name="partitionFields"
-        label="Partition Fields"
-        tooltip="Comma-separated list of table partition fields (e.g. date, region, hour(event_time))."
+        label="Partition Specs"
+        tooltip="Comma-separated partition columns or Iceberg hidden partition transforms (for example days(event_time), region, bucket(16, user_id))."
         value={partitionFields}
         onChange={handleChange}
-        placeholder="date, category, region"
+        placeholder="days(event_time), region"
         mono={true}
         helperText={
           <span className="text-[11px] text-[var(--vscode-text-muted)]">
-            Comma-separated partition fields or transform expressions (e.g. <code>date, region, hour(event_time)</code>).
+            Comma-separated partition fields or transform expressions (for example <code>days(event_time), region</code>).
           </span>
         }
       />
 
-      {/* Table Write Options Accordion */}
+      <label htmlFor="icebergSinkFanoutEnabled" className="flex items-center gap-2 cursor-pointer">
+        <input
+          id="icebergSinkFanoutEnabled"
+          type="checkbox"
+          name="fanoutEnabled"
+          checked={fanoutEnabled}
+          onChange={handleChange}
+          className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-0 focus:ring-offset-0 bg-[#252836]"
+        />
+        <div className="flex items-center">
+          <span className="text-sm font-medium text-slate-300">Enable Fanout Writer (fanout-enabled)</span>
+          <InfoTooltip text="Enable option fanout-enabled=true so streaming and unsorted batch partitions write open file handles without requiring a pre-write sort." />
+        </div>
+      </label>
+
+      {/* Table & Write Options Accordion */}
       <CollapsibleSection
         title="Table & Write Options"
         icon={<Sliders className="w-4 h-4 text-emerald-400" />}
         isOpen={isAdvancedOpen}
         onToggle={handleToggleAdvanced}
       >
-        {/*
-          Replaces the former "Create Table If Not Exists" checkbox and "Write Mode" dropdown.
-          Managed Iceberg creates a missing table from the incoming schema unconditionally and
-          every write appends; neither behaviour has a config key, so a control here would imply
-          a choice the connector does not offer. Stated explicitly so the absence of the fields
-          reads as a documented constraint rather than an oversight.
-        */}
-        <p className="text-[11px] text-[var(--vscode-text-muted)] mt-1">
-          Writes are <strong>append-only</strong>, and a missing table is created automatically from
-          the incoming schema. Neither behaviour is configurable through Beam.
-        </p>
-
-        {/* Triggering Frequency Seconds (Streaming Commit Cadence) */}
-        <PropertyField
-          id="icebergSinkTriggeringFrequencySeconds"
-          type="number"
-          name="triggeringFrequencySeconds"
-          label="Triggering Frequency (Seconds)"
-          tooltip="Commit cadence in seconds for streaming writes (e.g. 60). Applies to streaming writes only; ignored in batch mode."
-          value={triggeringFrequencySeconds}
-          onChange={handleChange}
-          placeholder="60"
-          min="1"
-          mono={true}
-          helperText={
-            <span className="text-[11px] text-[var(--vscode-text-muted)]">
-              Commit cadence for streaming writes only (e.g. 60s). Ignored for batch execution.
-            </span>
-          }
-        />
-
-        {/* Table Properties Textarea */}
         <PropertyField
           id="icebergSinkTableProperties"
           type="textarea"
           name="tableProperties"
           label="Table Properties"
-          tooltip="Key=value pairs (one per line) specifying Iceberg table write and format properties (e.g. write.format.default=parquet, commit.retry.num-retries=4)."
+          tooltip="Key=value pairs (one per line) specifying Iceberg table write and format properties (for example write.format.default=parquet)."
           value={tableProperties}
           onChange={handleChange}
-          placeholder="write.format.default=parquet&#10;commit.retry.num-retries=4"
+          placeholder={'write.format.default=parquet\nwrite.parquet.compression-codec=zstd'}
           rows={3}
           mono={true}
           helperText={
             <span className="text-[11px] text-[var(--vscode-text-muted)]">
-              Iceberg table and writer configuration properties (key=value per line).
+              Iceberg table and writer configuration properties (one key=value pair per line).
             </span>
           }
         />
@@ -359,9 +441,9 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
       <SystemInstructionsField
         id="icebergSinkInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline sink code for this Iceberg writer step via Managed I/O."
-        placeholder="e.g. Write PCollection<Row> to Iceberg table in append mode, partitioned by date."
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
+        tooltip="Custom instructions provided directly to Gemini when generating PySpark code for this Iceberg sink node."
+        placeholder="e.g. Deduplicate incoming batch rows on order_id before running MERGE INTO."
+        helperText="Additional guidance appended to the prompt when synthesizing PySpark code."
         textareaClassName="h-24"
         wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
         onChange={(value) => onChange({ ...properties, system_instructions: value })}
@@ -369,3 +451,6 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
     </div>
   );
 };
+
+/** Alias matching the canonical Spark transform name `IcebergSink`. */
+export const IcebergSinkProperties = IcebergIOSinkProperties;

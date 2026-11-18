@@ -1,227 +1,40 @@
 /**
- * MongoDbIOSinkProperties Component
+ * @fileoverview MongoDB Sink Properties Component (SNK29).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam MongoDbIO Write Sink nodes.
- * Maps to Java SDK `MongoDbIO.write()` and Python SDK native `WriteToMongoDB`.
+ * Renders the property configuration panel for Apache Spark 4.x MongoDB Sink nodes
+ * (.write.format("mongodb") and .writeStream.format("mongodb") via mongo-spark-connector v10.4+).
  *
  * Architectural Decisions:
- * - Controlled input architecture with props in / events up pattern.
- * - Real-time validation for required connection URI, database, and collection fields.
- * - URI format validation providing a warning helper text when not starting with "mongodb".
- * - Write mode toggle between insert and upsert; enforces key field requirement when upsert is active.
- * - Batch size, ordered write toggle, and write concern select mapped to Beam SDK options.
- * - Dynamic discovery: Requests GCP Secret Manager secrets from the extension host via `getSecrets` IPC.
- * - Unique datalist id `mongodb-sink-secret-options` to prevent collision across panels.
- * - Collapsible Advanced Sink Settings decomposed into local presentational sub-component with semantic toggle event callback.
- * - Preserves system_instructions / special_instructions for LLM code generation.
- * - Strictly adheres to 8pt grid system (p-2, p-3, gap-2, gap-3, gap-4) and Tailwind CSS with VS Code tokens.
+ * - Supports batch save modes ('append' | 'overwrite') and native Structured Streaming writes.
+ * - Configures database, collection, operationType ('insert' | 'replace' | 'update'),
+ *   idFieldList, upsertDocument, maxBatchSize, ordered, and writeConcern.
+ * - Uses SecretManagerAuthFields to resolve connection.uri from Google Cloud Secret Manager.
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import {
+  SecretManagerAuthFields,
+  type AuthModeOption,
+  type SecretItem,
+} from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 
-/**
- * Secret item interface for normalized Secret Manager secrets.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
+export type MongoOperationType = 'insert' | 'replace' | 'update';
+export type MongoSaveMode = 'append' | 'overwrite';
 
-/**
- * Props for the MongoDbSinkAuthSection sub-component.
- */
-interface MongoDbSinkAuthSectionProps {
-  authMode: 'uri_embedded' | 'secret_manager';
-  usernameSecret: string;
-  passwordSecret: string;
-  secrets: SecretItem[];
-  secretError: string | null;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
+const MONGO_SINK_AUTH_OPTIONS: AuthModeOption[] = [
+  { value: 'secretManager', label: 'Google Cloud Secret Manager (connection.uri Secret)' },
+  { value: 'default', label: 'Custom / Local Connection URI' },
+];
 
-/**
- * Presentational component for sink authentication configuration.
- *
- * @param props Sub-component properties
- */
-const MongoDbSinkAuthSection: React.FC<MongoDbSinkAuthSectionProps> = ({
-  authMode,
-  usernameSecret,
-  passwordSecret,
-  secrets,
-  secretError,
-  onChange
-}) => {
-  return (
-    <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-      <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        <span>Authentication</span>
-        <InfoTooltip text="Choose how credentials are provided to the MongoDB cluster. Using Secret Manager avoids committing credentials into pipeline code." />
-      </label>
-      <div className="flex flex-col gap-2 mt-1">
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            type="radio"
-            name="authMode"
-            value="uri_embedded"
-            checked={authMode === 'uri_embedded'}
-            onChange={onChange}
-            className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-          />
-          <span>None (Unauthenticated)</span>
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            type="radio"
-            name="authMode"
-            value="secret_manager"
-            checked={authMode === 'secret_manager'}
-            onChange={onChange}
-            className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-          />
-          <span>GCP Secret Manager</span>
-        </label>
-      </div>
-
-      {authMode === 'secret_manager' && (
-        <div className="flex flex-col gap-3 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
-          <PropertyField
-            id="mongoSinkUsernameSecret"
-            name="usernameSecret"
-            label="Username Secret"
-            value={usernameSecret}
-            onChange={onChange}
-            list="mongodb-sink-secret-options"
-            datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-            placeholder="e.g. mongodb-username"
-            tooltip="GCP Secret Manager secret containing the MongoDB username."
-            error={secretError}
-            invalid={!!secretError}
-            mono={true}
-          />
-          <PropertyField
-            id="mongoSinkPasswordSecret"
-            name="passwordSecret"
-            label="Password Secret"
-            value={passwordSecret}
-            onChange={onChange}
-            list="mongodb-sink-secret-options"
-            datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-            placeholder="e.g. mongodb-password"
-            tooltip="GCP Secret Manager secret containing the MongoDB password."
-            invalid={!!secretError}
-            mono={true}
-          />
-        </div>
-      )}
-    </div>
-  );
-};
-
-/**
- * Props for the MongoDbSinkAdvancedSection sub-component.
- */
-interface MongoDbSinkAdvancedSectionProps {
-  showAdvanced: boolean;
-  /** Emitted when the user toggles the advanced drawer. */
-  onToggleAdvanced: () => void;
-  sslEnabled: boolean;
-  sslInvalidHostNameAllowed: boolean;
-  retryWrites: boolean;
-  maxConnectionIdleTime: number | string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
-}
-
-/**
- * Presentational component for collapsible Advanced Sink Settings.
- *
- * @param props Sub-component properties
- */
-const MongoDbSinkAdvancedSection: React.FC<MongoDbSinkAdvancedSectionProps> = ({
-  showAdvanced,
-  onToggleAdvanced,
-  sslEnabled,
-  sslInvalidHostNameAllowed,
-  retryWrites,
-  maxConnectionIdleTime,
-  onChange
-}) => {
-  return (
-    <CollapsibleSection
-      title="Advanced Sink Settings"
-      isOpen={showAdvanced}
-      onToggle={onToggleAdvanced}
-    >
-      {/* SSL Options */}
-      <div className="flex flex-col gap-2">
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            id="mongoSinkSslEnabled"
-            type="checkbox"
-            name="sslEnabled"
-            checked={sslEnabled}
-            onChange={onChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
-          />
-          <span>SSL / TLS Enabled</span>
-          <InfoTooltip text="Enables SSL/TLS encrypted connection to MongoDB cluster." />
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            id="mongoSinkSslInvalidHostNameAllowed"
-            type="checkbox"
-            name="sslInvalidHostNameAllowed"
-            checked={sslInvalidHostNameAllowed}
-            onChange={onChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
-          />
-          <span>Allow Invalid Hostname</span>
-          <InfoTooltip text="Configures whether invalid hostnames are allowed in SSL connections (Java: withSslInvalidHostNameAllowed)." />
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-          <input
-            id="mongoSinkRetryWrites"
-            type="checkbox"
-            name="retryWrites"
-            checked={retryWrites}
-            onChange={onChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
-          />
-          <span>Retry Writes</span>
-          <InfoTooltip text="Configures driver automatic retry of failed write operations (specified in connection URI: retryWrites=true)." />
-        </label>
-      </div>
-
-      {/* Max Connection Idle Time */}
-      <PropertyField
-        id="mongoSinkMaxConnectionIdleTime"
-        name="maxConnectionIdleTime"
-        label="Max Connection Idle Time (ms)"
-        type="number"
-        value={maxConnectionIdleTime}
-        onChange={onChange}
-        placeholder="0 (Unlimited)"
-        min={0}
-        tooltip="Maximum idle time of a pooled connection in milliseconds before it is closed (withMaxConnectionIdleTime)."
-      />
-    </CollapsibleSection>
-  );
-};
-
-/**
- * Component props interface for MongoDbIOSinkProperties.
- */
+/** Props for the {@link MongoDbIOSinkProperties} component. */
 export interface MongoDbIOSinkPropertiesProps {
   node: {
     data: {
@@ -230,224 +43,278 @@ export interface MongoDbIOSinkPropertiesProps {
       system_instructions?: string;
       special_instructions?: string;
       properties?: {
-        uri?: string;
         database?: string;
         collection?: string;
-        writeMode?: 'insert' | 'upsert';
+        saveMode?: MongoSaveMode | string;
+        operationType?: MongoOperationType | string;
+        writeMode?: string;
+        idFieldList?: string;
         keyFields?: string;
+        upsertDocument?: boolean;
+        maxBatchSize?: number | string;
         batchSize?: number | string;
         ordered?: boolean;
         writeConcern?: string;
-        authMode?: 'uri_embedded' | 'secret_manager';
-        usernameSecret?: string;
-        passwordSecret?: string;
-        sslEnabled?: boolean;
-        sslInvalidHostNameAllowed?: boolean;
-        maxConnectionIdleTime?: number | string;
-        retryWrites?: boolean;
+        authMode?: string;
+        secretName?: string;
+        uri?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * MongoDbIOSinkProperties renders the configuration panel for writing to MongoDB.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Resolves the normalized MongoDB Spark Connector v10+ operationType from current or legacy properties.
+ */
+function resolveOperationType(properties: Record<string, unknown>): MongoOperationType {
+  const rawOp = properties.operationType;
+  if (rawOp === 'insert' || rawOp === 'replace' || rawOp === 'update') {
+    return rawOp;
+  }
+  if (properties.writeMode === 'upsert') {
+    return 'replace';
+  }
+  return 'insert';
+}
+
+/**
+ * Configures properties for Apache Spark 4.x MongoDB batch and streaming sink nodes (.format("mongodb")).
  */
 export const MongoDbIOSinkProperties: React.FC<MongoDbIOSinkPropertiesProps> = ({
   node,
-  onChange
+  onChange,
 }) => {
-  const properties = node.data.properties || {};
+  const properties = (node?.data?.properties ?? {}) as Record<string, unknown>;
 
-  // Form field state extracted from node properties
-  const uri = properties.uri || '';
-  const database = properties.database || '';
-  const collection = properties.collection || '';
-  const writeMode = properties.writeMode || 'insert';
-  const keyFields = properties.keyFields || '';
-  const batchSize = properties.batchSize ?? '';
-  const ordered = properties.ordered ?? true;
-  const writeConcern = properties.writeConcern || 'W1';
-  const authMode = properties.authMode || 'uri_embedded';
-  const usernameSecret = properties.usernameSecret || '';
-  const passwordSecret = properties.passwordSecret || '';
-  const sslEnabled = properties.sslEnabled ?? false;
-  const sslInvalidHostNameAllowed = properties.sslInvalidHostNameAllowed ?? false;
-  const maxConnectionIdleTime = properties.maxConnectionIdleTime ?? '';
-  const retryWrites = properties.retryWrites ?? false;
+  const database = typeof properties.database === 'string' ? properties.database : '';
+  const collection = typeof properties.collection === 'string' ? properties.collection : '';
+  const saveMode: MongoSaveMode = properties.saveMode === 'overwrite' ? 'overwrite' : 'append';
+  const operationType = resolveOperationType(properties);
+  const idFieldList =
+    typeof properties.idFieldList === 'string'
+      ? properties.idFieldList
+      : typeof properties.keyFields === 'string'
+        ? properties.keyFields
+        : '';
+  const upsertDocument =
+    typeof properties.upsertDocument === 'boolean' ? properties.upsertDocument : true;
+  const rawBatchSize = properties.maxBatchSize ?? properties.batchSize;
+  const maxBatchSize =
+    typeof rawBatchSize === 'number' || typeof rawBatchSize === 'string' ? rawBatchSize : '';
+  const ordered = typeof properties.ordered === 'boolean' ? properties.ordered : true;
+  const writeConcern =
+    typeof properties.writeConcern === 'string' && properties.writeConcern.length > 0
+      ? properties.writeConcern
+      : 'majority';
+  const authMode =
+    typeof properties.authMode === 'string' && properties.authMode.length > 0
+      ? properties.authMode
+      : 'secretManager';
+  const secretName = typeof properties.secretName === 'string' ? properties.secretName : '';
+  const uri = typeof properties.uri === 'string' ? properties.uri : '';
 
-  // Local state for dynamically loaded secrets and accordion toggle
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
-  const isUriEmpty = !uri.trim();
-  const isUriInvalid = uri.trim().length > 0 && !uri.trim().startsWith('mongodb');
   const isDatabaseEmpty = !database.trim();
   const isCollectionEmpty = !collection.trim();
-  const isKeyFieldsEmpty = writeMode === 'upsert' && !keyFields.trim();
+  const requiresIdFields = operationType === 'replace' || operationType === 'update';
+  const isIdFieldListEmpty = requiresIdFields && !idFieldList.trim();
+  const isUriMissingScheme =
+    authMode !== 'secretManager' &&
+    uri.trim().length > 0 &&
+    !uri.trim().startsWith('mongodb://') &&
+    !uri.trim().startsWith('mongodb+srv://');
 
-  // Fallback chain for system instructions
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    // NOTE: Keep controlled state intact and bubble changes upwards
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, number, select, and checkbox input changes.
-   *
-   * @param e Standard React change event
-   */
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    if (name === 'operationType') {
+      delete next.writeMode;
     }
+    if (name === 'idFieldList') {
+      delete next.keyFields;
+    }
+    if (name === 'maxBatchSize') {
+      delete next.batchSize;
+    }
+    onChange(next);
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* MongoDB Connection URI Input */}
-      <PropertyField
-        id="mongoSinkUri"
-        name="uri"
-        label="Connection URI"
-        required="Connection URI is required"
-        tooltip="MongoDB connection URI (e.g. mongodb://localhost:27017 or mongodb+srv://cluster.example.com). In Java: MongoDbIO.write().withUri(). In Python: WriteToMongoDB(uri=...)."
-        value={uri}
-        invalid={isUriEmpty}
-        error={isUriEmpty ? 'Connection URI is required' : null}
-        helperText={
-          !isUriEmpty && isUriInvalid ? (
-            <span className="text-amber-400" role="alert">
-              Warning: MongoDB connection URI should start with &quot;mongodb://&quot; or &quot;mongodb+srv://&quot;
-            </span>
-          ) : null
-        }
-        placeholder="mongodb://localhost:27017 or mongodb+srv://cluster.example.com"
-        onChange={handleChange}
-        mono={true}
-      />
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark MongoDB Connector v10+</span>
+        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[11px]">
+          .format(&quot;mongodb&quot;) · NATIVE
+        </span>
+      </div>
 
-      {/* Database & Collection Names */}
+      {/* Database & Collection */}
       <div className="grid grid-cols-2 gap-2">
         <PropertyField
           id="mongoSinkDatabase"
           name="database"
-          label="Database Name"
+          label="Database"
           required="Database name is required"
-          tooltip="Target MongoDB database name. In Java: withDatabase(database). In Python: db=..."
+          tooltip="Target MongoDB database name (.option('database', ...))."
           value={database}
           invalid={isDatabaseEmpty}
           error={isDatabaseEmpty ? 'Database name is required' : null}
-          placeholder="e.g. analytics"
+          placeholder="analytics"
           onChange={handleChange}
           mono={true}
         />
         <PropertyField
           id="mongoSinkCollection"
           name="collection"
-          label="Collection Name"
+          label="Collection"
           required="Collection name is required"
-          tooltip="Target MongoDB collection name. In Java: withCollection(collection). In Python: coll=..."
+          tooltip="Target MongoDB collection name (.option('collection', ...))."
           value={collection}
           invalid={isCollectionEmpty}
           error={isCollectionEmpty ? 'Collection name is required' : null}
-          placeholder="e.g. aggregated_metrics"
+          placeholder="aggregated_metrics"
           onChange={handleChange}
           mono={true}
         />
       </div>
 
-      {/* Write Mode & Upsert Key Fields */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Write Mode</span>
-          <InfoTooltip text="Choose insert mode for standard document appends or update-or-insert mode." />
-        </label>
-        <div className="flex flex-col gap-2 mt-1">
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="writeMode"
-              value="insert"
-              checked={writeMode === 'insert'}
+      {/* Save Mode & Operation Type */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="mongoSinkSaveMode"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Batch Save Mode</span>
+              <InfoTooltip text="Spark batch DataFrameWriter save mode. Streaming writes use the query outputMode." />
+            </label>
+            <select
+              id="mongoSinkSaveMode"
+              name="saveMode"
+              value={saveMode}
               onChange={handleChange}
-              className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-            />
-            <span>Insert (Append documents)</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="writeMode"
-              value="upsert"
-              checked={writeMode === 'upsert'}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="append">append (Write new or upserted documents)</option>
+              <option value="overwrite">overwrite (Drop and recreate collection)</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="mongoSinkOperationType"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Operation Type (operationType)</span>
+              <InfoTooltip text="MongoDB Spark Connector bulk write operation: insert, replace, or update." />
+            </label>
+            <select
+              id="mongoSinkOperationType"
+              name="operationType"
+              value={operationType}
               onChange={handleChange}
-              className="accent-[var(--vscode-highlight)] text-[var(--vscode-highlight)]"
-            />
-            <span>Upsert (Update matched document or insert)</span>
-          </label>
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="insert">insert (Append documents)</option>
+              <option value="replace">replace (Replace document by key)</option>
+              <option value="update">update (Update fields by key)</option>
+            </select>
+          </div>
         </div>
 
-        {writeMode === 'upsert' && (
-          <div className="mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
+        {requiresIdFields && (
+          <div className="flex flex-col gap-2 pt-1 border-t border-slate-700/50">
             <PropertyField
-              id="mongoSinkKeyFields"
-              name="keyFields"
-              label="Upsert Key Field(s)"
-              required="Key field(s) are required for upsert mode"
-              tooltip="Comma-separated field names used as unique filter keys when matching existing documents (Java: withUpdateConfiguration(UpdateConfiguration.create().withKeyField(...)))."
-              value={keyFields}
-              invalid={isKeyFieldsEmpty}
-              error={isKeyFieldsEmpty ? 'Key field(s) are required for upsert mode' : null}
-              placeholder="e.g. _id or customerId, date"
+              id="mongoSinkIdFieldList"
+              name="idFieldList"
+              label="Document Key Fields (idFieldList)"
+              required="Key field list is required for replace or update operations"
+              tooltip="Comma-separated column names used to match existing documents (.option('idFieldList', ...))."
+              value={idFieldList}
+              invalid={isIdFieldListEmpty}
+              error={
+                isIdFieldListEmpty
+                  ? 'Key field list is required for replace or update operations'
+                  : null
+              }
+              placeholder="_id"
               onChange={handleChange}
               mono={true}
             />
+
+            <div className="flex items-center gap-2">
+              <input
+                id="mongoSinkUpsertDocument"
+                type="checkbox"
+                name="upsertDocument"
+                checked={upsertDocument}
+                onChange={handleChange}
+                className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+              />
+              <label
+                htmlFor="mongoSinkUpsertDocument"
+                className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
+              >
+                <span>Upsert Unmatched Documents (upsertDocument=true)</span>
+                <InfoTooltip text="If enabled, inserts a new document when no existing document matches idFieldList." />
+              </label>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Batching & Execution Settings */}
+      {/* Bulk Write Tuning */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Batching &amp; Delivery</span>
-          <InfoTooltip text="Configure batch sizes, write ordering guarantees, and replica write concerns." />
+          <span>Bulk Write Tuning</span>
+          <InfoTooltip text="Configure maxBatchSize, ordered bulk execution, and replica write concern." />
         </label>
 
-        <PropertyField
-          id="mongoSinkBatchSize"
-          name="batchSize"
-          label="Batch Size"
-          type="number"
-          value={batchSize}
-          onChange={handleChange}
-          placeholder="1024"
-          min={1}
-          tooltip="Number of documents batched into a single MongoDB bulk write operation. In Java: withBatchSize(long). In Python: batch_size=..."
-        />
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="mongoSinkMaxBatchSize"
+            name="maxBatchSize"
+            label="Max Batch Size (maxBatchSize)"
+            type="number"
+            min={1}
+            tooltip="Maximum number of operations grouped per MongoDB bulkWrite call (default 512)."
+            value={maxBatchSize}
+            placeholder="512"
+            onChange={handleChange}
+            mono={true}
+          />
+
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="mongoSinkWriteConcern"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Write Concern (writeConcern.w)</span>
+              <InfoTooltip text="Replica acknowledgment level for MongoDB write operations." />
+            </label>
+            <select
+              id="mongoSinkWriteConcern"
+              name="writeConcern"
+              value={writeConcern}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="majority">majority (Quorum)</option>
+              <option value="1">1 (Primary acknowledged)</option>
+              <option value="0">0 (Unacknowledged)</option>
+            </select>
+          </div>
+        </div>
 
         <div className="flex items-center gap-2">
           <input
@@ -456,68 +323,58 @@ export const MongoDbIOSinkProperties: React.FC<MongoDbIOSinkPropertiesProps> = (
             name="ordered"
             checked={ordered}
             onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)]"
+            className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
           />
           <label
             htmlFor="mongoSinkOrdered"
-            className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer"
+            className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer"
           >
-            <span>Ordered Writes</span>
-            <InfoTooltip text="If true, MongoDB stops executing remaining writes when a single document fails in a batch. If false, unfailed documents proceed (withOrdered)." />
+            <span>Ordered Bulk Writes (ordered=true)</span>
+            <InfoTooltip text="If enabled, stops processing remaining operations in a batch after the first failure." />
           </label>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor="mongoSinkWriteConcern"
-            className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
-          >
-            <span>Write Concern</span>
-            <InfoTooltip text="Replica acknowledgment guarantee for writes (specified in connection URI: w=majority)." />
-          </label>
-          <select
-            id="mongoSinkWriteConcern"
-            name="writeConcern"
-            value={writeConcern}
-            onChange={handleChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)]"
-          >
-            <option value="W1">w=1 (Acknowledged)</option>
-            <option value="MAJORITY">majority (Quorum)</option>
-            <option value="UNACKNOWLEDGED">unacknowledged (w=0 / Fire-and-forget)</option>
-            <option value="W2">w=2 (Two Replicas)</option>
-            <option value="W3">w=3 (Three Replicas)</option>
-          </select>
         </div>
       </div>
 
-      {/* Authentication Configuration Sub-section */}
-      <MongoDbSinkAuthSection
-        authMode={authMode}
-        usernameSecret={usernameSecret}
-        passwordSecret={passwordSecret}
-        secrets={secrets}
-        secretError={secretError}
-        onChange={handleChange}
-      />
+      {/* Secret Manager Auth for connection.uri */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <SecretManagerAuthFields
+          idPrefix="mongoSink"
+          serviceName="MongoDB (spark.mongodb.write.connection.uri)"
+          authMode={authMode}
+          secretName={secretName}
+          authOptions={MONGO_SINK_AUTH_OPTIONS}
+          secretManagerValue="secretManager"
+          datalistId="mongodb-sink-secret-options"
+          secretPlaceholder="e.g. mongodb-connection-uri-secret"
+          onChange={handleChange}
+        />
 
-      {/* Collapsible Advanced Sink Settings Sub-section */}
-      <MongoDbSinkAdvancedSection
-        showAdvanced={showAdvanced}
-        onToggleAdvanced={() => setShowAdvanced(!showAdvanced)}
-        sslEnabled={sslEnabled}
-        sslInvalidHostNameAllowed={sslInvalidHostNameAllowed}
-        retryWrites={retryWrites}
-        maxConnectionIdleTime={maxConnectionIdleTime}
-        onChange={handleChange}
-      />
+        {authMode !== 'secretManager' && (
+          <PropertyField
+            id="mongoSinkUri"
+            name="uri"
+            label="Connection URI (connection.uri)"
+            tooltip="MongoDB connection URI used when Secret Manager is not active."
+            value={uri}
+            helperText={
+              isUriMissingScheme ? (
+                <span className="text-amber-400" role="alert">
+                  Connection URI must start with mongodb:// or mongodb+srv://
+                </span>
+              ) : null
+            }
+            placeholder="mongodb://localhost:27017"
+            onChange={handleChange}
+            mono={true}
+          />
+        )}
+      </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="mongoSinkInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions passed to the LLM code generator when synthesizing Beam pipeline code for Java (MongoDbIO.write()) or Python (WriteToMongoDB)."
-        placeholder="e.g. Convert elements to org.bson.Document, apply upsert key configuration, and write to MongoDB"
+        placeholder="Enter custom instructions for Spark MongoDB sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -528,3 +385,5 @@ export const MongoDbIOSinkProperties: React.FC<MongoDbIOSinkPropertiesProps> = (
     </div>
   );
 };
+
+export const MongoDbSinkProperties = MongoDbIOSinkProperties;

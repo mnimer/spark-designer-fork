@@ -1,68 +1,176 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+/**
+ * @fileoverview Unit tests for the TextSink / TextIO sink properties panel (SNK16).
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ *
+ * Purpose:
+ * Validates default rendering, required URI validation, StorageBackendFields multi-cloud
+ * and Secret Manager integration, saveMode, compression codecs, partitionBy, maxRecordsPerFile,
+ * single-string-column projection strategies (column, concat_ws, to_json), lineSep, and
+ * SystemInstructionsField updates.
+ */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TextIOSinkProperties } from './TextIO';
+import { TextIOSinkProperties, TextSinkProperties } from './TextIO';
 
-describe('TextIOSinkProperties', () => {
+describe('TextIOSinkProperties (SNK16 TextSink)', () => {
   const mockOnChange = vi.fn();
+  let originalVscode: any;
 
-  it('renders all default fields and handles field updates', () => {
-    const mockNode: any = {
-      data: {
-        label: 'TextIO',
-        spark_transform: 'TextIO',
-        properties: {
-          to: 'gs://my-bucket/output/data',
-          suffix: '.txt',
-          numShards: 3,
-          header: 'header1,header2',
-          footer: 'END'
-        }
-      }
-    };
-
-    const { container } = render(<TextIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#textSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#textSinkSuffix') as HTMLInputElement;
-    const shardsInput = container.querySelector('#textSinkNumShards') as HTMLInputElement;
-    const headerInput = container.querySelector('#textSinkHeader') as HTMLInputElement;
-    const footerInput = container.querySelector('#textSinkFooter') as HTMLInputElement;
-
-    expect(toInput).toHaveValue('gs://my-bucket/output/data');
-    expect(suffixInput).toHaveValue('.txt');
-    expect(shardsInput).toHaveValue(3);
-    expect(headerInput).toHaveValue('header1,header2');
-    expect(footerInput).toHaveValue('END');
-
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 'gs://my-bucket/output/logs' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      to: 'gs://my-bucket/output/logs'
-    }));
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
-  it('handles without sharding toggle', () => {
+  afterEach(() => {
+    (window as any).vscode = originalVscode;
+  });
+
+  it('exports TextSinkProperties as an alias for TextIOSinkProperties', () => {
+    expect(TextSinkProperties).toBe(TextIOSinkProperties);
+  });
+
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'TextIO',
-        spark_transform: 'TextIO',
-        properties: {
-          withoutSharding: false
-        }
-      }
+        label: 'TextSink',
+        type: 'SINK',
+        spark_transform: 'TextSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
     };
 
-    const { container } = render(<TextIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <TextIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const checkbox = container.querySelector('#textSinkWithoutSharding') as HTMLInputElement;
-    expect(checkbox).not.toBeChecked();
+    const pathInput = container.querySelector('#textSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output Text URI / Path is required.')).toBeInTheDocument();
 
-    fireEvent.click(checkbox);
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      withoutSharding: true
-    }));
+    expect(container.querySelector('#textSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#textSinkCompression')).toHaveValue('none');
+    expect(container.querySelector('#textSinkSerializationStrategy')).toHaveValue('column');
+    expect(container.querySelector('#textSinkValueColumn')).toHaveValue('value');
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
+  });
+
+  it('renders populated properties including concat_ws strategy and local filesystem path', () => {
+    const mockNode: any = {
+      data: {
+        label: 'TextSink',
+        spark_transform: 'TextSink',
+        properties: {
+          path: 'file:///var/log/spark/exported_lines/',
+          saveMode: 'overwrite',
+          compression: 'GZIP',
+          partitionBy: ['log_date'],
+          maxRecordsPerFile: 100000,
+          serializationStrategy: 'concat_ws',
+          concatDelimiter: ' | ',
+          lineSep: '\\r\\n',
+          system_instructions: 'Format log lines cleanly',
+        },
+      },
+    };
+
+    const { container } = render(
+      <TextIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    expect(container.querySelector('#textSinkStorageBackend')).toHaveValue('local');
+    expect(container.querySelector('#textSinkPath')).toHaveValue(
+      'file:///var/log/spark/exported_lines/'
+    );
+    expect(container.querySelector('#textSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#textSinkCompression')).toHaveValue('gzip');
+    expect(container.querySelector('#textSinkPartitionBy')).toHaveValue('log_date');
+    expect(container.querySelector('#textSinkMaxRecordsPerFile')).toHaveValue(100000);
+    expect(container.querySelector('#textSinkSerializationStrategy')).toHaveValue('concat_ws');
+    expect(container.querySelector('#textSinkConcatDelimiter')).toHaveValue(' | ');
+    expect(container.querySelector('#textSinkLineSep')).toHaveValue('\\r\\n');
+    expect(container.querySelector('#textSinkInstructions')).toHaveValue(
+      'Format log lines cleanly'
+    );
+  });
+
+  it('propagates changes across all Text sink fields and system_instructions', () => {
+    const mockNode: any = {
+      data: {
+        properties: {
+          path: 'gs://my-bucket/logs/',
+        },
+      },
+    };
+
+    const { container } = render(
+      <TextIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    fireEvent.change(container.querySelector('#textSinkPath')!, {
+      target: { name: 'path', value: 'gs://my-bucket/logs_v2/' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'gs://my-bucket/logs_v2/' })
+    );
+
+    fireEvent.change(container.querySelector('#textSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'errorifexists' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ saveMode: 'errorifexists' })
+    );
+
+    fireEvent.change(container.querySelector('#textSinkCompression')!, {
+      target: { name: 'compression', value: 'zstd' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ compression: 'zstd' }));
+
+    fireEvent.change(container.querySelector('#textSinkPartitionBy')!, {
+      target: { name: 'partitionBy', value: 'service, log_date' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ partitionBy: 'service, log_date' })
+    );
+
+    fireEvent.change(container.querySelector('#textSinkMaxRecordsPerFile')!, {
+      target: { name: 'maxRecordsPerFile', value: '50000' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRecordsPerFile: '50000' })
+    );
+
+    fireEvent.change(container.querySelector('#textSinkValueColumn')!, {
+      target: { name: 'valueColumn', value: 'raw_line' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ valueColumn: 'raw_line' })
+    );
+
+    fireEvent.change(container.querySelector('#textSinkSerializationStrategy')!, {
+      target: { name: 'serializationStrategy', value: 'to_json' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ serializationStrategy: 'to_json' })
+    );
+
+    fireEvent.change(container.querySelector('#textSinkLineSep')!, {
+      target: { name: 'lineSep', value: '\\n' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ lineSep: '\\n' }));
+
+    fireEvent.change(container.querySelector('#textSinkInstructions')!, {
+      target: { value: 'Project message column' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Project message column' })
+    );
   });
 });

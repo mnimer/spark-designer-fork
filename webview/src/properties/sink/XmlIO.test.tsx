@@ -1,253 +1,173 @@
 /**
- * Unit Tests for XmlIO Sink Properties Component
- * 
+ * @fileoverview Unit tests for the XmlSink / XmlIO sink properties panel (SNK17).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Validates rendering, input handling, Cloud Storage bucket auto-discovery messaging,
- * validation indicators, charset select changes, sharding controls, accordion toggling,
- * error state rendering, and code generation instructions for XmlIOSinkProperties.
- * 
- * Architectural Decisions:
- * - Mocks window.vscode IPC message dispatch to verify getStorageBuckets request.
- * - Dispatches storageBucketsLoaded message events to verify dynamic datalist option population.
- * - Tests both success and failure branches for asset loader discovery.
- * - Verifies required-field validation states for to and rootElement.
+ * Validates default rendering, required URI and tag validation, StorageBackendFields
+ * multi-cloud and Secret Manager integration, saveMode, compression codecs, partitionBy,
+ * maxRecordsPerFile, rootTag, rowTag, declaration, nullValue, attributePrefix, valueTag,
+ * and SystemInstructionsField updates.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { XmlIOSinkProperties } from './XmlIO';
+import { XmlIOSinkProperties, XmlSinkProperties } from './XmlIO';
 
-describe('XmlIOSinkProperties', () => {
+describe('XmlIOSinkProperties (SNK17 XmlSink)', () => {
   const mockOnChange = vi.fn();
   let originalVscode: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders with empty properties and flags validation errors for missing required fields', () => {
-    const mockNode: any = {
-      data: {
-        label: 'XmlIO',
-        spark_transform: 'XmlIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Destination Prefix (.to)
-    const toInput = container.querySelector('#xmlSinkTo') as HTMLInputElement;
-    expect(toInput).toBeInTheDocument();
-    expect(toInput).toHaveValue('');
-    expect(toInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Destination Prefix is required.')).toBeInTheDocument();
-
-    // Suffix default
-    const suffixInput = container.querySelector('#xmlSinkSuffix') as HTMLInputElement;
-    expect(suffixInput).toHaveValue('.xml');
-
-    // Root Element
-    const rootElementInput = container.querySelector('#xmlSinkRootElement') as HTMLInputElement;
-    expect(rootElementInput).toBeInTheDocument();
-    expect(rootElementInput).toHaveValue('');
-    expect(rootElementInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Root Element is required.')).toBeInTheDocument();
-
-    // Charset select and mappingStrategy
-    expect(container.querySelector('#xmlSinkRecordClass')).not.toBeInTheDocument();
-    const strategySelect = container.querySelector('#xmlSinkMappingStrategy') as HTMLSelectElement;
-    expect(strategySelect).toBeInTheDocument();
-    expect(strategySelect).toHaveValue('infer');
-    expect(Array.from(strategySelect.options).map((o) => o.value)).toEqual(['infer', 'schema']);
-    expect(container.querySelector('#xmlSinkCharset')).toHaveValue('UTF-8');
-    expect(container.querySelector('#xmlSinkInstructions')).toBeInTheDocument();
+  it('exports XmlSinkProperties as an alias for XmlIOSinkProperties', () => {
+    expect(XmlSinkProperties).toBe(XmlIOSinkProperties);
   });
 
-  it('renders with populated properties and flags no validation errors', () => {
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'XmlIO',
-        spark_transform: 'XmlIO',
-        properties: {
-          to: 'gs://my-bucket/output/items',
-          suffix: '.xml.gz',
-          rootElement: 'inventory',
-          mappingStrategy: 'schema',
-          schemaString: 'sku:STRING:REQUIRED, price:DOUBLE',
-          charset: 'ISO-8859-1',
-          numShards: 5,
-          shardTemplate: '-SSSSS-of-NNNNN',
-          expansionService: 'localhost:8097',
-          system_instructions: 'Custom XML writer instructions'
-        }
-      }
+        label: 'XmlSink',
+        type: 'SINK',
+        spark_transform: 'XmlSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
     };
 
-    const { container } = render(<XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const toInput = container.querySelector('#xmlSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#xmlSinkSuffix') as HTMLInputElement;
-    const rootElementInput = container.querySelector('#xmlSinkRootElement') as HTMLInputElement;
-    const strategySelect = container.querySelector('#xmlSinkMappingStrategy') as HTMLSelectElement;
-    const charsetSelect = container.querySelector('#xmlSinkCharset') as HTMLSelectElement;
-    const numShardsInput = container.querySelector('#xmlSinkNumShards') as HTMLInputElement;
-    const shardTemplateInput = container.querySelector('#xmlSinkShardTemplate') as HTMLInputElement;
-    const expansionServiceInput = container.querySelector('#xmlSinkExpansionService') as HTMLInputElement;
-    const instructionsArea = container.querySelector('#xmlSinkInstructions') as HTMLTextAreaElement;
+    const pathInput = container.querySelector('#xmlSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output XML URI / Path is required.')).toBeInTheDocument();
 
-    expect(toInput).toHaveValue('gs://my-bucket/output/items');
-    expect(toInput).toHaveAttribute('aria-invalid', 'false');
-    expect(suffixInput).toHaveValue('.xml.gz');
-    expect(rootElementInput).toHaveValue('inventory');
-    expect(rootElementInput).toHaveAttribute('aria-invalid', 'false');
-    expect(strategySelect).toHaveValue('schema');
-    expect(screen.getByText('2 FIELDS')).toBeInTheDocument();
-    expect(charsetSelect).toHaveValue('ISO-8859-1');
-    expect(numShardsInput).toHaveValue(5);
-    expect(shardTemplateInput).toHaveValue('-SSSSS-of-NNNNN');
-    expect(expansionServiceInput).toHaveValue('localhost:8097');
-    expect(instructionsArea).toHaveValue('Custom XML writer instructions');
-
-    expect(screen.queryByText('Destination Prefix is required.')).not.toBeInTheDocument();
-    expect(screen.queryByText('Root Element is required.')).not.toBeInTheDocument();
+    expect(container.querySelector('#xmlSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#xmlSinkCompression')).toHaveValue('none');
+    expect(container.querySelector('#xmlSinkRootTag')).toHaveValue('ROWS');
+    expect(container.querySelector('#xmlSinkRowTag')).toHaveValue('ROW');
+    expect(container.querySelector('#xmlSinkAttributePrefix')).toHaveValue('_');
+    expect(container.querySelector('#xmlSinkValueTag')).toHaveValue('_VALUE');
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
   });
 
-  it('handles field changes for to, suffix, rootElement, mappingStrategy, schemaFields, numShards, shardTemplate, and expansionService', () => {
+  it('flags validation errors when rootTag or rowTag are cleared to empty whitespace', () => {
     const mockNode: any = {
       data: {
         properties: {
-          mappingStrategy: 'schema'
-        }
-      }
+          path: 'gs://my-bucket/xml/',
+          rootTag: '   ',
+          rowTag: '',
+        },
+      },
     };
 
-    const { container } = render(<XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // To edit
-    const toInput = container.querySelector('#xmlSinkTo') as HTMLInputElement;
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 's3://out-bucket/orders' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 's3://out-bucket/orders' })
+    const { container } = render(
+      <XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />
     );
 
-    // Suffix edit
-    const suffixInput = container.querySelector('#xmlSinkSuffix') as HTMLInputElement;
-    fireEvent.change(suffixInput, {
-      target: { name: 'suffix', value: '.xml.gz' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ suffix: '.xml.gz' })
-    );
-
-    // Root Element edit
-    const rootElementInput = container.querySelector('#xmlSinkRootElement') as HTMLInputElement;
-    fireEvent.change(rootElementInput, {
-      target: { name: 'rootElement', value: 'orderBatch' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ rootElement: 'orderBatch' })
-    );
-
-    // Mapping Strategy edit
-    const strategySelect = container.querySelector('#xmlSinkMappingStrategy') as HTMLSelectElement;
-    fireEvent.change(strategySelect, {
-      target: { name: 'mappingStrategy', value: 'infer' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ mappingStrategy: 'infer' })
-    );
-
-    // SchemaEditor string tab edit
-    fireEvent.click(screen.getByText('Schema String'));
-    const stringTextarea = container.querySelector('#xmlSinkMappingStrategySchemaString') as HTMLTextAreaElement;
-    fireEvent.change(stringTextarea, {
-      target: { value: 'order_id:STRING:REQUIRED, total:DOUBLE' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        schemaString: 'order_id:STRING:REQUIRED, total:DOUBLE',
-        schemaFields: [
-          { name: 'order_id', type: 'STRING', mode: 'REQUIRED', description: '' },
-          { name: 'total', type: 'DOUBLE', mode: 'NULLABLE', description: '' }
-        ]
-      })
-    );
-
-    // NumShards edit
-    const numShardsInput = container.querySelector('#xmlSinkNumShards') as HTMLInputElement;
-    fireEvent.change(numShardsInput, {
-      target: { name: 'numShards', value: '10' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ numShards: '10' })
-    );
-
-    // ShardTemplate edit
-    const shardTemplateInput = container.querySelector('#xmlSinkShardTemplate') as HTMLInputElement;
-    fireEvent.change(shardTemplateInput, {
-      target: { name: 'shardTemplate', value: '-W-P-SS-of-NN' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ shardTemplate: '-W-P-SS-of-NN' })
-    );
-
-    // ExpansionService edit
-    const expansionServiceInput = container.querySelector('#xmlSinkExpansionService') as HTMLInputElement;
-    fireEvent.change(expansionServiceInput, {
-      target: { name: 'expansionService', value: '10.0.0.1:8097' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ expansionService: '10.0.0.1:8097' })
-    );
+    expect(container.querySelector('#xmlSinkRootTag')).toHaveAttribute('aria-invalid', 'true');
+    expect(container.querySelector('#xmlSinkRowTag')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Root Tag is required.')).toBeInTheDocument();
+    expect(screen.getByText('Row Tag is required.')).toBeInTheDocument();
   });
 
-  it('handles select changes for charset', () => {
+  it('renders populated S3A and XML structure properties and propagates all updates', () => {
     const mockNode: any = {
       data: {
-        properties: {}
-      }
+        label: 'XmlSink',
+        spark_transform: 'XmlSink',
+        properties: {
+          path: 's3a://partner-feeds/catalog_xml/',
+          authMode: 'secretManager',
+          secretName: 'aws-partner-feed-secret',
+          saveMode: 'overwrite',
+          compression: 'gzip',
+          partitionBy: ['feed_date'],
+          maxRecordsPerFile: 50000,
+          rootTag: 'catalog',
+          rowTag: 'book',
+          declaration: 'version="1.0" encoding="UTF-8"',
+          attributePrefix: '@',
+          valueTag: '_text',
+          nullValue: 'NIL',
+          system_instructions: 'Coalesce to 1 XML file per partition',
+        },
+      },
     };
 
-    const { container } = render(<XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const charsetSelect = container.querySelector('#xmlSinkCharset') as HTMLSelectElement;
-    fireEvent.change(charsetSelect, {
-      target: { name: 'charset', value: 'UTF-16' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ charset: 'UTF-16' })
+    const { container } = render(
+      <XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />
     );
-  });
 
-  it('updates system_instructions when instructions textarea changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
+    expect(container.querySelector('#xmlSinkStorageBackend')).toHaveValue('s3a');
+    expect(container.querySelector('#xmlSinkPath')).toHaveValue('s3a://partner-feeds/catalog_xml/');
+    expect(container.querySelector('#xmlSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#xmlSinkCompression')).toHaveValue('gzip');
+    expect(container.querySelector('#xmlSinkPartitionBy')).toHaveValue('feed_date');
+    expect(container.querySelector('#xmlSinkMaxRecordsPerFile')).toHaveValue(50000);
+    expect(container.querySelector('#xmlSinkRootTag')).toHaveValue('catalog');
+    expect(container.querySelector('#xmlSinkRowTag')).toHaveValue('book');
+    expect(container.querySelector('#xmlSinkDeclaration')).toHaveValue(
+      'version="1.0" encoding="UTF-8"'
+    );
+    expect(container.querySelector('#xmlSinkAttributePrefix')).toHaveValue('@');
+    expect(container.querySelector('#xmlSinkValueTag')).toHaveValue('_text');
+    expect(container.querySelector('#xmlSinkNullValue')).toHaveValue('NIL');
+    expect(container.querySelector('#xmlSinkInstructions')).toHaveValue(
+      'Coalesce to 1 XML file per partition'
+    );
 
-    const { container } = render(<XmlIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsArea = container.querySelector('#xmlSinkInstructions') as HTMLTextAreaElement;
-    fireEvent.change(instructionsArea, {
-      target: { value: 'Configure JAXB Marshaller with formatted XML output' }
+    fireEvent.change(container.querySelector('#xmlSinkRootTag')!, {
+      target: { name: 'rootTag', value: 'orders' },
     });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ rootTag: 'orders' }));
 
+    fireEvent.change(container.querySelector('#xmlSinkRowTag')!, {
+      target: { name: 'rowTag', value: 'order' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ rowTag: 'order' }));
+
+    fireEvent.change(container.querySelector('#xmlSinkDeclaration')!, {
+      target: { name: 'declaration', value: 'version="1.0"' },
+    });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'Configure JAXB Marshaller with formatted XML output'
-      })
+      expect.objectContaining({ declaration: 'version="1.0"' })
+    );
+
+    fireEvent.change(container.querySelector('#xmlSinkAttributePrefix')!, {
+      target: { name: 'attributePrefix', value: '_' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ attributePrefix: '_' }));
+
+    fireEvent.change(container.querySelector('#xmlSinkValueTag')!, {
+      target: { name: 'valueTag', value: '_VALUE' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ valueTag: '_VALUE' }));
+
+    fireEvent.change(container.querySelector('#xmlSinkNullValue')!, {
+      target: { name: 'nullValue', value: '' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ nullValue: '' }));
+
+    fireEvent.change(container.querySelector('#xmlSinkInstructions')!, {
+      target: { value: 'Use built-in Spark 4.0 xml format' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Use built-in Spark 4.0 xml format' })
     );
   });
 });

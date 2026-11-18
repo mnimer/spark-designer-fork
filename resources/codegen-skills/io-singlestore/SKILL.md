@@ -1,12 +1,12 @@
 ---
 name: io-singlestore
-description: Read SingleStoreDB tables and SQL queries in PySpark 4.x using the SingleStore Spark 4.0 connector with parallel partition reads and Secret Manager credentials.
+description: Read and write SingleStoreDB tables in PySpark 4.x using the SingleStore Spark 4.0 connector with parallel loads, upserts, and Secret Manager credentials.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [SingleStoreSource]
+  transforms: [SingleStoreSource, SingleStoreSink]
   preloadWhen: []
   sources:
     - prompt
@@ -14,20 +14,20 @@ metadata:
   validated: true
 ---
 
-# SingleStoreDB Source (`SingleStoreSource`)
+# SingleStoreDB Connector (`SingleStoreSource` and `SingleStoreSink`)
 
-Use these rules when generating PySpark 4.x code for a `SingleStoreSource` node.
+Use these rules when generating PySpark 4.x code for `SingleStoreSource` and `SingleStoreSink` nodes.
 
 ## 1. Runtime Classpath and Connector Delivery
 
 - Supply the SingleStore Spark 4.0 connector (Scala 2.13) via `--packages com.singlestore:singlestore-spark-connector_2.13:4.1.9-spark-4.0.0` (`spark.jars.packages`).
-- Use `.format("singlestore")` (recommended for direct aggregator and leaf partition parallel reads) or `.format("jdbc")` with `org.mariadb.jdbc.Driver`.
+- Prefer `.format("singlestore")` for direct aggregator parallel reads and compressed `LOAD DATA` writes. Use `.format("jdbc")` with `com.singlestore.jdbc.Driver` or `org.mariadb.jdbc.Driver` only as an explicit JDBC fallback.
 
-## 2. Batch Read Patterns (`read_sources`)
+## 2. Batch Read Patterns (`SingleStoreSource` in `read_sources`)
 
 `SingleStoreSource` runs in `batch` mode and supports parallel partition reads across SingleStore leaf nodes.
 
-### Required and Optional Options
+### Required and Optional Read Options
 - `ddlEndpoint`: SingleStore master aggregator host and port (for example `<host>:3306`).
 - `database`: SingleStore database name.
 - `user` and `password`: Resolve the database password once on the driver via `get_secret()`.
@@ -88,7 +88,93 @@ def read_sources(spark: SparkSession, config: dict[str, Any]) -> dict[str, DataF
     return dfs
 ```
 
-## 3. Offline Unit Testing (`tests/test_pipeline.py`)
+## 3. Batch and Streaming Write Patterns (`SingleStoreSink` in `write_sinks`)
+
+`SingleStoreSink` writes DataFrames via `.write.format("singlestore")` (or `.write.format("jdbc")` fallback) in batch mode and wraps that batch write inside `df.writeStream.foreachBatch(...)` in streaming mode (`streamingSinkMode: "foreachBatch"`).
+
+### Required and Optional Write Options
+- **Endpoint and Target Table (`ddlEndpoint`, `database`, `.save(...)`)**: Pass `.option("ddlEndpoint", "<host>:3306")`, `.option("database", database)`, `.option("user", user)`, `.option("password", s2_password)`, and `.save(f"{database}.{table}")`.
+- **Streamed Payload Compression (`loadDataCompression`)**: Pass `.option("loadDataCompression", compression)` (`"LZ4"`, `"GZip"`, or `"Skip"`) to compress `LOAD DATA` streams between Spark executors and SingleStore aggregators.
+- **Overwrite Behavior (`overwriteBehavior`)**: When `.mode("overwrite")` is used on `.format("singlestore")`, set `.option("overwriteBehavior", behavior)` to `"truncate"` (preserves shard keys, sort keys, and indexes), `"dropAndCreate"` (drops and recreates the table), or `"merge"` (replaces matching primary-key rows without dropping the table).
+- **Idempotent Upsert (`onDuplicateKeySQL`)**: When upserting into tables with a primary or unique key in `"append"` mode or inside `foreachBatch`, pass `.option("onDuplicateKeySQL", clause)` (for example `"metric_val = VALUES(metric_val), updated_at = VALUES(updated_at)"`).
+- **JDBC Fallback (`.write.format("jdbc")`)**: If `.format("jdbc")` is explicitly selected instead of `.format("singlestore")`, connect to `jdbc:singlestore://<ddlEndpoint>/<database>?rewriteBatchedStatements=true` (with `com.singlestore.jdbc.Driver` or `org.mariadb.jdbc.Driver`), set `.option("batchsize", "5000")`, and pass `.option("truncate", "true")` on overwrite.
+- **Credentials**: Resolve `passwordSecret` once on the driver via `get_secret()`.
+
+### Batch Write Example (`.format("singlestore")` and `.format("jdbc")` Fallback)
+
+```python
+def write_singlestore_df(df: DataFrame, config: dict[str, Any], s2_password: str) -> None:
+    """Writes a batch or micro-batch DataFrame to SingleStoreDB."""
+    ddl_endpoint = config["singlestore_sink_ddl_endpoint"]
+    database = config["singlestore_sink_database"]
+    table = config["singlestore_sink_table"]
+    save_mode = config.get("singlestore_save_mode", "append")
+    write_format = config.get("singlestore_write_format", "singlestore")
+
+    if write_format == "jdbc":
+        jdbc_url = f"jdbc:singlestore://{ddl_endpoint}/{database}?rewriteBatchedStatements=true"
+        jdbc_writer = (
+            df.write.format("jdbc")
+            .mode(save_mode)
+            .option("driver", config.get("singlestore_jdbc_driver", "com.singlestore.jdbc.Driver"))
+            .option("url", jdbc_url)
+            .option("dbtable", f"{database}.{table}")
+            .option("user", config["singlestore_sink_user"])
+            .option("password", s2_password)
+            .option("batchsize", str(config.get("singlestore_batchsize", 5000)))
+        )
+        if save_mode == "overwrite":
+            jdbc_writer = jdbc_writer.option("truncate", "true")
+        jdbc_writer.save()
+        return
+
+    writer = (
+        df.write.format("singlestore")
+        .mode(save_mode)
+        .option("ddlEndpoint", ddl_endpoint)
+        .option("database", database)
+        .option("user", config["singlestore_sink_user"])
+        .option("password", s2_password)
+        .option("loadDataCompression", config.get("singlestore_compression", "LZ4"))
+    )
+
+    if save_mode == "overwrite":
+        writer = writer.option(
+            "overwriteBehavior", config.get("singlestore_overwrite_behavior", "truncate")
+        )
+    if config.get("singlestore_on_duplicate_key_sql"):
+        writer = writer.option("onDuplicateKeySQL", config["singlestore_on_duplicate_key_sql"])
+
+    writer.save(f"{database}.{table}")
+```
+
+### Streaming `foreachBatch` Write Example
+
+```python
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Writes streaming micro-batches to SingleStoreDB via foreachBatch."""
+    checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+    s2_password = get_secret(config["singlestore_sink_password_secret"])
+
+    def write_micro_batch(batch_df: DataFrame, batch_id: int) -> None:
+        batch_df.cache()
+        try:
+            write_singlestore_df(batch_df, config, s2_password)
+        finally:
+            batch_df.unpersist()
+
+    query = (
+        dfs["upstream_stream"]
+        .writeStream.foreachBatch(write_micro_batch)
+        .outputMode(config.get("output_mode", "append"))
+        .option("checkpointLocation", f"{checkpoint_root.rstrip('/')}/singlestore_sink")
+        .trigger(processingTime=config.get("trigger_interval", "10 seconds"))
+        .start()
+    )
+    query.awaitTermination()
+```
+
+## 4. Offline Unit Testing (`tests/test_pipeline.py`)
 
 Test `transform(dfs, config)` offline in `tests/test_pipeline.py` using an in-memory `DataFrame`:
 

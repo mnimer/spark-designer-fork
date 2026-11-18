@@ -1,12 +1,12 @@
 ---
 name: io-eventhubs
-description: Read batch and streaming events from Azure Event Hubs in PySpark 4.x using the Kafka-compatible SASL_SSL endpoint.
+description: Read and write batch and streaming events with Azure Event Hubs in PySpark 4.x using the Kafka-compatible SASL_SSL endpoint.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  transforms: [EventHubsSource]
+  transforms: [EventHubsSource, EventHubsSink]
   preloadWhen: []
   sources:
     - prompt
@@ -159,4 +159,122 @@ def test_eventhubs_pipeline_transform(spark: SparkSession) -> None:
     result_dfs = transform({"src_eventhubs": input_df}, {})
     assert "src_eventhubs" in result_dfs
     assert result_dfs["src_eventhubs"].count() == 1
+```
+
+---
+
+# Azure Event Hubs Sink (`EventHubsSink`)
+
+Use these rules when generating PySpark {{spark_version}} code for an Azure Event Hubs sink node (`EventHubsSink`).
+
+## 1. Batch and Native Streaming Write Modes over Port 9093
+
+`EventHubsSink` publishes events through Spark's `.format("kafka")` writer (`org.apache.spark:spark-sql-kafka-0-10_2.13:{{spark_version}}`) targeting the Azure Event Hubs Kafka endpoint `<namespace>.servicebus.windows.net:9093`:
+- If `eventHubNamespace` already contains `.servicebus.windows.net`, strip any `:9093` suffix and append `:9093` once so the host never duplicates the domain.
+- **Batch mode**: Write bounded DataFrames in `write_sinks(dfs, config)` using `eh_df.write.format("kafka").options(...).save()`.
+- **Native streaming mode (`mode == "native"` in `ExecutionPlan.streamingSinkGroups`)**: Start the streaming query with `eh_df.writeStream.format("kafka").options(...)` along with `outputMode`, `trigger`, and `checkpointLocation`.
+- **Grouped `foreachBatch` mode (`mode == "foreachBatch"`)**: If `ExecutionPlan.streamingSinkGroups` groups `EventHubsSink` with other sinks, write inside `write_micro_batch(batch_df, batch_id)` using `batch_df.write.format("kafka").options(...).save()`.
+
+## 2. SASL_SSL `$ConnectionString` Authentication via `get_secret()`
+
+Resolve the Event Hubs Shared Access Signature connection string once on the driver in `write_sinks(dfs, config)` via `get_secret()`:
+- Configure `.option("kafka.bootstrap.servers", bootstrap_servers)` and `.option("topic", eventhub_name)`.
+- Set `.option("kafka.security.protocol", "SASL_SSL")` and `.option("kafka.sasl.mechanism", "PLAIN")`.
+- Build `jaas_config` with `username="$ConnectionString"` and `password` equal to the secret payload resolved from `get_secret()`.
+- Set `.option("kafka.request.timeout.ms", str(request_timeout_ms))` (default `"60000"`) and `.option("kafka.acks", acks)` (default `"all"`). Avoid unsupported Kafka compression codecs such as `snappy` or `lz4` against Event Hubs endpoints.
+
+## 3. Envelope Projection (`key`, `value`, `headers`)
+
+Project DataFrame columns into the Kafka envelope expected by Azure Event Hubs:
+- **`key` (optional partition key)**: If `partitionKeyColumn` is configured, project `F.col(pk_col).cast("string").alias("key")` so Azure Event Hubs hashes the key to a consistent partition.
+- **`value` (required payload)**: If `valueFormat == "json"` (default) and `valueColumn` is empty, serialize row columns with `F.to_json(F.struct(*payload_cols)).alias("value")`. Otherwise cast `valueColumn` to `"string"` or `"binary"` aliased as `"value"`.
+- **`headers` (optional custom properties)**: If `includeHeaders` is true and `headersColumn` is present, project `F.col(headers_col).alias("headers")` and set `.option("includeHeaders", "true")`.
+
+## 4. Reference Sink Implementation (`src/pipeline.py`)
+
+```python
+from typing import Any
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+
+
+def _resolve_eventhubs_bootstrap(namespace_or_fqdn: str) -> str:
+    """Normalizes an Azure Event Hubs namespace or FQDN to <host>:9093."""
+    cleaned = namespace_or_fqdn.strip().split(":")[0]
+    if cleaned.endswith(".servicebus.windows.net"):
+        return f"{cleaned}:9093"
+    return f"{cleaned}.servicebus.windows.net:9093"
+
+
+def prepare_eventhubs_sink_df(df: DataFrame, config: dict[str, Any]) -> DataFrame:
+    """Projects key, value, and optional headers columns for EventHubsSink."""
+    value_format = config.get("eventhub_sink_value_format", "json")
+    pk_col = config.get("eventhub_sink_partition_key_column", "")
+    value_col = config.get("eventhub_sink_value_column", "")
+    headers_col = config.get("eventhub_sink_headers_column", "")
+
+    exprs = []
+    if pk_col and pk_col in df.columns:
+        exprs.append(F.col(pk_col).cast("string").alias("key"))
+
+    if value_format == "binary" and value_col:
+        exprs.append(F.col(value_col).cast("binary").alias("value"))
+    elif value_format == "string" and value_col:
+        exprs.append(F.col(value_col).cast("string").alias("value"))
+    else:
+        excluded = {c for c in (headers_col,) if c}
+        struct_cols = [F.col(c) for c in df.columns if c not in excluded]
+        exprs.append(F.to_json(F.struct(*struct_cols)).alias("value"))
+
+    if config.get("eventhub_sink_include_headers") and headers_col and headers_col in df.columns:
+        exprs.append(F.col(headers_col).alias("headers"))
+
+    return df.select(*exprs)
+
+
+def build_eventhubs_sink_options(config: dict[str, Any]) -> dict[str, str]:
+    """Builds SASL_SSL Kafka producer options targeting Azure Event Hubs on port 9093."""
+    bootstrap_servers = _resolve_eventhubs_bootstrap(config["eventhub_sink_namespace"])
+    connection_string = get_secret(config["eventhub_sink_secret_name"])
+    jaas_config = (
+        "org.apache.kafka.common.security.plain.PlainLoginModule required "
+        f'username="$ConnectionString" password="{connection_string}";'
+    )
+    opts: dict[str, str] = {
+        "kafka.bootstrap.servers": bootstrap_servers,
+        "topic": config["eventhub_sink_name"],
+        "kafka.security.protocol": "SASL_SSL",
+        "kafka.sasl.mechanism": "PLAIN",
+        "kafka.sasl.jaas.config": jaas_config,
+        "kafka.acks": str(config.get("eventhub_sink_acks", "all")),
+        "kafka.request.timeout.ms": str(
+            config.get("eventhub_sink_request_timeout_ms", 60000)
+        ),
+    }
+    if config.get("eventhub_sink_include_headers"):
+        opts["includeHeaders"] = "true"
+    return opts
+
+
+def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:
+    """Writes output DataFrame records to Azure Event Hubs in batch or streaming mode."""
+    eh_df = prepare_eventhubs_sink_df(dfs["step_out"], config)
+    eh_opts = build_eventhubs_sink_options(config)
+
+    if eh_df.isStreaming:
+        checkpoint_root = config.get("checkpoint_root") or "/tmp/spark-checkpoints"
+        checkpoint_loc = config.get("eventhub_sink_checkpoint") or (
+            f"{checkpoint_root.rstrip('/')}/snk_eventhubs"
+        )
+        (
+            eh_df.writeStream.format("kafka")
+            .options(**eh_opts)
+            .outputMode(config.get("eventhub_sink_output_mode", "append"))
+            .option("checkpointLocation", checkpoint_loc)
+            .trigger(processingTime=config.get("trigger_interval", "10 seconds"))
+            .start()
+        )
+        eh_df.sparkSession.streams.awaitAnyTermination()
+    else:
+        eh_df.write.format("kafka").options(**eh_opts).save()
 ```

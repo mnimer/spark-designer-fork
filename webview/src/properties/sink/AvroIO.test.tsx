@@ -1,280 +1,179 @@
 /**
- * AvroIO Sink Properties Tests
- * 
+ * @fileoverview Unit tests for the AvroSink / AvroIO sink properties panel (SNK13).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Comprehensive unit tests for AvroIOSinkProperties covering destination prefix validation,
- * schema definition modes (inline JSON, sample insertion, external .avsc, specific class),
- * compression codec options, sharding modes, metadata, and instructions.
+ * Validates default rendering, required URI validation, StorageBackendFields multi-cloud
+ * and Secret Manager integration, saveMode, Avro compression codecs, partitionBy,
+ * maxRecordsPerFile, recordName, recordNamespace, avroSchema, and SystemInstructionsField.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { AvroIOSinkProperties } from './AvroIO';
+import { AvroIOSinkProperties, AvroSinkProperties, SAMPLE_AVRO_WRITER_SCHEMA } from './AvroIO';
 
-describe('AvroIOSinkProperties', () => {
+describe('AvroIOSinkProperties (SNK13 AvroSink)', () => {
   const mockOnChange = vi.fn();
   let originalVscode: any;
 
   beforeEach(() => {
-    mockOnChange.mockClear();
+    vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders required validation error when destination prefix is empty', () => {
-    const mockNode: any = {
-      data: {
-        label: 'AvroIO',
-        spark_transform: 'AvroIO',
-        properties: {
-          to: ''
-        }
-      }
-    };
-
-    const { container } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#avroSinkTo') as HTMLInputElement;
-    expect(toInput).toHaveValue('');
-    expect(toInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Destination file prefix is required.')).toBeInTheDocument();
+  it('exports AvroSinkProperties as an alias for AvroIOSinkProperties', () => {
+    expect(AvroSinkProperties).toBe(AvroIOSinkProperties);
   });
 
-  it('updates destination prefix, suffix, and shardNameTemplate', () => {
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output/data',
-          suffix: '.avro',
-          shardNameTemplate: '-SS-of-NN'
-        }
-      }
+        label: 'AvroSink',
+        type: 'SINK',
+        spark_transform: 'AvroSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
     };
 
-    const { container } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const toInput = container.querySelector('#avroSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#avroSinkSuffix') as HTMLInputElement;
-    const shardInput = container.querySelector('#avroSinkShardTemplate') as HTMLInputElement;
+    const pathInput = container.querySelector('#avroSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output Avro URI / Path is required.')).toBeInTheDocument();
 
-    expect(toInput).toHaveValue('gs://bucket/output/data');
-    expect(suffixInput).toHaveValue('.avro');
-    expect(shardInput).toHaveValue('-SS-of-NN');
-
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 'gs://new-bucket/output/files' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ to: 'gs://new-bucket/output/files' }));
-
-    fireEvent.change(suffixInput, {
-      target: { name: 'suffix', value: '.av' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ suffix: '.av' }));
-
-    fireEvent.change(shardInput, {
-      target: { name: 'shardNameTemplate', value: '-W-P-SS-of-NN' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ shardNameTemplate: '-W-P-SS-of-NN' }));
+    expect(container.querySelector('#avroSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#avroSinkCompression')).toHaveValue('snappy');
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
   });
 
-  it('renders 3-tab SchemaEditor for GenericRecord inline mode and updates schemaFields, schema, and schemaString', () => {
+  it('renders populated properties including legacy codec normalization and S3A Secret Manager auth', () => {
     const mockNode: any = {
       data: {
-        label: 'AvroIO',
+        label: 'AvroSink',
+        spark_transform: 'AvroSink',
         properties: {
-          to: 'gs://bucket/output',
-          schemaType: 'GENERIC_RECORD',
-          schemaMode: 'INLINE',
-          schemaFields: []
-        }
-      }
+          path: 's3a://events-archive/avro/orders/',
+          authMode: 'secretManager',
+          secretName: 'projects/my-proj/secrets/s3-creds/versions/latest',
+          saveMode: 'overwrite',
+          codec: 'ZSTANDARD',
+          partitionBy: ['dt'],
+          maxRecordsPerFile: 250000,
+          recordName: 'OrderEvent',
+          recordNamespace: 'com.acme.orders',
+          avroSchema: SAMPLE_AVRO_WRITER_SCHEMA,
+          system_instructions: 'Write evolved Avro records',
+        },
+      },
     };
 
-    render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    expect(screen.getByRole('button', { name: /Field Builder Tab/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /JSON Schema Tab/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Schema String Tab/i })).toBeInTheDocument();
-
-    const addFieldBtn = screen.getByRole('button', { name: /Add Schema Field/i });
-    fireEvent.click(addFieldBtn);
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        schemaFields: [
-          expect.objectContaining({ name: '', type: 'STRING', mode: 'NULLABLE' })
-        ],
-        schema: expect.any(String),
-        schemaString: expect.any(String)
-      })
+    expect(container.querySelector('#avroSinkStorageBackend')).toHaveValue('s3a');
+    expect(container.querySelector('#avroSinkPath')).toHaveValue(
+      's3a://events-archive/avro/orders/'
+    );
+    expect(container.querySelector('#avroSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#avroSinkCompression')).toHaveValue('zstandard');
+    expect(container.querySelector('#avroSinkPartitionBy')).toHaveValue('dt');
+    expect(container.querySelector('#avroSinkMaxRecordsPerFile')).toHaveValue(250000);
+    expect(container.querySelector('#avroSinkRecordName')).toHaveValue('OrderEvent');
+    expect(container.querySelector('#avroSinkRecordNamespace')).toHaveValue('com.acme.orders');
+    expect(container.querySelector('#avroSinkAvroSchema')).toHaveValue(SAMPLE_AVRO_WRITER_SCHEMA);
+    expect(container.querySelector('#avroSinkInstructions')).toHaveValue(
+      'Write evolved Avro records'
     );
   });
 
-  it('supports external schema file (.avsc) mode for GenericRecord', () => {
+  it('propagates changes for all Avro sink fields and system_instructions', () => {
     const mockNode: any = {
       data: {
-        label: 'AvroIO',
         properties: {
-          to: 'gs://bucket/output',
-          schemaType: 'GENERIC_RECORD',
-          schemaMode: 'FILE',
-          schemaPath: ''
-        }
-      }
-    };
-
-    const { container } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    expect(screen.getByText('Schema file path is required.')).toBeInTheDocument();
-
-    const pathInput = container.querySelector('#avroSinkSchemaPath') as HTMLInputElement;
-    fireEvent.change(pathInput, {
-      target: { name: 'schemaPath', value: 'gs://bucket/schemas/record.avsc' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ schemaPath: 'gs://bucket/schemas/record.avsc' }));
-  });
-
-  it('supports SpecificRecord mode using SchemaEditor without rendering Java recordClass input', () => {
-    const mockNode: any = {
-      data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output',
-          schemaType: 'SPECIFIC_RECORD'
-        }
-      }
-    };
-
-    const { container } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    expect(container.querySelector('#avroSinkRecordClass')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Generated Java Record Class/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Field Builder Tab/i })).toBeInTheDocument();
-  });
-
-  it('handles compression codec selection and deflate level configuration', () => {
-    const mockNode: any = {
-      data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output',
-          codec: 'DEFLATE',
-          deflateLevel: 6
-        }
-      }
-    };
-
-    const { container, rerender } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const codecSelect = container.querySelector('#avroSinkCodec') as HTMLSelectElement;
-    expect(codecSelect).toHaveValue('DEFLATE');
-
-    const levelInput = container.querySelector('#avroDeflateLevel') as HTMLInputElement;
-    expect(levelInput).toBeInTheDocument();
-    expect(levelInput).toHaveValue(6);
-
-    fireEvent.change(levelInput, {
-      target: { name: 'deflateLevel', value: '9' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ deflateLevel: '9' }));
-
-    // Switch codec to SNAPPY (level input should hide)
-    fireEvent.change(codecSelect, {
-      target: { name: 'codec', value: 'SNAPPY' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ codec: 'SNAPPY' }));
-
-    const snappyNode: any = {
-      data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output',
-          codec: 'SNAPPY'
-        }
-      }
-    };
-    rerender(<AvroIOSinkProperties node={snappyNode} onChange={mockOnChange} />);
-    expect(container.querySelector('#avroDeflateLevel')).toBeNull();
-  });
-
-  it('toggles sharding mode (single file vs numShards)', () => {
-    const mockNode: any = {
-      data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output',
-          withoutSharding: false,
-          numShards: 10
-        }
-      }
-    };
-
-    const { container, rerender } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const numShardsInput = container.querySelector('#avroSinkNumShards') as HTMLInputElement;
-    expect(numShardsInput).toBeInTheDocument();
-    expect(numShardsInput).toHaveValue(10);
-
-    const withoutShardingCheckbox = container.querySelector('#avroSinkWithoutSharding') as HTMLInputElement;
-    expect(withoutShardingCheckbox).not.toBeChecked();
-
-    fireEvent.click(withoutShardingCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ withoutSharding: true }));
-
-    // Rerender with withoutSharding = true (numShards input should be hidden)
-    const singleFileNode: any = {
-      data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output',
-          withoutSharding: true
-        }
-      }
-    };
-    rerender(<AvroIOSinkProperties node={singleFileNode} onChange={mockOnChange} />);
-    expect(container.querySelector('#avroSinkNumShards')).toBeNull();
-  });
-
-  it('configures fastavro toggle, custom metadata, and code generation instructions', () => {
-    const mockNode: any = {
-      data: {
-        label: 'AvroIO',
-        properties: {
-          to: 'gs://bucket/output',
-          useFastavro: true,
-          metadata: '{"schema_version": "1.0"}'
+          path: 'gs://my-bucket/avro/',
         },
-        system_instructions: 'Sink prompt notes'
-      }
+      },
     };
 
-    const { container } = render(<AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <AvroIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    const fastavroCheckbox = container.querySelector('#avroSinkUseFastavro') as HTMLInputElement;
-    expect(fastavroCheckbox).toBeChecked();
-
-    const metadataInput = container.querySelector('#avroSinkMetadata') as HTMLInputElement;
-    expect(metadataInput).toHaveValue('{"schema_version": "1.0"}');
-
-    fireEvent.change(metadataInput, {
-      target: { name: 'metadata', value: '{"author": "test"}' }
+    fireEvent.change(container.querySelector('#avroSinkPath')!, {
+      target: { name: 'path', value: 'gs://my-bucket/avro_v2/' },
     });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ metadata: '{"author": "test"}' }));
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'gs://my-bucket/avro_v2/' })
+    );
 
-    const instructions = container.querySelector('#avroSinkSystemInstructions') as HTMLTextAreaElement;
-    expect(instructions).toHaveValue('Sink prompt notes');
-
-    fireEvent.change(instructions, {
-      target: { value: 'Updated prompt instructions' }
+    fireEvent.change(container.querySelector('#avroSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'errorifexists' },
     });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ system_instructions: 'Updated prompt instructions' }));
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ saveMode: 'errorifexists' })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkCompression')!, {
+      target: { name: 'compression', value: 'deflate' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ compression: 'deflate' })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkPartitionBy')!, {
+      target: { name: 'partitionBy', value: 'event_date, region' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ partitionBy: 'event_date, region' })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkMaxRecordsPerFile')!, {
+      target: { name: 'maxRecordsPerFile', value: '100000' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRecordsPerFile: '100000' })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkRecordName')!, {
+      target: { name: 'recordName', value: 'CustomerRecord' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ recordName: 'CustomerRecord' })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkRecordNamespace')!, {
+      target: { name: 'recordNamespace', value: 'com.company.crm' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ recordNamespace: 'com.company.crm' })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkAvroSchema')!, {
+      target: { name: 'avroSchema', value: SAMPLE_AVRO_WRITER_SCHEMA },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ avroSchema: SAMPLE_AVRO_WRITER_SCHEMA })
+    );
+
+    fireEvent.change(container.querySelector('#avroSinkInstructions')!, {
+      target: { value: 'Partition by date' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Partition by date' })
+    );
   });
 });

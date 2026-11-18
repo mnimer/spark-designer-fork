@@ -1,222 +1,179 @@
 /**
- * Unit Tests for JsonIO Sink Properties Component
- * 
+ * @fileoverview Unit tests for the JsonSink / JsonIO sink properties panel (SNK15).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Validates rendering, input handling, Cloud Storage bucket auto-discovery messaging,
- * required-path validation states, JSON Lines mode, compression selection, sharding options,
- * and code generation instructions for JsonIOSinkProperties.
- * 
- * Architectural Decisions:
- * - Uses Vitest and React Testing Library for fast, realistic DOM interaction testing.
- * - Mocks window.vscode.postMessage to verify extension host IPC interactions.
- * - Tests both success and failure scenarios for dynamic storageBucketsLoaded message events.
- * - Verifies that 100% of event handlers, dropdowns, and checkboxes produce proper onChange payloads.
+ * Validates default rendering, required URI validation, StorageBackendFields multi-cloud
+ * and Secret Manager integration, saveMode, compression codecs, partitionBy, maxRecordsPerFile,
+ * ignoreNullFields, timestampFormat, dateFormat, lineSep, and SystemInstructionsField updates.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { JsonIOSinkProperties, JSON_SINK_COMPRESSION_TYPES } from './JsonIO';
+import { JsonIOSinkProperties, JsonSinkProperties } from './JsonIO';
 
-describe('JsonIOSinkProperties', () => {
+describe('JsonIOSinkProperties (SNK15 JsonSink)', () => {
   const mockOnChange = vi.fn();
   let originalVscode: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders with empty properties and flags validation error for missing to directory', () => {
-    const mockNode: any = {
-      data: {
-        label: 'JsonIO Sink',
-        spark_transform: 'JsonIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#jsonSinkTo') as HTMLInputElement;
-    expect(toInput).toBeInTheDocument();
-    expect(toInput).toHaveValue('');
-    expect(toInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Destination Directory is required.')).toBeInTheDocument();
+  it('exports JsonSinkProperties as an alias for JsonIOSinkProperties', () => {
+    expect(JsonSinkProperties).toBe(JsonIOSinkProperties);
   });
 
-  it('renders with populated properties and no validation error', () => {
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'JsonIO Sink',
-        spark_transform: 'JsonIO',
+        label: 'JsonSink',
+        type: 'SINK',
+        spark_transform: 'JsonSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
+    };
+
+    const { container } = render(
+      <JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    const pathInput = container.querySelector('#jsonSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output JSON URI / Path is required.')).toBeInTheDocument();
+
+    expect(container.querySelector('#jsonSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#jsonSinkCompression')).toHaveValue('none');
+    expect(container.querySelector('#jsonSinkIgnoreNullFields')).toBeChecked();
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
+  });
+
+  it('renders populated HDFS and formatting properties with legacy compression normalization', () => {
+    const mockNode: any = {
+      data: {
+        label: 'JsonSink',
+        spark_transform: 'JsonSink',
         properties: {
-          to: 'gs://output-bucket/json/events',
-          suffix: '.jsonl',
-          lines: true,
-          compression: 'GZIP',
-          numShards: 10,
-          shardTemplate: '-SSSSS-of-NNNNN',
-          system_instructions: 'Format events as newline-delimited JSON with GZIP compression'
-        }
-      }
+          path: 'hdfs://namenode:8020/data/events_json/',
+          saveMode: 'overwrite',
+          compression: 'ZSTD',
+          partitionBy: ['event_date'],
+          maxRecordsPerFile: 150000,
+          ignoreNullFields: false,
+          timestampFormat: "yyyy-MM-dd'T'HH:mm:ss'Z'",
+          dateFormat: 'yyyy/MM/dd',
+          lineSep: '\\r\\n',
+          system_instructions: 'Emit explicit nulls for audit feed',
+        },
+      },
     };
 
-    const { container } = render(<JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#jsonSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#jsonSinkSuffix') as HTMLInputElement;
-    const linesCheckbox = container.querySelector('#jsonSinkLines') as HTMLInputElement;
-    const compressionSelect = container.querySelector('#jsonSinkCompression') as HTMLSelectElement;
-    const shardsInput = container.querySelector('#jsonSinkNumShards') as HTMLInputElement;
-    const shardTemplateInput = container.querySelector('#jsonSinkShardTemplate') as HTMLInputElement;
-    const instructionsTextarea = container.querySelector('#jsonSinkInstructions') as HTMLTextAreaElement;
-
-    expect(toInput).toHaveValue('gs://output-bucket/json/events');
-    expect(toInput).toHaveAttribute('aria-invalid', 'false');
-    expect(screen.queryByText('Destination Directory is required.')).not.toBeInTheDocument();
-    expect(suffixInput).toHaveValue('.jsonl');
-    expect(linesCheckbox).toBeChecked();
-    expect(compressionSelect).toHaveValue('GZIP');
-    expect(shardsInput).toHaveValue(10);
-    expect(shardTemplateInput).toHaveValue('-SSSSS-of-NNNNN');
-    expect(instructionsTextarea).toHaveValue('Format events as newline-delimited JSON with GZIP compression');
-  });
-
-  it('handles field changes for destination directory, suffix, lines, and compression', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Change destination directory (.to)
-    const toInput = container.querySelector('#jsonSinkTo') as HTMLInputElement;
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 's3://analytics-export/json/records' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 's3://analytics-export/json/records'
-      })
+    const { container } = render(
+      <JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />
     );
 
-    // Change suffix
-    const suffixInput = container.querySelector('#jsonSinkSuffix') as HTMLInputElement;
-    fireEvent.change(suffixInput, {
-      target: { name: 'suffix', value: '.jsonl' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        suffix: '.jsonl'
-      })
+    expect(container.querySelector('#jsonSinkStorageBackend')).toHaveValue('hdfs');
+    expect(container.querySelector('#jsonSinkPath')).toHaveValue(
+      'hdfs://namenode:8020/data/events_json/'
     );
-
-    // Toggle lines checkbox
-    const linesCheckbox = container.querySelector('#jsonSinkLines') as HTMLInputElement;
-    expect(linesCheckbox).toBeChecked(); // default true
-    fireEvent.click(linesCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lines: false
-      })
+    expect(container.querySelector('#jsonSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#jsonSinkCompression')).toHaveValue('zstd');
+    expect(container.querySelector('#jsonSinkPartitionBy')).toHaveValue('event_date');
+    expect(container.querySelector('#jsonSinkMaxRecordsPerFile')).toHaveValue(150000);
+    expect(container.querySelector('#jsonSinkIgnoreNullFields')).not.toBeChecked();
+    expect(container.querySelector('#jsonSinkTimestampFormat')).toHaveValue(
+      "yyyy-MM-dd'T'HH:mm:ss'Z'"
     );
-
-    // Change compression
-    const compressionSelect = container.querySelector('#jsonSinkCompression') as HTMLSelectElement;
-    fireEvent.change(compressionSelect, {
-      target: { name: 'compression', value: 'BZIP2' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        compression: 'BZIP2'
-      })
+    expect(container.querySelector('#jsonSinkDateFormat')).toHaveValue('yyyy/MM/dd');
+    expect(container.querySelector('#jsonSinkLineSep')).toHaveValue('\\r\\n');
+    expect(container.querySelector('#jsonSinkInstructions')).toHaveValue(
+      'Emit explicit nulls for audit feed'
     );
   });
 
-  it('handles sharding configuration changes (numShards and shardTemplate)', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Change numShards
-    const shardsInput = container.querySelector('#jsonSinkNumShards') as HTMLInputElement;
-    fireEvent.change(shardsInput, {
-      target: { name: 'numShards', value: '8' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        numShards: '8'
-      })
-    );
-
-    // Change shardTemplate
-    const shardTemplateInput = container.querySelector('#jsonSinkShardTemplate') as HTMLInputElement;
-    fireEvent.change(shardTemplateInput, {
-      target: { name: 'shardTemplate', value: '-W-P-SS-of-NN' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        shardTemplate: '-W-P-SS-of-NN'
-      })
-    );
-  });
-
-  it('updates system_instructions when instructions textarea changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsTextarea = container.querySelector('#jsonSinkInstructions') as HTMLTextAreaElement;
-    fireEvent.change(instructionsTextarea, {
-      target: { value: 'Write output records partitioned into 10 shards as JSON Lines' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'Write output records partitioned into 10 shards as JSON Lines'
-      })
-    );
-  });
-
-  it('omits unsupported XZ compression codec and documents Java JsonIO.writeRows vs Python WriteToJson for lines and compression (regression test)', () => {
+  it('propagates changes across all JSON sink fields and system_instructions', () => {
     const mockNode: any = {
       data: {
         properties: {
-          to: 'gs://valid-sink-bucket/json/output'
-        }
-      }
+          path: 'gs://my-bucket/json/',
+        },
+      },
     };
 
-    const { container } = render(<JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <JsonIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    // XZ is not in Beam's Compression enum and must not be offered
-    expect(JSON_SINK_COMPRESSION_TYPES.map((c) => c.value)).not.toContain('XZ');
-    const compressionSelect = container.querySelector('#jsonSinkCompression') as HTMLSelectElement;
-    const optionValues = Array.from(compressionSelect.querySelectorAll('option')).map((opt) => opt.value);
-    expect(optionValues).not.toContain('XZ');
-    expect(optionValues).toEqual(['UNCOMPRESSED', 'GZIP', 'BZIP2', 'DEFLATE', 'ZSTD']);
+    fireEvent.change(container.querySelector('#jsonSinkPath')!, {
+      target: { name: 'path', value: 'gs://my-bucket/json_v2/' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'gs://my-bucket/json_v2/' })
+    );
 
-    // Helper texts clearly state Java JsonIO.writeRows(to) vs Python WriteToJson behavior
-    expect(screen.getByText(/unconditionally newline-delimited JSON/i)).toBeInTheDocument();
-    expect(screen.getByText(/supports/i)).toBeInTheDocument();
-    expect(screen.getByText(/\.withCompression\(Compression\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/does not accept a/i)).toBeInTheDocument();
+    fireEvent.change(container.querySelector('#jsonSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'ignore' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ saveMode: 'ignore' }));
+
+    fireEvent.change(container.querySelector('#jsonSinkCompression')!, {
+      target: { name: 'compression', value: 'gzip' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ compression: 'gzip' }));
+
+    fireEvent.change(container.querySelector('#jsonSinkPartitionBy')!, {
+      target: { name: 'partitionBy', value: 'dt, source' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ partitionBy: 'dt, source' })
+    );
+
+    fireEvent.change(container.querySelector('#jsonSinkMaxRecordsPerFile')!, {
+      target: { name: 'maxRecordsPerFile', value: '80000' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRecordsPerFile: '80000' })
+    );
+
+    fireEvent.click(container.querySelector('#jsonSinkIgnoreNullFields')!);
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ ignoreNullFields: false })
+    );
+
+    fireEvent.change(container.querySelector('#jsonSinkTimestampFormat')!, {
+      target: { name: 'timestampFormat', value: 'yyyy-MM-dd HH:mm:ss' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ timestampFormat: 'yyyy-MM-dd HH:mm:ss' })
+    );
+
+    fireEvent.change(container.querySelector('#jsonSinkDateFormat')!, {
+      target: { name: 'dateFormat', value: 'yyyyMMdd' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ dateFormat: 'yyyyMMdd' }));
+
+    fireEvent.change(container.querySelector('#jsonSinkLineSep')!, {
+      target: { name: 'lineSep', value: '\\n' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ lineSep: '\\n' }));
+
+    fireEvent.change(container.querySelector('#jsonSinkInstructions')!, {
+      target: { value: 'Compress output with gzip' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Compress output with gzip' })
+    );
   });
 });

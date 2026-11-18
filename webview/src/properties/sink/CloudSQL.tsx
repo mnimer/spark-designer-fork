@@ -1,98 +1,74 @@
 /**
- * CloudSQL Sink Properties Component (IO74)
+ * @fileoverview Cloud SQL Sink Properties Component (SNK22).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Google Cloud SQL (PostgreSQL) Sink nodes
- * in Apache Beam Python pipelines, traced to jccatrinck/dataflow-cloud-sql-python
- * (`transformations/db.py` WriteIntoDB / WriteIntoDBFn, `.env-example`, `Makefile`, `devops/entrypoint.sh`).
- *
- * Documentation Traceability:
- * - Repository: https://github.com/jccatrinck/dataflow-cloud-sql-python
- * - WriteIntoDB(url, table, update_ignores=()): https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/transformations/db.py#L33-L82
- * - DB_URL & CLOUD_SQL_INSTANCES: https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/.env-example#L5-L6
- * - Drivers (pg8000, psycopg2): https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/Makefile#L17-L20
+ * Renders the property configuration panel for Google Cloud SQL Sink nodes
+ * in Apache Spark 4.x pipelines (.write.format("jdbc") and streaming foreachBatch
+ * via the Cloud SQL JDBC Socket Factory).
  *
  * Architectural Decisions:
- * - Upstream WriteIntoDBFn reflects an existing PostgreSQL table and performs a primary-key upsert via
- *   `sqlalchemy.dialects.postgresql.insert(table).values(data).on_conflict_do_update(...)`, excluding
- *   columns in `update_ignores` from the UPDATE SET clause.
- * - Decomposes DB_URL into cloudSqlInstance, dbDriver, database, username, and passwordSecret so no
- *   plaintext password is ever stored in the pipeline YAML (R3).
- * - Uses useAssetLoader('sqlInstances') and gated useAssetLoader('sqlDatabases') with PropertyField
- *   datalists following the PubSubIO discovery pattern (R2).
- * - Standardized on SQLAlchemy 2.x API (`sqlalchemy.Table(..., autoload_with=engine)`) matching
- *   upstream WriteIntoDB semantics on Python 3.11 / Beam 2.55+.
+ * - Supports PostgreSQL, MySQL, and SQL Server engines over Cloud SQL Socket Factory,
+ *   displaying the Conscrypt removal requirement when SQL Server is selected.
+ * - Uses useAssetLoader('sqlInstances') and gated useAssetLoader('sqlDatabases') for live
+ *   GCP Cloud SQL discovery.
+ * - Exposes Spark saveMode with safe truncate=true default on overwrite so indexes and
+ *   foreign keys survive, plus batchsize=5000, isolationLevel, and numPartitions.
+ * - Supports IAM database authentication or Google Cloud Secret Manager credentials.
  */
 
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import {
+  SecretManagerAuthFields,
+  type AuthModeOption,
+} from '../../components/common/SecretManagerAuthFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
-import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { SecretManagerSecretField } from '../../components/common/SecretManagerSecretField';
-import { ExternalDocsLink } from '../../components/common/ExternalDocsLink';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { useNodeProperties } from '../../hooks/useNodeProperties';
+import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
-export const CLOUD_SQL_DOC_URL = 'https://github.com/jccatrinck/dataflow-cloud-sql-python';
-export const CLOUD_SQL_DB_DOC_URL =
-  'https://github.com/jccatrinck/dataflow-cloud-sql-python/blob/master/transformations/db.py';
-export const DEFAULT_DB_DRIVER = 'postgresql+pg8000';
+export type CloudSqlDbEngine = 'postgresql' | 'mysql' | 'sqlserver';
+export type CloudSqlAuthMode = 'iam' | 'secret_manager';
+export type CloudSqlSaveMode = 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+export type CloudSqlIsolationLevel =
+  | 'READ_COMMITTED'
+  | 'READ_UNCOMMITTED'
+  | 'REPEATABLE_READ'
+  | 'SERIALIZABLE'
+  | 'NONE';
 
-/**
- * Matches a Cloud SQL instance connection name `[domain:]project:region:instance`.
- */
 const CONNECTION_NAME_RE = /^(?:[a-z0-9.-]+:)?[a-z0-9-]+:[a-z0-9-]+:[a-z][a-z0-9-]*$/i;
-
-const DB_DRIVER_OPTIONS = [
-  { value: 'postgresql+pg8000', label: 'PostgreSQL (pg8000) — repository default' },
-  { value: 'postgresql+psycopg2', label: 'PostgreSQL (psycopg2)' },
-] as const;
-
-/**
- * Database name cannot contain whitespace or URI delimiter characters.
- */
 const DATABASE_RE = /^[^\s/?#@:]+$/;
-
-/**
- * Username and table name cannot contain whitespace.
- */
 const NO_WHITESPACE_RE = /^\S+$/;
 
-/**
- * Validates the optional comma-separated column list for `WriteIntoDB(update_ignores=...)`.
- *
- * @param raw Raw input string.
- * @returns Validation error message, or null when blank or valid comma-separated identifiers.
- */
-function validateUpdateIgnores(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const tokens = raw.split(',').map((t) => t.trim());
-  if (tokens.some((t) => t.length === 0 || /\s/.test(t))) {
-    return 'Enter comma-separated column names, e.g. created_at, created_by';
-  }
-  return null;
-}
+const CLOUD_SQL_AUTH_OPTIONS: AuthModeOption[] = [
+  { value: 'iam', label: 'Cloud SQL IAM Database Authentication (enableIamAuth=true)' },
+  { value: 'secret_manager', label: 'Google Cloud Secret Manager (Password Secret)' },
+];
 
-/**
- * Props for the CloudSQLSinkProperties component.
- */
+/** Props for the {@link CloudSQLSinkProperties} component. */
 export interface CloudSQLSinkPropertiesProps {
   node: {
     data: {
       properties?: {
+        instanceConnectionName?: string;
         cloudSqlInstance?: string;
-        dbDriver?: string;
+        dbEngine?: CloudSqlDbEngine;
         database?: string;
-        username?: string;
-        passwordSecret?: string;
         table?: string;
-        updateIgnores?: string;
+        saveMode?: CloudSqlSaveMode;
+        truncate?: boolean;
+        batchsize?: number | string;
+        isolationLevel?: CloudSqlIsolationLevel;
+        numPartitions?: number | string;
+        authMode?: CloudSqlAuthMode | string;
+        username?: string;
+        secretName?: string;
+        passwordSecret?: string;
+        driverJarUri?: string;
+        socketFactoryJarUri?: string;
         system_instructions?: string;
         special_instructions?: string;
         [key: string]: unknown;
@@ -105,44 +81,58 @@ export interface CloudSQLSinkPropertiesProps {
 }
 
 /**
- * Dedicated property panel for the Cloud SQL sink node. Configures database connection, table, credentials, and update rules.
- *
- * @param props The selected node and the onChange callback used to persist edits.
+ * Dedicated property panel for the Apache Spark Cloud SQL sink node (.write.format("jdbc")).
  */
-export const CloudSQLSinkProperties: React.FC<CloudSQLSinkPropertiesProps> = ({ node, onChange }) => {
-  const { properties, handleChange } = useNodeProperties(node, onChange);
+export const CloudSQLSinkProperties: React.FC<CloudSQLSinkPropertiesProps> = ({
+  node,
+  onChange,
+}) => {
+  const properties = node?.data?.properties || {};
 
-  const cloudSqlInstance = properties.cloudSqlInstance || '';
-  const dbDriver = properties.dbDriver || DEFAULT_DB_DRIVER;
+  const instanceConnectionName = String(
+    properties.instanceConnectionName ?? properties.cloudSqlInstance ?? ''
+  );
+  const dbEngine: CloudSqlDbEngine = properties.dbEngine || 'postgresql';
   const database = properties.database || '';
-  const username = properties.username || '';
-  const passwordSecret = properties.passwordSecret || '';
   const table = properties.table || '';
-  const updateIgnores = properties.updateIgnores || '';
+  const saveMode: CloudSqlSaveMode = properties.saveMode || 'append';
+  const truncate = properties.truncate ?? true;
+  const batchsize = properties.batchsize ?? 5000;
+  const isolationLevel: CloudSqlIsolationLevel = properties.isolationLevel || 'READ_COMMITTED';
+  const numPartitions = properties.numPartitions ?? '';
+  const authMode =
+    dbEngine === 'sqlserver' && !properties.authMode
+      ? 'secret_manager'
+      : properties.authMode || 'iam';
+  const username = properties.username || '';
+  const secretName = String(properties.secretName ?? properties.passwordSecret ?? '');
+  const driverJarUri = properties.driverJarUri || '';
+  const socketFactoryJarUri = properties.socketFactoryJarUri || '';
 
-  // Dynamic gcloud discovery (R2 PubSubIO datalist pattern)
-  const { items: sqlInstances, loading: sqlInstancesLoading, error: sqlInstancesError } = useAssetLoader<string>('sqlInstances');
+  const {
+    items: sqlInstances,
+    loading: sqlInstancesLoading,
+    error: sqlInstancesError,
+  } = useAssetLoader<string>('sqlInstances');
 
-  const instanceTrimmed = cloudSqlInstance.trim();
+  const instanceTrimmed = instanceConnectionName.trim();
   const instanceWellFormed = CONNECTION_NAME_RE.test(instanceTrimmed);
 
-  // Gate sqlDatabases discovery on a well-formed connection name to avoid per-keystroke CLI calls
-  const { items: sqlDatabases, loading: sqlDatabasesLoading, error: sqlDatabasesError } = useAssetLoader<string>('sqlDatabases', {
+  const {
+    items: sqlDatabases,
+    loading: sqlDatabasesLoading,
+    error: sqlDatabasesError,
+  } = useAssetLoader<string>('sqlDatabases', {
     params: { instance: instanceTrimmed },
     enabled: instanceWellFormed,
   });
 
-  const databaseOptions = instanceWellFormed ? sqlDatabases : [];
-  const databaseDiscoveryError = instanceWellFormed ? sqlDatabasesError : null;
-
-  // Field validation
   const isInstanceEmpty = instanceTrimmed.length === 0;
   const instanceFormatError =
     !isInstanceEmpty && !instanceWellFormed
-      ? 'Use the instance connection name PROJECT:REGION:INSTANCE (see gcloud sql instances list).'
+      ? 'Use the instance connection name PROJECT:REGION:INSTANCE'
       : null;
   const instanceError = instanceFormatError ?? sqlInstancesError;
-  const isInstanceInvalid = isInstanceEmpty || Boolean(instanceError);
 
   const databaseTrimmed = database.trim();
   const isDatabaseEmpty = databaseTrimmed.length === 0;
@@ -150,175 +140,282 @@ export const CloudSQLSinkProperties: React.FC<CloudSQLSinkPropertiesProps> = ({ 
     !isDatabaseEmpty && !DATABASE_RE.test(databaseTrimmed)
       ? 'Database name cannot contain spaces or / ? # @ :'
       : null;
-  const databaseError = databaseFormatError ?? databaseDiscoveryError;
-  const isDatabaseInvalid = isDatabaseEmpty || Boolean(databaseError);
-
-  const usernameTrimmed = username.trim();
-  const isUsernameEmpty = usernameTrimmed.length === 0;
-  const usernameError =
-    !isUsernameEmpty && !NO_WHITESPACE_RE.test(usernameTrimmed) ? 'Username cannot contain whitespace' : null;
-  const isUsernameInvalid = isUsernameEmpty || Boolean(usernameError);
-
-  const isPasswordSecretEmpty = passwordSecret.trim().length === 0;
+  const databaseError =
+    databaseFormatError ?? (instanceWellFormed ? sqlDatabasesError : null);
 
   const tableTrimmed = table.trim();
   const isTableEmpty = tableTrimmed.length === 0;
   const tableError =
-    !isTableEmpty && !NO_WHITESPACE_RE.test(tableTrimmed) ? 'Table name cannot contain whitespace' : null;
-  const isTableInvalid = isTableEmpty || Boolean(tableError);
-
-  const updateIgnoresError = validateUpdateIgnores(updateIgnores);
+    !isTableEmpty && !NO_WHITESPACE_RE.test(tableTrimmed)
+      ? 'Table name cannot contain whitespace'
+      : null;
 
   const systemInstructions = resolveSystemInstructions(node);
 
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value, type } = e.target;
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    if (name === 'instanceConnectionName') {
+      delete next.cloudSqlInstance;
+    }
+    if (name === 'secretName') {
+      delete next.passwordSecret;
+    }
+    onChange(next);
+  };
+
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Header & Documentation Link */}
-      <div className="flex flex-col gap-1.5 p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs text-slate-300">
+      {/* Connector Header Badge */}
+      <div className="flex flex-col gap-1 p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
         <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-200">Cloud SQL (PostgreSQL) Sink</span>
-          <ExternalDocsLink
-            url={CLOUD_SQL_DOC_URL}
-            ariaLabel="Open Cloud SQL connector documentation"
-            className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer shrink-0 focus:outline-none"
-          />
+          <span className="font-semibold text-slate-200">
+            Spark Cloud SQL JDBC + Socket Factory
+          </span>
+          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[11px]">
+            {'.format("jdbc") · foreachBatch'}
+          </span>
         </div>
-        <p className="text-slate-400">
-          Writes batched rows into a Google Cloud SQL for PostgreSQL table via the Cloud SQL Connector or Auth Proxy.
-        </p>
+        {dbEngine === 'sqlserver' && (
+          <span className="text-[11px] text-amber-300 font-mono">
+            Requires spark property: dataproc.artifacts.remove=conscrypt
+          </span>
+        )}
       </div>
 
-      {/* Instance Connection Name */}
+      {/* Instance Connection Name, Engine, Database, and Table */}
       <PropertyField
         id="cloudSqlSinkInstance"
-        name="cloudSqlInstance"
+        name="instanceConnectionName"
         label="Instance Connection Name"
-        required
-        tooltip="Cloud SQL for PostgreSQL instance connection name (PROJECT:REGION:INSTANCE). Reached via Cloud SQL Python Connector or Auth Proxy unix socket /cloudsql/<connection name>. PostgreSQL instances only."
-        value={cloudSqlInstance}
-        invalid={isInstanceInvalid}
-        error={instanceError}
+        required="Instance connection name is required"
+        tooltip="Cloud SQL instance connection name (project:region:instance)."
+        value={instanceConnectionName}
+        invalid={isInstanceEmpty || Boolean(instanceError)}
+        error={isInstanceEmpty ? 'Instance connection name is required' : instanceError}
         onChange={handleChange}
         placeholder="my-project:us-central1:my-instance"
         list="cloudsql-sink-instance-options"
         datalist={sqlInstances}
         loading={sqlInstancesLoading}
-        helperText={
-          <span>
-            Sample:{' '}
-            <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">
-              my-project:us-central1:my-instance
-            </code>
-          </span>
-        }
+        mono={true}
       />
 
-      {/* Database Driver */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="cloudSqlSinkDriver" className="flex items-center text-xs font-bold uppercase text-slate-500">
-          <span>Database Driver</span>
-          <span className="text-red-400 ml-1 font-bold" title="Required">
-            *
-          </span>
-          <InfoTooltip text="SQLAlchemy dialect+driver prefix of the database engine (postgresql+pg8000 default, or postgresql+psycopg2). Only PostgreSQL is supported because WriteIntoDB uses PostgreSQL-specific ON CONFLICT DO UPDATE SQL." />
-        </label>
-        <select
-          id="cloudSqlSinkDriver"
-          name="dbDriver"
-          aria-required="true"
-          value={dbDriver}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="cloudSqlSinkDbEngine"
+            className="flex items-center text-xs font-bold uppercase text-slate-500"
+          >
+            <span>Database Engine</span>
+            <InfoTooltip text="Cloud SQL database engine determining the JDBC driver and Socket Factory class." />
+          </label>
+          <select
+            id="cloudSqlSinkDbEngine"
+            name="dbEngine"
+            value={dbEngine}
+            onChange={handleChange}
+            className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="postgresql">PostgreSQL</option>
+            <option value="mysql">MySQL</option>
+            <option value="sqlserver">SQL Server</option>
+          </select>
+        </div>
+
+        <PropertyField
+          id="cloudSqlSinkDatabase"
+          name="database"
+          label="Database"
+          required="Database is required"
+          tooltip="Destination database name on the Cloud SQL instance."
+          value={database}
+          invalid={isDatabaseEmpty || Boolean(databaseError)}
+          error={isDatabaseEmpty ? 'Database is required' : databaseError}
           onChange={handleChange}
-          className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
-        >
-          {DB_DRIVER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+          placeholder="postgres"
+          list="cloudsql-sink-database-options"
+          datalist={instanceWellFormed ? sqlDatabases : []}
+          loading={instanceWellFormed ? sqlDatabasesLoading : false}
+          mono={true}
+        />
       </div>
 
-      {/* Database */}
-      <PropertyField
-        id="cloudSqlSinkDatabase"
-        name="database"
-        label="Database"
-        required
-        tooltip="Database name on the selected Cloud SQL instance (the database_name part of DB_URL). Suggestions load from gcloud sql databases list after a valid instance connection name is entered."
-        value={database}
-        invalid={isDatabaseInvalid}
-        error={databaseError}
-        onChange={handleChange}
-        placeholder="postgres"
-        list="cloudsql-sink-database-options"
-        datalist={databaseOptions}
-        loading={instanceWellFormed ? sqlDatabasesLoading : false}
-        helperText={
-          <span>
-            Sample: <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">postgres</code>
-          </span>
-        }
-      />
-
-      {/* Username */}
-      <PropertyField
-        id="cloudSqlSinkUsername"
-        name="username"
-        label="Username"
-        required
-        tooltip="Database user (the user part of DB_URL)."
-        value={username}
-        invalid={isUsernameInvalid}
-        error={usernameError}
-        onChange={handleChange}
-        placeholder="postgres"
-      />
-
-      {/* Password Secret */}
-      <SecretManagerSecretField
-        id="cloudSqlSinkPasswordSecret"
-        name="passwordSecret"
-        label="Password Secret"
-        required
-        tooltip="Secret Manager secret holding the database password (the password part of DB_URL). Resolved at pipeline construction; the password is never stored in the pipeline."
-        value={passwordSecret}
-        invalid={isPasswordSecretEmpty}
-        onChange={handleChange}
-        datalistId="cloudsql-sink-secret-options"
-      />
-
-      {/* Table */}
       <PropertyField
         id="cloudSqlSinkTable"
         name="table"
-        label="Table"
-        required
-        tooltip="Existing PostgreSQL table to upsert into (WriteIntoDB table). Reflected at runtime via sqlalchemy.Table(table, metadata, autoload_with=engine) and must have a primary key: rows are written with INSERT … ON CONFLICT (primary key) DO UPDATE."
+        label="Destination Table"
+        required="Table name is required"
+        tooltip="Destination database table name passed to .option('dbtable', ...), such as public.orders."
         value={table}
-        invalid={isTableInvalid}
-        error={tableError}
+        invalid={isTableEmpty || Boolean(tableError)}
+        error={isTableEmpty ? 'Table name is required' : tableError}
         onChange={handleChange}
-        placeholder="orders"
+        placeholder="public.orders"
+        mono={true}
       />
 
-      {/* Columns Not Updated on Conflict */}
-      <PropertyField
-        id="cloudSqlSinkUpdateIgnores"
-        name="updateIgnores"
-        label="Columns Not Updated on Conflict"
-        tooltip="Comma-separated columns excluded from the UPDATE SET when a row with the same primary key already exists (WriteIntoDB update_ignores). Those columns keep their existing values."
-        value={updateIgnores}
-        invalid={Boolean(updateIgnoresError)}
-        error={updateIgnoresError}
-        onChange={handleChange}
-        placeholder="created_at, created_by"
-      />
+      {/* Save Mode, Safe Truncate, Batch Size, and Isolation Level */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <label className="flex items-center text-xs font-bold uppercase text-slate-500">
+          <span>JDBC Write and Transaction Settings</span>
+          <InfoTooltip text="Configure Spark JDBC save mode, safe table truncation, multi-row insert batch size, and transaction isolation." />
+        </label>
 
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="cloudSqlSinkSaveMode"
+              className="flex items-center text-xs font-bold uppercase text-slate-500"
+            >
+              <span>Save Mode</span>
+              <InfoTooltip text="Spark DataFrameWriter save mode (.mode(...))." />
+            </label>
+            <select
+              id="cloudSqlSinkSaveMode"
+              name="saveMode"
+              value={saveMode}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="append">Append (append)</option>
+              <option value="overwrite">Overwrite (overwrite)</option>
+              <option value="errorifexists">Error If Exists (errorifexists)</option>
+              <option value="ignore">Ignore If Exists (ignore)</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="cloudSqlSinkIsolationLevel"
+              className="flex items-center text-xs font-bold uppercase text-slate-500"
+            >
+              <span>Isolation Level</span>
+              <InfoTooltip text="JDBC transaction isolation level per executor partition (.option('isolationLevel', ...))." />
+            </label>
+            <select
+              id="cloudSqlSinkIsolationLevel"
+              name="isolationLevel"
+              value={isolationLevel}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="READ_COMMITTED">READ_COMMITTED</option>
+              <option value="READ_UNCOMMITTED">READ_UNCOMMITTED</option>
+              <option value="REPEATABLE_READ">REPEATABLE_READ</option>
+              <option value="SERIALIZABLE">SERIALIZABLE</option>
+              <option value="NONE">NONE</option>
+            </select>
+          </div>
+        </div>
+
+        {saveMode === 'overwrite' && (
+          <div className="flex items-center gap-2">
+            <input
+              id="cloudSqlSinkTruncate"
+              type="checkbox"
+              name="truncate"
+              checked={truncate}
+              onChange={handleChange}
+              className="w-4 h-4 rounded border-slate-700 text-blue-600 bg-[#252836]"
+            />
+            <label
+              htmlFor="cloudSqlSinkTruncate"
+              className="flex items-center text-xs text-slate-300 cursor-pointer"
+            >
+              <span>Safe Truncate on Overwrite (truncate=true)</span>
+              <InfoTooltip text="Executes TRUNCATE TABLE instead of DROP and CREATE so primary keys, indexes, foreign keys, and grants survive." />
+            </label>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="cloudSqlSinkBatchsize"
+            name="batchsize"
+            label="Batch Size"
+            type="number"
+            min={1}
+            tooltip="Number of rows grouped per JDBC batch insert round trip (default 5000)."
+            value={batchsize}
+            onChange={handleChange}
+            placeholder="5000"
+            mono={true}
+          />
+
+          <PropertyField
+            id="cloudSqlSinkNumPartitions"
+            name="numPartitions"
+            label="Max Write Partitions (Optional)"
+            type="number"
+            min={1}
+            tooltip="Optional maximum parallel JDBC writer connections (.option('numPartitions', ...)) to protect Cloud SQL max_connections."
+            value={numPartitions}
+            onChange={handleChange}
+            placeholder="e.g. 8"
+            mono={true}
+          />
+        </div>
+      </div>
+
+      {/* Authentication */}
+      <div className="flex flex-col gap-3 p-3 rounded bg-slate-800/30 border border-slate-700/60">
+        <PropertyField
+          id="cloudSqlSinkUsername"
+          name="username"
+          label="Database Username"
+          tooltip="Database user account or Cloud SQL IAM principal name."
+          value={username}
+          onChange={handleChange}
+          placeholder="postgres"
+          mono={true}
+        />
+
+        <SecretManagerAuthFields
+          idPrefix="cloudSqlSink"
+          serviceName="Cloud SQL"
+          authMode={authMode}
+          secretName={secretName}
+          authOptions={CLOUD_SQL_AUTH_OPTIONS}
+          secretManagerValue="secret_manager"
+          datalistId="cloudsql-sink-secret-options"
+          secretPlaceholder="e.g. cloudsql-db-password"
+          onChange={handleChange}
+        />
+      </div>
+
+      {/* Runtime JAR URIs */}
+      <div className="grid grid-cols-2 gap-2">
+        <PropertyField
+          id="cloudSqlSinkDriverJarUri"
+          name="driverJarUri"
+          label="JDBC Driver JAR URI (gs://)"
+          tooltip="Cloud Storage URI for the JDBC driver JAR passed to --jars."
+          value={driverJarUri}
+          onChange={handleChange}
+          placeholder="gs://my-bucket/jars/postgresql-42.7.4.jar"
+          mono={true}
+        />
+        <PropertyField
+          id="cloudSqlSinkSocketFactoryJarUri"
+          name="socketFactoryJarUri"
+          label="Socket Factory Uber JAR URI (gs://)"
+          tooltip="Cloud Storage URI for the Cloud SQL JDBC Socket Factory Uber JAR."
+          value={socketFactoryJarUri}
+          onChange={handleChange}
+          placeholder="gs://my-bucket/jars/postgres-socket-factory-1.21.0-jar-with-dependencies.jar"
+          mono={true}
+        />
+      </div>
+
+      {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="cloudSqlSinkSystemInstructions"
         value={systemInstructions}
-        placeholder="Enter custom instructions for Cloud SQL sink code generation..."
-        wrapperClassName="flex flex-col gap-2 pt-2 border-t border-slate-700/60"
+        placeholder="Enter custom instructions for Spark Cloud SQL sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -329,3 +426,5 @@ export const CloudSQLSinkProperties: React.FC<CloudSQLSinkPropertiesProps> = ({ 
     </div>
   );
 };
+
+export const CloudSqlSinkProperties = CloudSQLSinkProperties;

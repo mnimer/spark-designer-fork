@@ -183,8 +183,10 @@ export const PYTHON_DATASOURCE_TRANSFORMS: ReadonlySet<string> = new Set<string>
     'FirestoreSource',
     'FirestoreSink',
     'CassandraSource',
+    'CassandraSink',
     'RedisSource',
     'RedisSink',
+    'ForeachBatchSink',
 ]);
 
 /**

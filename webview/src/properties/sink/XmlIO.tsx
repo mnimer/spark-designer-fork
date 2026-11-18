@@ -1,37 +1,48 @@
 /**
- * XmlIO Sink Properties Component
- * 
+ * @fileoverview XML Sink (SNK17 XmlSink / XmlIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam XmlIO Sink nodes
- * (XmlIO.<T>write().to(prefix).withRecordClass(Class).withRootElement(root).withCharset(...)...).
- * 
- * Architectural Decisions:
- * - Native Java connector: org.apache.beam.sdk.io.xml.XmlIO requires destination prefix (.to) and rootElement.
- * - JAXB Marshalling: recordClass specifies the fully qualified name of the JAXB-annotated entity class.
- * - Dynamic Discovery: Delegates the destination prefix field to the shared StoragePathField, which
- *   owns Cloud Storage bucket discovery, gs:// datalist projection, and the discovery-error alert.
- * - Cross-Language Note: Beam Python has no native XmlIO, requiring cross-language expansion service (ExternalTransform).
- *   Displays read-only informational guidance and optional expansionService configuration.
- * - Sharding Controls: Exposes numShards and shardTemplate within a collapsible configuration section.
- * - Adheres strictly to the 8pt grid system, VS Code theme variables, and Tailwind CSS.
+ * Renders the property configuration panel for Apache Spark 4.0 built-in XML sink nodes
+ * using df.write.format("xml").save(uri) and foreachBatch for Structured Streaming.
+ * Embeds the shared StorageBackendFields component alongside Spark 4.x saveMode,
+ * compression codecs, partitionBy columns, maxRecordsPerFile, rootTag, rowTag,
+ * declaration, nullValue, attributePrefix, valueTag, and SystemInstructionsField.
  */
 
-import React, { useState } from 'react';
-import { Sliders } from 'lucide-react';
-import { InfoTooltip } from '../../components/InfoTooltip';
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
-import { SelectField } from '../../components/common/SelectField';
-import { StoragePathField } from '../../components/common/StoragePathField';
-import { MappingStrategyField, type MappingStrategy } from '../../components/common/MappingStrategyField';
-import { resolveSchemaFields, type SchemaField } from '../../components/common/SchemaEditor';
 
 /**
- * Node definition for XmlIO sink configuration.
+ * Supported Spark 4.x batch DataFrameWriter save modes.
+ */
+export const XML_SAVE_MODES: SelectFieldOption[] = [
+  { value: 'append', label: 'append (Append rows to existing path)' },
+  { value: 'overwrite', label: 'overwrite (Replace existing data)' },
+  { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
+  { value: 'ignore', label: 'ignore (Skip write if destination exists)' },
+];
+
+/**
+ * Supported Spark 4.0 built-in XML writer compression codecs.
+ */
+export const XML_COMPRESSION_CODECS: SelectFieldOption[] = [
+  { value: 'none', label: 'none (Uncompressed XML)' },
+  { value: 'gzip', label: 'gzip (.xml.gz)' },
+  { value: 'zstd', label: 'zstd (.xml.zst)' },
+  { value: 'bzip2', label: 'bzip2 (.xml.bz2)' },
+  { value: 'lz4', label: 'lz4 (.xml.lz4)' },
+  { value: 'snappy', label: 'snappy (.xml.snappy)' },
+];
+
+/**
+ * React Flow node shape for the XML sink panel.
  */
 export interface XmlIOSinkNode {
   data: {
@@ -40,17 +51,24 @@ export interface XmlIOSinkNode {
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      storageBackend?: string;
+      path?: string;
       to?: string;
-      suffix?: string;
+      uri?: string;
+      authMode?: string;
+      secretName?: string;
+      saveMode?: 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+      mode?: string;
+      compression?: 'none' | 'gzip' | 'zstd' | 'bzip2' | 'lz4' | 'snappy' | string;
+      partitionBy?: string | string[];
+      maxRecordsPerFile?: string | number;
+      rootTag?: string;
       rootElement?: string;
-      mappingStrategy?: MappingStrategy | string;
-      schemaString?: string;
-      schema?: string;
-      schemaFields?: SchemaField[];
-      charset?: string;
-      numShards?: string | number;
-      shardTemplate?: string;
-      expansionService?: string;
+      rowTag?: string;
+      declaration?: string;
+      nullValue?: string;
+      attributePrefix?: string;
+      valueTag?: string;
       system_instructions?: string;
       special_instructions?: string;
       [key: string]: any;
@@ -59,262 +77,238 @@ export interface XmlIOSinkNode {
 }
 
 /**
- * Props for the XmlIOSinkProperties component.
+ * Props for the {@link XmlIOSinkProperties} component.
  */
 export interface XmlIOSinkPropertiesProps {
   node: XmlIOSinkNode;
   onChange: (properties: any) => void;
 }
 
-export const XML_SINK_CHARSETS = [
-  { value: 'UTF-8', label: 'UTF-8 (Standard)' },
-  { value: 'UTF-16', label: 'UTF-16' },
-  { value: 'ISO-8859-1', label: 'ISO-8859-1 (Latin-1)' }
-];
-
 /**
- * Informational note for Python cross-language expansion requirements.
+ * Normalizes a raw XML compression codec value to a canonical Spark codec name.
  */
-export const PythonCrossLanguageNote: React.FC = () => (
-  <div className="text-[11px] text-[var(--vscode-text-muted)] leading-relaxed">
-    <strong>Python Cross-Language:</strong> Apache Beam Python does not provide a native <code>XmlIO</code> connector. Python pipelines connect to <code>XmlIO</code> via the Java expansion service (<code>apache_beam.transforms.xlang</code> / <code>ExternalTransform</code>).
-  </div>
-);
+function normalizeXmlCompression(raw?: string): string {
+  const lower = (raw ?? '').trim().toLowerCase();
+  if (!lower || lower === 'uncompressed') {
+    return 'none';
+  }
+  if (XML_COMPRESSION_CODECS.some((opt) => opt.value === lower)) {
+    return lower;
+  }
+  return 'none';
+}
 
 /**
- * XmlIOSinkProperties renders the configuration form for writing XML files with Apache Beam.
+ * Formats a partitionBy property value as a comma-separated column list string.
+ */
+function resolvePartitionByValue(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.join(', ');
+  }
+  return typeof raw === 'string' ? raw : '';
+}
+
+/**
+ * Dedicated property panel for Apache Spark 4.0 XmlSink / XmlIO sink nodes.
+ *
+ * @param props Selected node and change callback.
+ * @returns Rendered XML sink property panel.
  */
 export const XmlIOSinkProperties: React.FC<XmlIOSinkPropertiesProps> = ({ node, onChange }) => {
   const properties = node.data.properties || {};
-  const to = properties.to || '';
-  const suffix = properties.suffix ?? '.xml';
-  const rootElement = properties.rootElement || '';
-  const schemaFields = React.useMemo(
-    () => resolveSchemaFields(properties),
-    [properties.schemaFields, properties.schema, properties.schemaString]
-  );
-  const mappingStrategy =
-    properties.mappingStrategy || (schemaFields.length > 0 ? 'schema' : 'infer');
-  const charset = properties.charset || 'UTF-8';
-  const numShards = properties.numShards ?? '';
-  const shardTemplate = properties.shardTemplate || '';
-  const expansionService = properties.expansionService || '';
+  const storageProperties =
+    properties.path === undefined && typeof properties.to === 'string' && properties.to.length > 0
+      ? { ...properties, path: properties.to }
+      : properties;
 
-  const [isShardingOpen, setIsShardingOpen] = useState<boolean>(true);
-
-  // Validation: destination directory/prefix (.to) and rootElement are required for XmlIO.write().
-  // NOTE: the .to rule mirrors StoragePathField's; used here only to gate the helper text.
-  const isToInvalid = !to.trim();
-  const isRootElementInvalid = !rootElement.trim();
-
-  // Extract system instructions with fallbacks
+  const rawSaveMode = (properties.saveMode || properties.mode || 'append').toLowerCase();
+  const saveMode = XML_SAVE_MODES.some((opt) => opt.value === rawSaveMode) ? rawSaveMode : 'append';
+  const compression = normalizeXmlCompression(properties.compression);
+  const partitionBy = resolvePartitionByValue(properties.partitionBy);
+  const maxRecordsPerFile = properties.maxRecordsPerFile ?? '';
+  const rootTag = properties.rootTag ?? properties.rootElement ?? 'ROWS';
+  const rowTag = properties.rowTag ?? 'ROW';
+  const declaration = properties.declaration ?? '';
+  const nullValue = properties.nullValue ?? '';
+  const attributePrefix = properties.attributePrefix ?? '_';
+  const valueTag = properties.valueTag ?? '_VALUE';
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles generic form inputs and numbers.
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const isRootTagInvalid = !rootTag.trim();
+  const isRowTagInvalid = !rowTag.trim();
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
-    });
-  };
-
-  /**
-   * Updates schema fields from SchemaEditor.
-   */
-  const handleSchemaChange = (data: { schemaFields: SchemaField[]; schema: string; schemaString: string }) => {
-    onChange({
-      ...properties,
-      schemaFields: data.schemaFields,
-      schema: data.schema,
-      schemaString: data.schemaString
+      [name]: isCheckbox ? checked : value,
     });
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Java Only Notice */}
-      <div
-        id="xmlSinkJavaOnlyNotice"
-        data-testid="xml-sink-java-only-notice"
-        className="flex items-center justify-between gap-2 p-2.5 rounded border border-[var(--vscode-border)] bg-[var(--vscode-subcard-bg)] text-xs text-[var(--vscode-text-secondary)]"
-      >
-        <span>
-          <strong>Java Only:</strong> <code>XmlIO</code> is a Java-only node type (<code>beam-sdks-java-io-xml</code>) and is only supported in Apache Beam Java pipelines.
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={storageProperties}
+        onChange={onChange}
+        idPrefix="xmlSink"
+        pathLabel="Output XML URI / Path"
+        pathPlaceholder="gs://my-bucket/output/xml/"
+        showGlobAndRecursive={false}
+      />
+
+      {/* XML Writer Save Mode, Compression & Partitioning */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          XML Writer Options (Built-in Spark 4.0 .format(&quot;xml&quot;))
         </span>
-      </div>
 
-      {/* Destination Prefix (.to) Input with Cloud Storage bucket autocomplete */}
-      <StoragePathField
-        id="xmlSinkTo"
-        name="to"
-        label="Destination Directory / Prefix (.to)"
-        tooltip="Base output directory path or prefix where XML files will be written (e.g. gs://bucket/output/items, s3://bucket/output/items, or /local/output/items). Required."
-        value={to}
-        onChange={handleChange}
-        placeholder="gs://bucket/output/items, s3://bucket/output/items, or /local/output/items"
-        errorMessage="Destination Prefix is required."
-        helperText={
-          !isToInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Target output directory or prefix across Cloud Storage, Amazon S3, HDFS, or local storage.
-            </span>
-          ) : null
-        }
-      />
-
-      {/* File Suffix Input */}
-      <PropertyField
-        id="xmlSinkSuffix"
-        name="suffix"
-        label="File Name Suffix (.withSuffix)"
-        tooltip="File extension or suffix appended to each output shard (e.g. .xml). Defaults to .xml."
-        value={suffix}
-        onChange={handleChange}
-        placeholder=".xml"
-        mono={true}
-      />
-
-      {/* Root Element Input */}
-      <PropertyField
-        id="xmlSinkRootElement"
-        name="rootElement"
-        label="Root Element (.withRootElement)"
-        required="Root Element is required."
-        tooltip="Name of the root XML element enclosing all serialized record elements (e.g. 'inventory' or 'catalog'). Required."
-        aria-required="true"
-        aria-invalid={isRootElementInvalid}
-        value={rootElement}
-        onChange={handleChange}
-        placeholder="e.g. inventory, catalog, or root"
-        invalid={isRootElementInvalid}
-        error={isRootElementInvalid ? 'Root Element is required.' : null}
-        mono={true}
-        helperText={
-          !isRootElementInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Enclosing root tag generated in each written XML document.
-            </span>
-          ) : null
-        }
-      />
-
-      {/* XML Record & Schema Mapping */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>XML Record &amp; Schema Mapping</span>
-          <InfoTooltip text="Configures how Beam PCollection elements map to JAXB-serialized XML records. Gemini automatically synthesizes the JAXB-annotated POJO (@XmlRootElement) from rootElement or from a defined schema." />
-        </label>
-
-        <MappingStrategyField
-          id="xmlSinkMappingStrategy"
-          strategyName="mappingStrategy"
-          strategy={mappingStrategy}
-          options={['infer', 'schema']}
-          optionLabels={{
-            infer: 'Auto-Infer JAXB Record / Row (Recommended)',
-            schema: 'Define Schema (Fields & Types)'
-          }}
-          label="Record Mapping Strategy"
-          tooltip="Select how XML records are marshalled. 'Auto-Infer' lets Gemini synthesize the JAXB-annotated POJO (@XmlRootElement) from upstream elements. 'Define Schema' lets you specify exact fields & types."
-          inferDescription={
-            <>
-              Gemini will automatically synthesize a JAXB{' '}
-              <code className="text-slate-200 bg-slate-800/80 px-1 py-0.5 rounded">@XmlRootElement</code>-annotated POJO and{' '}
-              <code className="text-slate-200 bg-slate-800/80 px-1 py-0.5 rounded">XmlIO.write()</code> marshaller from your upstream elements.
-            </>
-          }
-          schemaFields={schemaFields}
-          schemaStringPlaceholder="sku:STRING:REQUIRED, name:STRING, price:DOUBLE, quantity:INTEGER"
-          onSchemaChange={handleSchemaChange}
+        <SelectField
+          id="xmlSinkSaveMode"
+          name="saveMode"
+          label="Save Mode (mode)"
+          tooltip="Controls how Spark handles existing data at the destination URI in batch writes. Streaming branches execute idempotent micro-batch writes via foreachBatch."
+          value={saveMode}
+          options={XML_SAVE_MODES}
           onChange={handleChange}
+        />
+
+        <SelectField
+          id="xmlSinkCompression"
+          name="compression"
+          label="Compression Codec (compression)"
+          tooltip="Compression codec applied to output XML part-files."
+          value={compression}
+          options={XML_COMPRESSION_CODECS}
+          onChange={handleChange}
+        />
+
+        <PropertyField
+          id="xmlSinkPartitionBy"
+          name="partitionBy"
+          label="Partition Columns (partitionBy)"
+          tooltip="Optional comma-separated column names used to partition output directories in Hive layout (for example, feed_date, category)."
+          value={partitionBy}
+          onChange={handleChange}
+          placeholder="e.g. feed_date, category"
+          mono={true}
+        />
+
+        <PropertyField
+          id="xmlSinkMaxRecordsPerFile"
+          type="number"
+          name="maxRecordsPerFile"
+          label="Max Records Per File (maxRecordsPerFile)"
+          tooltip="Optional maximum number of XML row elements written per output part-file."
+          value={maxRecordsPerFile}
+          onChange={handleChange}
+          placeholder="e.g. 100000"
+          min="1"
+          mono={true}
         />
       </div>
 
-      {/* Charset Select */}
-      <SelectField
-        id="xmlSinkCharset"
-        name="charset"
-        label="Character Set (.withCharset)"
-        tooltip="Character encoding of the written XML files. Defaults to UTF-8."
-        value={charset}
-        options={XML_SINK_CHARSETS}
-        onChange={handleChange}
-      />
+      {/* Spark 4.0 XML Element & Attribute Formatting */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          XML Element &amp; Attribute Structure
+        </span>
 
-      {/* Sharding Configuration Accordion */}
-      <CollapsibleSection
-        title="Sharding Configuration"
-        icon={<Sliders className="w-4 h-4 text-rose-400" />}
-        isOpen={isShardingOpen}
-        onToggle={() => setIsShardingOpen(!isShardingOpen)}
-      >
-        <div className="flex flex-col gap-1.5 mt-1">
-          <label htmlFor="xmlSinkNumShards" className="flex items-center text-xs font-bold uppercase text-[var(--vscode-text-muted)] gap-1.5">
-            <span>Number of Shards (.withNumShards)</span>
-            <InfoTooltip text="Fixed number of output shards. Set to 0 or leave empty to allow the Beam runner to determine sharding dynamically." />
-          </label>
-          <input
-            id="xmlSinkNumShards"
-            type="number"
-            name="numShards"
-            value={numShards}
+        <div className="grid grid-cols-2 gap-3">
+          <PropertyField
+            id="xmlSinkRootTag"
+            name="rootTag"
+            label="Root Tag (rootTag)"
+            required="Root Tag is required."
+            aria-required={true}
+            aria-invalid={isRootTagInvalid}
+            invalid={isRootTagInvalid}
+            error={isRootTagInvalid ? 'Root Tag is required.' : null}
+            tooltip="Top-level XML element wrapping all rows in each part-file (default 'ROWS')."
+            value={rootTag}
             onChange={handleChange}
-            placeholder="0 (Automatic)"
-            min="0"
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm focus:outline-none focus:border-[var(--vscode-highlight)] font-mono"
+            placeholder="ROWS"
+            mono={true}
           />
-          <span className="text-[11px] text-[var(--vscode-text-muted)]">
-            0 or empty lets the runner dynamically size output shards.
-          </span>
+
+          <PropertyField
+            id="xmlSinkRowTag"
+            name="rowTag"
+            label="Row Tag (rowTag)"
+            required="Row Tag is required."
+            aria-required={true}
+            aria-invalid={isRowTagInvalid}
+            invalid={isRowTagInvalid}
+            error={isRowTagInvalid ? 'Row Tag is required.' : null}
+            tooltip="Repeating XML element wrapping each DataFrame row (default 'ROW')."
+            value={rowTag}
+            onChange={handleChange}
+            placeholder="ROW"
+            mono={true}
+          />
         </div>
 
         <PropertyField
-          id="xmlSinkShardTemplate"
-          name="shardTemplate"
-          label="Shard Name Template (Optional)"
-          tooltip="Custom template for shard naming (e.g. -SSSSS-of-NNNNN). Leave blank for Beam standard default."
-          value={shardTemplate}
+          id="xmlSinkDeclaration"
+          name="declaration"
+          label="XML Declaration (declaration)"
+          tooltip="XML header declaration content written inside <?xml ... ?> at the top of each file. Leave blank to use the Spark default header."
+          value={declaration}
           onChange={handleChange}
-          placeholder="-SSSSS-of-NNNNN"
+          placeholder='version="1.0" encoding="UTF-8" standalone="yes"'
           mono={true}
         />
-      </CollapsibleSection>
 
-      {/* Python Cross-Language Section */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
-        <PythonCrossLanguageNote />
-        <PropertyField
-          id="xmlSinkExpansionService"
-          name="expansionService"
-          label="Expansion Service (Python xlang, Optional)"
-          tooltip="Host and port of the Apache Beam Java expansion service used for cross-language XmlIO in Python pipelines (e.g. localhost:8097)."
-          value={expansionService}
-          onChange={handleChange}
-          placeholder="localhost:8097"
-          mono={true}
-          helperText={
-            <span className="text-[11px] text-[var(--vscode-text-muted)]">
-              <strong>Python:</strong> Specify host:port of the Beam expansion service when executing via Python. Not used in Java.
-            </span>
-          }
-        />
+        <div className="grid grid-cols-3 gap-3">
+          <PropertyField
+            id="xmlSinkAttributePrefix"
+            name="attributePrefix"
+            label="Attribute Prefix"
+            tooltip="Prefix identifying struct fields or columns written as XML attributes (default '_')."
+            value={attributePrefix}
+            onChange={handleChange}
+            placeholder="_"
+            mono={true}
+          />
+
+          <PropertyField
+            id="xmlSinkValueTag"
+            name="valueTag"
+            label="Value Tag"
+            tooltip="Field name holding text content when an element also carries attributes (default '_VALUE')."
+            value={valueTag}
+            onChange={handleChange}
+            placeholder="_VALUE"
+            mono={true}
+          />
+
+          <PropertyField
+            id="xmlSinkNullValue"
+            name="nullValue"
+            label="Null Value"
+            tooltip="Optional string written for null values (leave blank for Spark default null representation)."
+            value={nullValue}
+            onChange={handleChange}
+            placeholder="null"
+            mono={true}
+          />
+        </div>
       </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="xmlSinkInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline source code for this XmlIO writer step."
-        placeholder="e.g. Write XML with custom root attributes or JAXB marshaller formatting properties."
+        placeholder="e.g. Prefix id column as _id so Spark 4.0 serializes it as an XML attribute on each <book> element."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark XML writer code."
+        helperText="Additional guidance appended to the prompt when generating PySpark code."
         wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
-        textareaClassName="resize-y h-24"
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
+        textareaClassName="h-24"
         onChange={(value) =>
           onChange({
             ...properties,
@@ -325,3 +319,5 @@ export const XmlIOSinkProperties: React.FC<XmlIOSinkPropertiesProps> = ({ node, 
     </div>
   );
 };
+
+export const XmlSinkProperties = XmlIOSinkProperties;

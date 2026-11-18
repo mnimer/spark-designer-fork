@@ -1,266 +1,205 @@
 /**
- * Unit Tests for SpannerIOSinkProperties Component
+ * @fileoverview Unit Tests for SpannerIOSinkProperties Component (SNK20).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Validates SpannerIOSinkProperties form rendering, hydration, property change dispatching,
- * mutation mode selection, throughput/batching controls, failure mode switching,
- * IPC callbacks for GCP Secret Manager, field validation, and system instructions fallback chain.
+ * Validates Spark SpannerIOSinkProperties rendering, required coordinate validation
+ * (projectId, instanceId, databaseId, table), saveMode and mutationMode selection,
+ * Secret Manager authentication, collapsible advanced settings, and credential safety.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { SpannerIOSinkProperties } from './SpannerIO';
+import {
+  SpannerIOSinkProperties,
+  SpannerSinkProperties,
+  DEFAULT_SPANNER_JAR_URI,
+} from './SpannerIO';
+import { classifyKey } from '../../../../src/credentialRedaction';
 
-describe('SpannerIOSinkProperties', () => {
+describe('SpannerIOSinkProperties (SNK20)', () => {
   const mockOnChange = vi.fn();
   let postMessageSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
+    (window as unknown as { vscode?: { postMessage: typeof postMessageSpy } }).vscode = {
+      postMessage: postMessageSpy,
+    };
   });
 
   afterEach(() => {
-    delete (window as any).vscode;
+    delete (window as unknown as { vscode?: unknown }).vscode;
   });
 
-  it('renders required Instance ID and Database ID fields and alerts when empty', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {}
-      }
-    };
+  it('exports SpannerSinkProperties alias, displays connector JAR badge, and validates required fields', () => {
+    expect(SpannerSinkProperties).toBe(SpannerIOSinkProperties);
 
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
+    const { container } = render(
+      <SpannerIOSinkProperties node={{ data: { properties: {} } }} onChange={mockOnChange} />
+    );
 
-    expect(
-      screen.getByPlaceholderText('e.g. production-spanner-instance')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText('e.g. customer_records')
-    ).toBeInTheDocument();
+    expect(screen.getByText('Spark Cloud Spanner Connector')).toBeInTheDocument();
+    expect(screen.getByText(DEFAULT_SPANNER_JAR_URI)).toBeInTheDocument();
 
+    expect(screen.getByText('Project ID is required')).toBeInTheDocument();
     expect(screen.getByText('Spanner instance ID is required')).toBeInTheDocument();
     expect(screen.getByText('Spanner database ID is required')).toBeInTheDocument();
+    expect(screen.getByText('Table name is required')).toBeInTheDocument();
 
-    const instanceInput = screen.getByPlaceholderText('e.g. production-spanner-instance');
-    expect(instanceInput).toHaveAttribute('aria-invalid', 'true');
-    expect(instanceInput).toHaveAttribute('aria-required', 'true');
+    expect(container.querySelector('#spannerSinkProjectId')).toHaveAttribute('aria-invalid', 'true');
+    expect(container.querySelector('#spannerSinkInstanceId')).toHaveAttribute('aria-invalid', 'true');
+    expect(container.querySelector('#spannerSinkDatabaseId')).toHaveAttribute('aria-invalid', 'true');
+    expect(container.querySelector('#spannerSinkTable')).toHaveAttribute('aria-invalid', 'true');
 
     expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSecrets' });
   });
 
-  it('renders hydrated values from node.data.properties', () => {
+  it('hydrates properties and normalizes legacy insertOrUpdate and secret_manager values', () => {
     const node = {
       data: {
-        label: 'Spanner Sink',
         properties: {
-          instanceId: 'target-instance',
-          databaseId: 'target-db',
-          projectId: 'target-project',
-          mutationMode: 'insert' as const,
-          batchSizeBytes: 2097152,
-          maxNumMutations: 8000,
-          maxNumRows: 1000,
-          groupingFactor: 500,
-          failureMode: 'REPORT_FAILURES' as const,
-          highPriority: true,
-          authMode: 'adc' as const
-        }
-      }
+          projectId: 'my-gcp-project',
+          instanceId: 'prod-spanner',
+          databaseId: 'orders_db',
+          table: 'Orders',
+          saveMode: 'overwrite' as const,
+          mutationMode: 'insertOrUpdate',
+          mutationsPerTransaction: 4000,
+          authMode: 'secret_manager',
+          serviceAccountKeySecret: 'spanner-writer-sa',
+        },
+      },
     };
 
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
+    const { container } = render(
+      <SpannerIOSinkProperties node={node} onChange={mockOnChange} />
+    );
 
-    expect(screen.getByDisplayValue('target-instance')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('target-db')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('target-project')).toBeInTheDocument();
-    expect(
-      screen.getByDisplayValue('insert (INSERT — Insert New Rows Only)')
-    ).toBeInTheDocument();
-    expect(screen.getByDisplayValue('2097152')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('8000')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('1000')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('500')).toBeInTheDocument();
-    expect(
-      screen.getByDisplayValue('REPORT_FAILURES (Dead-Letter Tagged Output)')
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText(/High Priority RPC/i)).toBeChecked();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    expect(screen.getByDisplayValue('my-gcp-project')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('prod-spanner')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('orders_db')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Orders')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('4000')).toBeInTheDocument();
+
+    expect((container.querySelector('#spannerSinkSaveMode') as HTMLSelectElement).value).toBe(
+      'overwrite'
+    );
+    expect((container.querySelector('#spannerSinkMutationMode') as HTMLSelectElement).value).toBe(
+      'insert_or_update'
+    );
+    expect(container.querySelector('#spannerSinkSecretName')).toHaveValue('spanner-writer-sa');
   });
 
-  it('updates instanceId, databaseId, projectId, and mutationMode when changed', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {
-          instanceId: 'dev-instance'
-        }
+  it('dispatches updates for coordinates, saveMode, mutationMode, and mutationsPerTransaction', () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    const onChange = vi.fn((p: Record<string, unknown>) => emitted.push(p));
+
+    const { container } = render(
+      <SpannerIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              projectId: 'p1',
+              instanceId: 'inst1',
+              databaseId: 'db1',
+              table: 'Orders',
+            },
+          },
+        }}
+        onChange={onChange}
+      />
+    );
+
+    fireEvent.change(container.querySelector('#spannerSinkTable')!, {
+      target: { name: 'table', value: 'LineItems' },
+    });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ table: 'LineItems' }));
+
+    fireEvent.change(container.querySelector('#spannerSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'errorifexists' },
+    });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ saveMode: 'errorifexists' })
+    );
+
+    fireEvent.change(container.querySelector('#spannerSinkMutationMode')!, {
+      target: { name: 'mutationMode', value: 'replace' },
+    });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ mutationMode: 'replace' }));
+
+    fireEvent.change(container.querySelector('#spannerSinkMutationsPerTransaction')!, {
+      target: { name: 'mutationsPerTransaction', value: '2500' },
+    });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ mutationsPerTransaction: '2500' })
+    );
+
+    for (const payload of emitted) {
+      for (const key of Object.keys(payload)) {
+        expect(['safe', 'reference']).toContain(classifyKey(key));
       }
-    };
-
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const dbInput = screen.getByPlaceholderText('e.g. customer_records');
-    fireEvent.change(dbInput, { target: { name: 'databaseId', value: 'analytics' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      instanceId: 'dev-instance',
-      databaseId: 'analytics'
-    });
-
-    const modeSelect = screen.getByRole('combobox', { name: /^Mutation Mode/i });
-    fireEvent.change(modeSelect, { target: { name: 'mutationMode', value: 'replace' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      instanceId: 'dev-instance',
-      mutationMode: 'replace'
-    });
+    }
   });
 
-  it('updates throughput controls and toggles highPriority', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {
-          instanceId: 'dev-instance',
-          batchSizeBytes: '',
-          highPriority: false
-        }
-      }
-    };
+  it('expands Advanced Sink Settings and updates jarUri, databaseRole, emulatorHost, commitTimeoutSeconds, and system_instructions', () => {
+    const { container } = render(
+      <SpannerIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              projectId: 'p1',
+              instanceId: 'inst1',
+              databaseId: 'db1',
+              table: 'Orders',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
+    fireEvent.click(screen.getByRole('button', { name: /Advanced Sink Settings/i }));
 
-    const batchSizeInput = screen.getByPlaceholderText('e.g. 1048576 (1MB)');
-    fireEvent.change(batchSizeInput, { target: { name: 'batchSizeBytes', value: '4194304' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      instanceId: 'dev-instance',
-      batchSizeBytes: '4194304',
-      highPriority: false
+    fireEvent.change(container.querySelector('#spannerSinkJarUri')!, {
+      target: { name: 'jarUri', value: 'gs://custom-bucket/spanner.jar' },
     });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ jarUri: 'gs://custom-bucket/spanner.jar' })
+    );
 
-    const highPriorityCheckbox = screen.getByLabelText(/High Priority RPC/i);
-    expect(highPriorityCheckbox).not.toBeChecked();
-    fireEvent.click(highPriorityCheckbox);
+    fireEvent.change(container.querySelector('#spannerSinkDatabaseRole')!, {
+      target: { name: 'databaseRole', value: 'writer_role' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ databaseRole: 'writer_role' })
+    );
+
+    fireEvent.change(container.querySelector('#spannerSinkEmulatorHost')!, {
+      target: { name: 'emulatorHost', value: 'localhost:9010' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ emulatorHost: 'localhost:9010' })
+    );
+
+    fireEvent.change(container.querySelector('#spannerSinkCommitTimeoutSeconds')!, {
+      target: { name: 'commitTimeoutSeconds', value: '90' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ commitTimeoutSeconds: '90' })
+    );
+
+    fireEvent.change(container.querySelector('#spannerSinkSystemInstructions')!, {
+      target: { value: 'Use insert_or_update inside foreachBatch' },
+    });
     expect(mockOnChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        highPriority: true
+        system_instructions: 'Use insert_or_update inside foreachBatch',
       })
     );
-  });
-
-  it('updates failureMode select dropdown', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {
-          instanceId: 'dev-instance',
-          failureMode: 'FAIL_FAST' as const
-        }
-      }
-    };
-
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const failureModeSelect = screen.getByRole('combobox', { name: /^Failure Mode/i });
-    fireEvent.change(failureModeSelect, { target: { name: 'failureMode', value: 'REPORT_FAILURES' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      instanceId: 'dev-instance',
-      failureMode: 'REPORT_FAILURES'
-    });
-  });
-
-  it('supports Secret Manager authentication mode and renders secret input', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {
-          authMode: 'secret_manager' as const,
-          serviceAccountKeySecret: 'spanner-writer-key'
-        }
-      }
-    };
-
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const secretInput = screen.getByPlaceholderText('e.g. spanner-sa-key');
-    expect(secretInput).toHaveValue('spanner-writer-key');
-  });
-
-  it('toggles Advanced Sink Settings and updates host, commit deadline, backoff, and database role', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {
-          host: 'localhost:9010',
-          commitDeadlineSeconds: 45,
-          maxCumulativeBackoffSeconds: 600,
-          databaseRole: 'writer_role'
-        }
-      }
-    };
-
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    const hostInput = screen.getByPlaceholderText('e.g. localhost:9010');
-    expect(hostInput).toHaveValue('localhost:9010');
-
-    const deadlineInput = screen.getByPlaceholderText('e.g. 60');
-    expect(deadlineInput).toHaveValue(45);
-
-    const backoffInput = screen.getByPlaceholderText('e.g. 900');
-    expect(backoffInput).toHaveValue(600);
-
-    const roleInput = screen.getByPlaceholderText('e.g. analytics_writer');
-    expect(roleInput).toHaveValue('writer_role');
-
-    fireEvent.change(deadlineInput, { target: { name: 'commitDeadlineSeconds', value: '90' } });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        commitDeadlineSeconds: '90'
-      })
-    );
-  });
-
-  it('handles edge case of missing properties object cleanly', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink'
-      }
-    };
-
-    render(<SpannerIOSinkProperties node={node as any} onChange={mockOnChange} />);
-
-    expect(screen.getByText('Spanner instance ID is required')).toBeInTheDocument();
-    expect(screen.getByText('Spanner database ID is required')).toBeInTheDocument();
-  });
-
-
-  it('updates system_instructions when textarea changes', () => {
-    const node = {
-      data: {
-        label: 'Spanner Sink',
-        properties: {}
-      }
-    };
-
-    render(<SpannerIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const textarea = screen.getByPlaceholderText(
-      'Custom prompt instructions for generating the Apache Beam SpannerIO sink step...'
-    );
-    fireEvent.change(textarea, {
-      target: { value: 'Write mutations to Cloud Spanner table with retry deadlines.' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith({
-      system_instructions: 'Write mutations to Cloud Spanner table with retry deadlines.'
-    });
   });
 });

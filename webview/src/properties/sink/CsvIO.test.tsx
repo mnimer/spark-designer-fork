@@ -1,301 +1,197 @@
 /**
- * Unit Tests for CsvIO Sink Properties Component
- * 
+ * @fileoverview Unit tests for the CsvSink / CsvIO sink properties panel (SNK14).
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Validates rendering, input handling, Cloud Storage bucket auto-discovery messaging,
- * required-path validation states, CSV dialect configuration, header emission options,
- * compression selection, sharding options, and code generation instructions for CsvIOSinkProperties.
- * 
- * Architectural Decisions:
- * - Uses Vitest and React Testing Library for fast, realistic DOM interaction testing.
- * - Mocks window.vscode.postMessage to verify extension host IPC interactions.
- * - Tests both success and failure scenarios for dynamic storageBucketsLoaded message events.
- * - Verifies that 100% of event handlers, dropdowns, and checkboxes produce proper onChange payloads.
+ * Validates default rendering, required URI validation, StorageBackendFields multi-cloud
+ * and Secret Manager integration, saveMode, compression codecs, partitionBy, maxRecordsPerFile,
+ * CSV dialect options (header, sep, quote, escape, nullValue, emptyValue, quoteAll), and
+ * SystemInstructionsField updates.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { CsvIOSinkProperties, CSV_COMPRESSION_TYPES, CSV_SINK_COMPRESSION_TYPES } from './CsvIO';
+import { CsvIOSinkProperties, CsvSinkProperties } from './CsvIO';
 
-describe('CsvIOSinkProperties', () => {
+describe('CsvIOSinkProperties (SNK14 CsvSink)', () => {
   const mockOnChange = vi.fn();
   let originalVscode: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalVscode = (window as any).vscode;
+    (window as any).vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
     (window as any).vscode = originalVscode;
   });
 
-  it('renders with empty properties and flags validation error for missing to directory', () => {
-    const mockNode: any = {
-      data: {
-        label: 'CsvIO Sink',
-        spark_transform: 'CsvIO',
-        properties: {}
-      }
-    };
-
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#csvSinkTo') as HTMLInputElement;
-    expect(toInput).toBeInTheDocument();
-    expect(toInput).toHaveValue('');
-    expect(toInput).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Destination Directory is required.')).toBeInTheDocument();
+  it('exports CsvSinkProperties as an alias for CsvIOSinkProperties', () => {
+    expect(CsvSinkProperties).toBe(CsvIOSinkProperties);
   });
 
-  it('renders with populated properties and no validation error', () => {
+  it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
     const mockNode: any = {
       data: {
-        label: 'CsvIO Sink',
-        spark_transform: 'CsvIO',
+        label: 'CsvSink',
+        type: 'SINK',
+        spark_transform: 'CsvSink',
+        executionMode: 'streaming',
+        properties: {},
+      },
+    };
+
+    const { container } = render(
+      <CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
+
+    const pathInput = container.querySelector('#csvSinkPath') as HTMLInputElement;
+    expect(pathInput).toHaveValue('');
+    expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Output CSV URI / Path is required.')).toBeInTheDocument();
+
+    expect(container.querySelector('#csvSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#csvSinkCompression')).toHaveValue('none');
+    expect(container.querySelector('#csvSinkHeader')).toBeChecked();
+    expect(container.querySelector('#csvSinkQuoteAll')).not.toBeChecked();
+    expect(container.querySelector('#csvSinkSep')).toHaveValue(',');
+    expect(container.querySelector('#csvSinkQuote')).toHaveValue('"');
+    expect(container.querySelector('#csvSinkEscape')).toHaveValue('\\');
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Docs ↗')).not.toBeInTheDocument();
+  });
+
+  it('renders populated Azure Blob properties with dialect overrides and compression normalization', () => {
+    const mockNode: any = {
+      data: {
+        label: 'CsvSink',
+        spark_transform: 'CsvSink',
         properties: {
-          to: 'gs://output-bucket/csv/orders',
-          suffix: '.csv',
-          csvFormat: 'EXCEL',
-          delimiter: ',',
-          quoteChar: '"',
-          header: 'order_id,user_id,total,status',
-          writeHeader: true,
-          nullString: 'NULL',
+          path: 'wasbs://exports@acct.blob.core.windows.net/daily/',
+          authMode: 'secretManager',
+          secretName: 'azure-blob-secret',
+          saveMode: 'overwrite',
           compression: 'GZIP',
-          numShards: 10,
-          shardTemplate: '-SSSSS-of-NNNNN',
-          system_instructions: 'Format numbers with two decimal places'
-        }
-      }
+          partitionBy: ['country', 'dt'],
+          maxRecordsPerFile: 200000,
+          header: false,
+          quoteAll: true,
+          sep: '|',
+          quote: "'",
+          escape: '!',
+          nullValue: 'NULL',
+          emptyValue: 'EMPTY',
+          system_instructions: 'Coalesce to 4 files per partition',
+        },
+      },
     };
 
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const toInput = container.querySelector('#csvSinkTo') as HTMLInputElement;
-    const suffixInput = container.querySelector('#csvSinkSuffix') as HTMLInputElement;
-    const formatSelect = container.querySelector('#csvSinkFormat') as HTMLSelectElement;
-    const delimiterInput = container.querySelector('#csvSinkDelimiter') as HTMLInputElement;
-    const quoteInput = container.querySelector('#csvSinkQuoteChar') as HTMLInputElement;
-    const headerInput = container.querySelector('#csvSinkHeader') as HTMLInputElement;
-    const writeHeaderCheckbox = container.querySelector('#csvSinkWriteHeader') as HTMLInputElement;
-    const nullInput = container.querySelector('#csvSinkNullString') as HTMLInputElement;
-    const compressionSelect = container.querySelector('#csvSinkCompression') as HTMLSelectElement;
-    const shardsInput = container.querySelector('#csvSinkNumShards') as HTMLInputElement;
-    const shardTemplateInput = container.querySelector('#csvSinkShardTemplate') as HTMLInputElement;
-    const instructionsTextarea = container.querySelector('#csvSinkInstructions') as HTMLTextAreaElement;
-
-    expect(toInput).toHaveValue('gs://output-bucket/csv/orders');
-    expect(toInput).toHaveAttribute('aria-invalid', 'false');
-    expect(screen.queryByText('Destination Directory is required.')).not.toBeInTheDocument();
-    expect(suffixInput).toHaveValue('.csv');
-    expect(formatSelect).toHaveValue('EXCEL');
-    expect(delimiterInput).toHaveValue(',');
-    expect(quoteInput).toHaveValue('"');
-    expect(headerInput).toHaveValue('order_id,user_id,total,status');
-    expect(writeHeaderCheckbox).toBeChecked();
-    expect(nullInput).toHaveValue('NULL');
-    expect(compressionSelect).toHaveValue('GZIP');
-    expect(shardsInput).toHaveValue(10);
-    expect(shardTemplateInput).toHaveValue('-SSSSS-of-NNNNN');
-    expect(instructionsTextarea).toHaveValue('Format numbers with two decimal places');
-  });
-
-  it('handles field changes for destination directory, suffix, format, and dialect', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Change destination directory (.to)
-    const toInput = container.querySelector('#csvSinkTo') as HTMLInputElement;
-    fireEvent.change(toInput, {
-      target: { name: 'to', value: 's3://analytics-export/csv/users' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 's3://analytics-export/csv/users'
-      })
+    const { container } = render(
+      <CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />
     );
 
-    // Change suffix
-    const suffixInput = container.querySelector('#csvSinkSuffix') as HTMLInputElement;
-    fireEvent.change(suffixInput, {
-      target: { name: 'suffix', value: '.tsv' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        suffix: '.tsv'
-      })
+    expect(container.querySelector('#csvSinkStorageBackend')).toHaveValue('wasbs');
+    expect(container.querySelector('#csvSinkPath')).toHaveValue(
+      'wasbs://exports@acct.blob.core.windows.net/daily/'
     );
-
-    // Change csvFormat
-    const formatSelect = container.querySelector('#csvSinkFormat') as HTMLSelectElement;
-    fireEvent.change(formatSelect, {
-      target: { name: 'csvFormat', value: 'TDF' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        csvFormat: 'TDF'
-      })
-    );
-
-    // Change delimiter
-    const delimiterInput = container.querySelector('#csvSinkDelimiter') as HTMLInputElement;
-    fireEvent.change(delimiterInput, {
-      target: { name: 'delimiter', value: '\t' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        delimiter: '\t'
-      })
-    );
-
-    // Change quoteChar
-    const quoteInput = container.querySelector('#csvSinkQuoteChar') as HTMLInputElement;
-    fireEvent.change(quoteInput, {
-      target: { name: 'quoteChar', value: "'" }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        quoteChar: "'"
-      })
-    );
-
-    // Change nullString
-    const nullInput = container.querySelector('#csvSinkNullString') as HTMLInputElement;
-    fireEvent.change(nullInput, {
-      target: { name: 'nullString', value: '\\N' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        nullString: '\\N'
-      })
+    expect(container.querySelector('#csvSinkSaveMode')).toHaveValue('overwrite');
+    expect(container.querySelector('#csvSinkCompression')).toHaveValue('gzip');
+    expect(container.querySelector('#csvSinkPartitionBy')).toHaveValue('country, dt');
+    expect(container.querySelector('#csvSinkMaxRecordsPerFile')).toHaveValue(200000);
+    expect(container.querySelector('#csvSinkHeader')).not.toBeChecked();
+    expect(container.querySelector('#csvSinkQuoteAll')).toBeChecked();
+    expect(container.querySelector('#csvSinkSep')).toHaveValue('|');
+    expect(container.querySelector('#csvSinkQuote')).toHaveValue("'");
+    expect(container.querySelector('#csvSinkEscape')).toHaveValue('!');
+    expect(container.querySelector('#csvSinkNullValue')).toHaveValue('NULL');
+    expect(container.querySelector('#csvSinkEmptyValue')).toHaveValue('EMPTY');
+    expect(container.querySelector('#csvSinkInstructions')).toHaveValue(
+      'Coalesce to 4 files per partition'
     );
   });
 
-  it('handles header configuration, writeHeader checkbox, and compression changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Toggle writeHeader checkbox
-    const writeHeaderCheckbox = container.querySelector('#csvSinkWriteHeader') as HTMLInputElement;
-    fireEvent.click(writeHeaderCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        writeHeader: false
-      })
-    );
-
-    // Change header line
-    const headerInput = container.querySelector('#csvSinkHeader') as HTMLInputElement;
-    fireEvent.change(headerInput, {
-      target: { name: 'header', value: 'col1,col2,col3' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        header: 'col1,col2,col3'
-      })
-    );
-
-    // Change compression
-    const compressionSelect = container.querySelector('#csvSinkCompression') as HTMLSelectElement;
-    fireEvent.change(compressionSelect, {
-      target: { name: 'compression', value: 'BZIP2' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        compression: 'BZIP2'
-      })
-    );
-  });
-
-  it('handles sharding configuration changes (numShards and shardTemplate)', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    // Change numShards
-    const shardsInput = container.querySelector('#csvSinkNumShards') as HTMLInputElement;
-    fireEvent.change(shardsInput, {
-      target: { name: 'numShards', value: '8' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        numShards: '8'
-      })
-    );
-
-    // Change shardTemplate
-    const shardTemplateInput = container.querySelector('#csvSinkShardTemplate') as HTMLInputElement;
-    fireEvent.change(shardTemplateInput, {
-      target: { name: 'shardTemplate', value: '-W-P-SS-of-NN' }
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        shardTemplate: '-W-P-SS-of-NN'
-      })
-    );
-  });
-
-  it('updates system_instructions when instructions textarea changes', () => {
-    const mockNode: any = {
-      data: {
-        properties: {}
-      }
-    };
-
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
-
-    const instructionsTextarea = container.querySelector('#csvSinkInstructions') as HTMLTextAreaElement;
-    fireEvent.change(instructionsTextarea, {
-      target: { value: 'Write output records partitioned into 10 shards with custom quote rules' }
-    });
-
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'Write output records partitioned into 10 shards with custom quote rules'
-      })
-    );
-  });
-
-  it('omits unsupported XZ compression codec and documents Java vs Python WriteToCsv compression support (regression test)', () => {
+  it('propagates changes across all CSV sink fields and system_instructions', () => {
     const mockNode: any = {
       data: {
         properties: {
-          to: 'gs://output-bucket/csv/orders'
-        }
-      }
+          path: 'gs://my-bucket/csv/',
+        },
+      },
     };
 
-    const { container } = render(<CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />);
+    const { container } = render(
+      <CsvIOSinkProperties node={mockNode} onChange={mockOnChange} />
+    );
 
-    // XZ is not in Beam's Compression enum and must not be offered
-    expect(CSV_COMPRESSION_TYPES.map((c) => c.value)).not.toContain('XZ');
-    expect(CSV_SINK_COMPRESSION_TYPES.map((c) => c.value)).not.toContain('XZ');
+    fireEvent.change(container.querySelector('#csvSinkPath')!, {
+      target: { name: 'path', value: 'gs://my-bucket/csv_out/' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'gs://my-bucket/csv_out/' })
+    );
 
-    const compressionSelect = container.querySelector('#csvSinkCompression') as HTMLSelectElement;
-    const optionValues = Array.from(compressionSelect.querySelectorAll('option')).map((opt) => opt.value);
-    expect(optionValues).not.toContain('XZ');
-    expect(optionValues).toEqual(['UNCOMPRESSED', 'GZIP', 'BZIP2', 'DEFLATE', 'ZSTD']);
+    fireEvent.change(container.querySelector('#csvSinkSaveMode')!, {
+      target: { name: 'saveMode', value: 'overwrite' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ saveMode: 'overwrite' }));
 
-    // Helper text clearly states Java CsvIO.writeRows support and Python WriteToCsv NotImplementedError
-    expect(screen.getByText(/CsvIO\.writeRows\(to, csvFormat\)\.withCompression\(Compression\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/NotImplementedError/i)).toBeInTheDocument();
+    fireEvent.change(container.querySelector('#csvSinkCompression')!, {
+      target: { name: 'compression', value: 'zstd' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ compression: 'zstd' }));
+
+    fireEvent.change(container.querySelector('#csvSinkPartitionBy')!, {
+      target: { name: 'partitionBy', value: 'region' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ partitionBy: 'region' }));
+
+    fireEvent.change(container.querySelector('#csvSinkMaxRecordsPerFile')!, {
+      target: { name: 'maxRecordsPerFile', value: '50000' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRecordsPerFile: '50000' })
+    );
+
+    fireEvent.click(container.querySelector('#csvSinkHeader')!);
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ header: false }));
+
+    fireEvent.click(container.querySelector('#csvSinkQuoteAll')!);
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ quoteAll: true }));
+
+    fireEvent.change(container.querySelector('#csvSinkSep')!, {
+      target: { name: 'sep', value: '\t' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ sep: '\t' }));
+
+    fireEvent.change(container.querySelector('#csvSinkQuote')!, {
+      target: { name: 'quote', value: "'" },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ quote: "'" }));
+
+    fireEvent.change(container.querySelector('#csvSinkEscape')!, {
+      target: { name: 'escape', value: '/' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ escape: '/' }));
+
+    fireEvent.change(container.querySelector('#csvSinkNullValue')!, {
+      target: { name: 'nullValue', value: '\\N' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ nullValue: '\\N' }));
+
+    fireEvent.change(container.querySelector('#csvSinkEmptyValue')!, {
+      target: { name: 'emptyValue', value: '""' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ emptyValue: '""' }));
+
+    fireEvent.change(container.querySelector('#csvSinkInstructions')!, {
+      target: { value: 'Format decimal amounts to 2 places' },
+    });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ system_instructions: 'Format decimal amounts to 2 places' })
+    );
   });
 });

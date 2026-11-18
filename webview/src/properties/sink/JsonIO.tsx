@@ -1,39 +1,50 @@
 /**
- * JsonIO Sink Properties Component
- * 
+ * @fileoverview JSON Sink (SNK15 JsonSink / JsonIO) property configuration panel.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Purpose:
- * Renders the property configuration panel for Apache Beam JsonIO Sink nodes
- * (e.g. org.apache.beam.sdk.io.json.JsonIO.writeRows(to) in Java
- * or apache_beam.io.textio.WriteToJson(path, lines=True, num_shards=..., ...) in Python).
- * 
- * Architectural Decisions:
- * - JsonIO write operations require a destination directory or file path prefix (.to(...)).
- * - Delegates the destination path input to the shared StoragePathField primitive, which owns Google
- *   Cloud Storage bucket auto-discovery, the `gs://` datalist projection, and the inline
- *   discovery error (surfaced regardless of whether the path itself is valid).
- * - Documents that Java `JsonIO.writeRows(to)` is unconditionally newline-delimited JSON (`lines=true`)
- *   and supports `.withCompression(Compression)`, whereas Python `WriteToJson` honors `lines` and `orient`
- *   (and does not accept a `compression` kwarg).
- * - Configures file naming suffix (default .json).
- * - Composes the shared SelectField primitive instead of redeclaring dropdown markup, exposing
- *   supported Beam Java Compression codecs (UNCOMPRESSED, GZIP, BZIP2, DEFLATE, ZSTD — `XZ` is omitted
- *   because `Compression.java` does not implement XZ) and sharding options (numShards, shardTemplate).
- * - Extracts sharding controls into a reusable local sub-component.
- * - Adheres strictly to the 8pt grid system, VS Code theme variables, and Tailwind CSS classes.
+ * Renders the property configuration panel for Apache Spark JSON sink nodes
+ * using df.write.json(uri) or df.writeStream.format("json").start(uri).
+ * Embeds the shared StorageBackendFields component alongside Spark 4.x saveMode,
+ * compression codecs, partitionBy columns, maxRecordsPerFile, ignoreNullFields,
+ * timestampFormat, dateFormat, lineSep, and SystemInstructionsField.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
+import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
+import { StorageBackendFields } from '../../components/common/StorageBackendFields';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { SelectField } from '../../components/common/SelectField';
-import { StoragePathField } from '../../components/common/StoragePathField';
 
 /**
- * React Flow node shape for the JsonIO sink panel, including its persisted configuration data.
+ * Supported Spark 4.x batch DataFrameWriter save modes.
+ */
+export const JSON_SAVE_MODES: SelectFieldOption[] = [
+  { value: 'append', label: 'append (Append rows to existing path)' },
+  { value: 'overwrite', label: 'overwrite (Replace existing data)' },
+  { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
+  { value: 'ignore', label: 'ignore (Skip write if destination exists)' },
+];
+
+/**
+ * Supported Spark 4.x JSON output compression codecs.
+ */
+export const JSON_COMPRESSION_CODECS: SelectFieldOption[] = [
+  { value: 'none', label: 'none (Uncompressed JSON Lines)' },
+  { value: 'gzip', label: 'gzip (.json.gz)' },
+  { value: 'zstd', label: 'zstd (.json.zst)' },
+  { value: 'bzip2', label: 'bzip2 (.json.bz2)' },
+  { value: 'lz4', label: 'lz4 (.json.lz4)' },
+  { value: 'snappy', label: 'snappy (.json.snappy)' },
+  { value: 'deflate', label: 'deflate (.json.deflate)' },
+];
+
+/**
+ * React Flow node shape for the JSON sink panel.
  */
 export interface JsonIOSinkNode {
   data: {
@@ -42,12 +53,21 @@ export interface JsonIOSinkNode {
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
+      storageBackend?: string;
+      path?: string;
       to?: string;
-      suffix?: string;
-      lines?: boolean;
-      compression?: string;
-      numShards?: string | number;
-      shardTemplate?: string;
+      uri?: string;
+      authMode?: string;
+      secretName?: string;
+      saveMode?: 'append' | 'overwrite' | 'errorifexists' | 'ignore';
+      mode?: string;
+      compression?: 'none' | 'gzip' | 'zstd' | 'bzip2' | 'lz4' | 'snappy' | 'deflate' | string;
+      partitionBy?: string | string[];
+      maxRecordsPerFile?: string | number;
+      ignoreNullFields?: boolean;
+      timestampFormat?: string;
+      dateFormat?: string;
+      lineSep?: string;
       system_instructions?: string;
       special_instructions?: string;
       [key: string]: any;
@@ -56,7 +76,7 @@ export interface JsonIOSinkNode {
 }
 
 /**
- * Props for the JsonIOSinkProperties component.
+ * Props for the {@link JsonIOSinkProperties} component.
  */
 export interface JsonIOSinkPropertiesProps {
   node: JsonIOSinkNode;
@@ -64,193 +84,209 @@ export interface JsonIOSinkPropertiesProps {
 }
 
 /**
- * Supported compression algorithms for JSON output files (Java JsonIO.Write.withCompression).
- * Note: 'XZ' is omitted because org.apache.beam.sdk.io.Compression does not include XZ.
+ * Normalizes a raw JSON compression codec value to a canonical Spark codec name.
  */
-export const JSON_SINK_COMPRESSION_TYPES = [
-  { value: 'UNCOMPRESSED', label: 'UNCOMPRESSED (Standard JSON)' },
-  { value: 'GZIP', label: 'GZIP (.gz)' },
-  { value: 'BZIP2', label: 'BZIP2 (.bz2)' },
-  { value: 'DEFLATE', label: 'DEFLATE' },
-  { value: 'ZSTD', label: 'ZSTD' }
-] as const;
-
-/**
- * Sub-component for JsonIO sink sharding controls (numShards, shardTemplate).
- */
-interface JsonSinkShardingProps {
-  numShards?: string | number;
-  shardTemplate?: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
+function normalizeJsonCompression(raw?: string): string {
+  const lower = (raw ?? '').trim().toLowerCase();
+  if (!lower || lower === 'uncompressed') {
+    return 'none';
+  }
+  if (JSON_COMPRESSION_CODECS.some((opt) => opt.value === lower)) {
+    return lower;
+  }
+  return 'none';
 }
 
-const JsonSinkShardingFields: React.FC<JsonSinkShardingProps> = ({
-  numShards = '',
-  shardTemplate = '',
-  onChange
-}) => {
-  return (
-    <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
-      <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-        Sharding & File Output
-      </span>
-      <PropertyField
-        id="jsonSinkNumShards"
-        type="number"
-        name="numShards"
-        label="Number of Shards"
-        tooltip="Fixed number of output shards. Set to 0 or leave empty to let the Beam runner determine sharding dynamically."
-        value={numShards}
-        onChange={onChange}
-        placeholder="0 (Automatic)"
-        min="0"
-        mono={true}
-        helperText="0 or empty lets the runner automatically size output shards."
-      />
-
-      <PropertyField
-        id="jsonSinkShardTemplate"
-        name="shardTemplate"
-        label="Shard Name Template (Optional)"
-        tooltip="Custom template for shard naming (e.g. -SSSSS-of-NNNNN). Leave blank for Beam standard default."
-        value={shardTemplate}
-        onChange={onChange}
-        placeholder="-SSSSS-of-NNNNN"
-        mono={true}
-      />
-    </div>
-  );
-};
+/**
+ * Formats a partitionBy property value as a comma-separated column list string.
+ */
+function resolvePartitionByValue(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.join(', ');
+  }
+  return typeof raw === 'string' ? raw : '';
+}
 
 /**
- * JsonIOSinkProperties renders the property configuration form for JsonIO writes.
+ * Dedicated property panel for Apache Spark JsonSink / JsonIO sink nodes.
+ *
+ * @param props Selected node and change callback.
+ * @returns Rendered JSON sink property panel.
  */
 export const JsonIOSinkProperties: React.FC<JsonIOSinkPropertiesProps> = ({ node, onChange }) => {
   const properties = node.data.properties || {};
-  const to = properties.to || '';
-  const suffix = properties.suffix ?? '.json';
-  const lines = properties.lines ?? true;
-  const compression = properties.compression || 'UNCOMPRESSED';
-  const numShards = properties.numShards ?? '';
-  const shardTemplate = properties.shardTemplate || '';
+  const storageProperties =
+    properties.path === undefined && typeof properties.to === 'string' && properties.to.length > 0
+      ? { ...properties, path: properties.to }
+      : properties;
 
-  // Validation: destination directory/prefix (.to) is required.
-  // NOTE: mirrors StoragePathField's own rule; used here only to gate the helper text.
-  const isToInvalid = !to.trim();
-
-  // System instructions text with fallback
+  const rawSaveMode = (properties.saveMode || properties.mode || 'append').toLowerCase();
+  const saveMode = JSON_SAVE_MODES.some((opt) => opt.value === rawSaveMode)
+    ? rawSaveMode
+    : 'append';
+  const compression = normalizeJsonCompression(properties.compression);
+  const partitionBy = resolvePartitionByValue(properties.partitionBy);
+  const maxRecordsPerFile = properties.maxRecordsPerFile ?? '';
+  const ignoreNullFields = properties.ignoreNullFields ?? true;
+  const timestampFormat = properties.timestampFormat ?? '';
+  const dateFormat = properties.dateFormat ?? '';
+  const lineSep = properties.lineSep ?? '';
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Handles form input changes for text, select, and checkbox fields.
-   *
-   * @param e Form change event from input, select, or textarea
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const checked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
 
     onChange({
       ...properties,
-      [name]: isCheckbox ? checked : value
+      [name]: isCheckbox ? checked : value,
     });
   };
 
-
   return (
     <div className="flex-1 flex flex-col gap-4">
-      {/* Destination Directory (.to) Input with GCS Bucket Datalist */}
-      <StoragePathField
-        id="jsonSinkTo"
-        name="to"
-        label="Destination Directory / Prefix (.to)"
-        tooltip="Base output directory path or prefix where JSON files will be written (e.g. gs://bucket/output/, s3://bucket/output/, or /local/output/). Required."
-        value={to}
-        onChange={handleChange}
-        placeholder="gs://bucket/output/, s3://bucket/output/, or /local/output/"
-        errorMessage="Destination Directory is required."
-        helperText={
-          !isToInvalid ? (
-            <span className="text-xs text-[var(--vscode-text-muted)]">
-              Target storage prefix across Cloud Storage, Amazon S3, HDFS, or local storage.
-            </span>
-          ) : null
-        }
+      {/* Shared Multi-Cloud Storage Backend Configuration */}
+      <StorageBackendFields
+        properties={storageProperties}
+        onChange={onChange}
+        idPrefix="jsonSink"
+        pathLabel="Output JSON URI / Path"
+        pathPlaceholder="gs://my-bucket/output/json/"
+        showGlobAndRecursive={false}
       />
 
-      {/* File Suffix Input */}
-      <PropertyField
-        id="jsonSinkSuffix"
-        name="suffix"
-        label="File Name Suffix"
-        tooltip="File extension appended to each shard (e.g. .json or .jsonl). Defaults to .json."
-        value={suffix}
-        onChange={handleChange}
-        placeholder=".json"
-        mono={true}
-      />
-
-      {/* Output Format Settings */}
+      {/* JSON Writer Save Mode, Compression & Partitioning */}
       <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
         <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          JSON Output Format
+          JSON Writer Options
         </span>
 
-        {/* Lines Checkbox */}
-        <div className="flex flex-col gap-1">
-          <label htmlFor="jsonSinkLines" className="flex items-center gap-2 cursor-pointer">
-            <input
-              id="jsonSinkLines"
-              type="checkbox"
-              name="lines"
-              checked={lines}
-              onChange={handleChange}
-              className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
-            />
-            <span className="text-xs text-[var(--vscode-text-secondary)]">Newline-delimited JSON Lines (lines=True)</span>
-            <InfoTooltip text="Java JsonIO.writeRows(to) is unconditionally newline-delimited JSON (lines=true). Python WriteToJson honors lines and orient." />
-          </label>
-          <span className="text-[11px] text-[var(--vscode-text-muted)] pl-6">
-            Java <code>JsonIO.writeRows(to)</code> is unconditionally newline-delimited JSON (<code>lines=true</code>); Python <code>WriteToJson</code> honors <code>lines</code> and <code>orient</code>.
-          </span>
-        </div>
+        <SelectField
+          id="jsonSinkSaveMode"
+          name="saveMode"
+          label="Save Mode (mode)"
+          tooltip="Controls how Spark handles existing data at the destination URI in batch writes. Structured Streaming writes use append mode."
+          value={saveMode}
+          options={JSON_SAVE_MODES}
+          onChange={handleChange}
+        />
 
-        {/* Compression Codec Dropdown */}
         <SelectField
           id="jsonSinkCompression"
           name="compression"
-          label="Compression Codec"
-          tooltip="Java JsonIO.writeRows(to) supports .withCompression(Compression). Python WriteToJson does not accept a compression kwarg (raises NotImplementedError)."
+          label="Compression Codec (compression)"
+          tooltip="Compression codec applied to output JSON Lines part-files."
           value={compression}
+          options={JSON_COMPRESSION_CODECS}
           onChange={handleChange}
-          options={[...JSON_SINK_COMPRESSION_TYPES]}
-          helperText={
-            <span>
-              Java <code>JsonIO.writeRows(to)</code> supports <code>.withCompression(Compression)</code>; Python <code>WriteToJson</code> does not accept a <code>compression</code> kwarg.
-            </span>
-          }
+        />
+
+        <PropertyField
+          id="jsonSinkPartitionBy"
+          name="partitionBy"
+          label="Partition Columns (partitionBy)"
+          tooltip="Optional comma-separated column names used to partition output directories in Hive layout (for example, event_date, region)."
+          value={partitionBy}
+          onChange={handleChange}
+          placeholder="e.g. event_date, region"
+          mono={true}
+        />
+
+        <PropertyField
+          id="jsonSinkMaxRecordsPerFile"
+          type="number"
+          name="maxRecordsPerFile"
+          label="Max Records Per File (maxRecordsPerFile)"
+          tooltip="Optional maximum number of JSON Lines records written per output part-file."
+          value={maxRecordsPerFile}
+          onChange={handleChange}
+          placeholder="e.g. 500000"
+          min="1"
+          mono={true}
         />
       </div>
 
-      {/* Sharding Configuration */}
-      <JsonSinkShardingFields
-        numShards={numShards}
-        shardTemplate={shardTemplate}
-        onChange={handleChange}
-      />
+      {/* JSON Serialization & Formatting Options */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border)]">
+        <span className="text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
+          JSON Serialization Formatting
+        </span>
+
+        <label
+          htmlFor="jsonSinkIgnoreNullFields"
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <input
+            id="jsonSinkIgnoreNullFields"
+            type="checkbox"
+            name="ignoreNullFields"
+            checked={ignoreNullFields}
+            onChange={handleChange}
+            className="rounded bg-[var(--vscode-input-bg)] border-[var(--vscode-border)] text-blue-500 focus:ring-0 focus:ring-offset-0"
+          />
+          <span className="text-xs text-[var(--vscode-text-secondary)]">
+            Omit Null Fields (ignoreNullFields=true)
+          </span>
+          <InfoTooltip text="Drops fields whose value is null during JSON serialization. Uncheck to emit explicit null values in each JSON object." />
+        </label>
+
+        <PropertyField
+          id="jsonSinkTimestampFormat"
+          name="timestampFormat"
+          label="Timestamp Format (timestampFormat)"
+          tooltip="Optional DateTimeFormatter pattern for serializing TIMESTAMP columns (defaults to ISO-8601)."
+          value={timestampFormat}
+          onChange={handleChange}
+          placeholder="yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX]"
+          mono={true}
+        />
+
+        <div className="grid grid-cols-2 gap-3">
+          <PropertyField
+            id="jsonSinkDateFormat"
+            name="dateFormat"
+            label="Date Format (dateFormat)"
+            tooltip="Optional DateTimeFormatter pattern for serializing DATE columns (default yyyy-MM-dd)."
+            value={dateFormat}
+            onChange={handleChange}
+            placeholder="yyyy-MM-dd"
+            mono={true}
+          />
+
+          <PropertyField
+            id="jsonSinkLineSep"
+            name="lineSep"
+            label="Line Separator (lineSep)"
+            tooltip="Character or sequence separating JSON records (default '\\n')."
+            value={lineSep}
+            onChange={handleChange}
+            placeholder="\n"
+            mono={true}
+          />
+        </div>
+      </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="jsonSinkInstructions"
         value={systemInstructions}
-        tooltip="Custom instructions provided directly to Gemini when generating pipeline source code for this JsonIO writer step."
-        placeholder="e.g. Format output as JSON Lines using UTF-8 encoding with GZIP compression."
-        helperText="Additional guidance appended to prompt when synthesizing Java/Python code."
-        textareaClassName="h-24"
+        placeholder="e.g. Preserve explicit null keys for downstream schema-strict consumers."
+        tooltip="Custom instructions appended to the Gemini prompt when synthesizing PySpark JSON writer code."
+        helperText="Additional guidance appended to the prompt when generating PySpark code."
         wrapperClassName="pt-2 border-t border-[var(--vscode-border-light)]"
-        onChange={(value) => onChange({ ...properties, system_instructions: value })}
+        textareaClassName="h-24"
+        onChange={(value) =>
+          onChange({
+            ...properties,
+            system_instructions: value,
+          })
+        }
       />
     </div>
   );
 };
+
+export const JsonSinkProperties = JsonIOSinkProperties;

@@ -95,6 +95,74 @@ export function resolveCanonicalSourceTransform(transform: string): string {
   return LEGACY_SOURCE_TRANSFORM_MAP[bare] ?? bare;
 }
 
+/**
+ * Canonical mapping from legacy Beam sink transform names to Spark 4.x `sparkTransform` identifiers (SNK1-SNK37).
+ */
+export const LEGACY_SINK_TRANSFORM_MAP: Record<string, string> = {
+  KafkaIO: 'KafkaSink',
+  WriteToKafka: 'KafkaSink',
+  PubSubIO: 'PubSubSink',
+  PubSub: 'PubSubSink',
+  KinesisIO: 'KinesisSink',
+  WriteToKinesis: 'KinesisSink',
+  PulsarIO: 'PulsarSink',
+  MqttIO: 'MqttSink',
+  WriteToMqtt: 'MqttSink',
+  IcebergIO: 'IcebergSink',
+  HCatalogIO: 'HiveSink',
+  ParquetIO: 'ParquetSink',
+  WriteToParquet: 'ParquetSink',
+  AvroIO: 'AvroSink',
+  WriteToAvro: 'AvroSink',
+  CsvIO: 'CsvSink',
+  WriteToCsv: 'CsvSink',
+  JsonIO: 'JsonSink',
+  WriteToJson: 'JsonSink',
+  TextIO: 'TextSink',
+  WriteToText: 'TextSink',
+  XmlIO: 'XmlSink',
+  TFRecordIO: 'TFRecordSink',
+  WriteToTFRecord: 'TFRecordSink',
+  BigQueryIO: 'BigQuerySink',
+  BigQuery: 'BigQuerySink',
+  WriteToBigQuery: 'BigQuerySink',
+  SpannerIO: 'SpannerSink',
+  BigTableIO: 'BigtableSink',
+  BigtableIO: 'BigtableSink',
+  CloudBigtable: 'BigtableSink',
+  CloudSQL: 'CloudSqlSink',
+  JdbcIO: 'JdbcSink',
+  DatabaseIO: 'JdbcSink',
+  MySQL: 'JdbcSink',
+  MySQLPostgreSQLOracleSQLServer: 'JdbcSink',
+  SnowflakeIO: 'SnowflakeSink',
+  ClickHouseIO: 'ClickHouseSink',
+  SingleStoreDBIO: 'SingleStoreSink',
+  SingleStoreIO: 'SingleStoreSink',
+  MongoDbIO: 'MongoDbSink',
+  FirestoreIO: 'FirestoreSink',
+  DatastoreIO: 'FirestoreSink',
+  CassandraIO: 'CassandraSink',
+  RedisIO: 'RedisSink',
+  ElasticsearchIO: 'ElasticsearchSink',
+  Neo4jIO: 'Neo4jSink',
+  LogMessage: 'ConsoleSink',
+  DatadogIO: 'ForeachBatchSink',
+  SplunkIO: 'ForeachBatchSink',
+  RequestResponseIO: 'ForeachBatchSink',
+};
+
+/**
+ * Resolves a legacy or canonical sink transform identifier to its canonical Spark 4.x `sparkTransform`.
+ *
+ * @param transform Raw transform name from a node or pipeline YAML.
+ * @returns Canonical Spark 4.x sink transform name, or the original transform when already canonical.
+ */
+export function resolveCanonicalSinkTransform(transform: string): string {
+  const bare = transform.startsWith('SINK:') ? transform.slice('SINK:'.length) : transform;
+  return LEGACY_SINK_TRANSFORM_MAP[bare] ?? bare;
+}
+
 const KNOWN_AGGREGATIONS = [
   'Approximate Quantiles', 'Approximate Quantile', 'ApproximateQuantiles',
   'Approximate Unique', 'ApproximateUnique',
@@ -217,7 +285,19 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
   } else if (type === 'SINK') {
     switch (icon) {
       case 'Terminal':
+        if (labelLower.includes('console')) return 'ConsoleSink';
+        if (labelLower.includes('datadog')) return 'DatadogIO';
+        if (labelLower.includes('splunk')) return 'SplunkIO';
         return 'LogMessage';
+      case 'Box':
+        if (labelLower.includes('memory')) return 'MemorySink';
+        break;
+      case 'Code':
+        if (labelLower.includes('foreachbatch') || labelLower.includes('foreach batch')) return 'ForeachBatchSink';
+        break;
+      case 'Zap':
+        if (labelLower.includes('redis')) return 'RedisIO';
+        break;
       case 'FileText':
         if (labelLower.includes('tika')) return 'TikaIO';
         if (labelLower.includes('contextual')) return 'ContextualTextIO';
@@ -226,6 +306,10 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
       case 'HardDrive':
         return 'HadoopFileSystem';
       case 'Cloud':
+        if (labelLower.includes('snowflake')) return 'SnowflakeIO';
+        if (labelLower.includes('redshift')) return 'RedshiftSink';
+        if (labelLower.includes('event hub') || labelLower.includes('eventhub')) return 'EventHubsSink';
+        if (labelLower.includes('requestresponse') || labelLower.includes('web api')) return 'RequestResponseIO';
         if (labelLower.includes('gcs') || labelLower.includes('google')) return 'GcsFileSystem';
         if (labelLower.includes('s3') || labelLower.includes('amazon') || labelLower.includes('aws')) return 'S3FileSystem';
         if (labelLower.includes('azure') || labelLower.includes('blob')) return 'AzureBlobStoreFileSystem';
@@ -236,16 +320,39 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
         if (labelLower.includes('local')) return 'LocalFileSystem';
         return 'FileIO';
       case 'Radio':
+        if (labelLower.includes('pulsar')) return 'PulsarIO';
         return labelLower.includes('mqtt') ? 'MqttIO' : 'PubSubIO';
       case 'Database':
         if (labelLower.includes('iceberg')) return 'IcebergIO';
+        if (labelLower.includes('hive') || labelLower.includes('hcatalog')) return 'HCatalogIO';
+        if (labelLower.includes('spanner')) return 'SpannerIO';
+        if (labelLower.includes('bigtable')) return 'BigTableIO';
+        if (labelLower.includes('cloud sql') || labelLower.includes('cloudsql')) return 'CloudSQL';
+        if (labelLower.includes('alloydb')) return 'AlloyDbSink';
+        if (labelLower.includes('singlestore')) return 'SingleStoreDBIO';
+        if (labelLower.includes('mongo')) return 'MongoDbIO';
+        if (labelLower.includes('firestore')) return 'FirestoreIO';
+        if (labelLower.includes('cassandra')) return 'CassandraIO';
         return labelLower.includes('jdbc') ? 'JdbcIO' : 'BigQueryIO';
+      case 'BarChart':
+        if (labelLower.includes('clickhouse')) return 'ClickHouseIO';
+        break;
+      case 'Layers':
+        if (labelLower.includes('delta')) return 'DeltaSink';
+        if (labelLower.includes('hudi')) return 'HudiSink';
+        if (labelLower.includes('elasticsearch') || labelLower.includes('elastic')) return 'ElasticsearchIO';
+        if (labelLower.includes('hcatalog') || labelLower.includes('hive')) return 'HCatalogIO';
+        break;
+      case 'GitMerge':
+        if (labelLower.includes('neo4j')) return 'Neo4jIO';
+        break;
       case 'Cable':
         if (labelLower.includes('jms')) return 'JmsIO';
         if (labelLower.includes('sqs')) return 'SqsIO';
         return 'KafkaIO';
       case 'FileCode':
         if (labelLower.includes('xml')) return 'XmlIO';
+        if (labelLower.includes('orc')) return 'OrcSink';
         if (labelLower.includes('thrift')) return 'ThriftIO';
         if (labelLower.includes('tfrecord')) return 'TFRecordIO';
         if (labelLower.includes('json')) return 'JsonIO';

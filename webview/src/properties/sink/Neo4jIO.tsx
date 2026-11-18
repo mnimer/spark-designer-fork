@@ -1,46 +1,45 @@
 /**
- * Neo4jIOSinkProperties Component
+ * @fileoverview Neo4j Sink Properties Component (SNK34).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Renders the property configuration panel for Apache Beam Neo4jIO Sink nodes
- * (org.apache.beam.sdk.io.neo4j.Neo4jIO.writeUnwind() in Java SDK / cross-language in Python).
- * Configures connection URL, database name, UNWIND map name binding, Cypher write statement,
- * batch size, Cypher logging, Secret Manager credentials, and advanced driver options.
+ * Renders the property configuration panel for Apache Spark 4.x Neo4j Sink nodes
+ * (.write.format("org.neo4j.spark.DataSource") and .writeStream.format("org.neo4j.spark.DataSource")).
  *
  * Architectural Decisions:
- * - Controlled inputs adhering to "props in, events up" unidirectional data flow.
- * - Connection URL validation: Verifies URL presence and flags format warning if scheme is not neo4j://, neo4j+s://, bolt://, or bolt+s://.
- * - Required unwindMapName and Cypher: Both are required for writeUnwind() batch operations.
- * - Dynamic discovery: Requests GCP Secret Manager secrets via 'getSecrets' IPC message to securely bind username and password.
- * - Unique datalist ID: Uses 'neo4j-sink-secret-options' to avoid datalist id collisions across panels.
- * - Collapsible Advanced Sink Settings: Organizes transaction retry time, connection pool size, and TLS encryption.
- * - Preserves system_instructions / special_instructions fallback chain for LLM pipeline code generation.
- * - Strictly follows the 8pt grid system and VS Code theme tokens with Tailwind CSS styling.
+ * - Configures Bolt / Neo4j Aura connection URL, database (default 'neo4j'), and saveMode ('Overwrite' | 'Append').
+ * - Supports three Neo4j Spark Connector write targets:
+ *   1. Node Labels (labels + node.keys)
+ *   2. Relationship (relationship + source/target labels and node.keys)
+ *   3. Custom Cypher MERGE query (query + batch.size)
+ * - Uses SecretManagerAuthFields for Bolt password resolution.
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
+import {
+  SecretManagerAuthFields,
+  type SecretItem,
+} from '../../components/common/SecretManagerAuthFields';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import { useAssetLoader } from '../../hooks/useAssetLoader';
-import { normalizeSecretItem } from '../../components/common/SecretManagerAuthFields';
-import { CollapsibleSection } from '../../components/common/CollapsibleSection';
 
-/**
- * Secret item descriptor returned from extension host discovery.
- */
-export interface SecretItem {
-  id: string;
-  name: string;
-  fullName?: string;
-}
+export type { SecretItem };
+export type Neo4jWriteTarget = 'labels' | 'relationship' | 'query';
+export type Neo4jSaveMode = 'Overwrite' | 'Append';
 
-/**
- * Props for the Neo4jIOSinkProperties component.
- */
+const VALID_NEO4J_SCHEMES = [
+  'neo4j://',
+  'neo4j+s://',
+  'neo4j+ssc://',
+  'bolt://',
+  'bolt+s://',
+  'bolt+ssc://',
+] as const;
+
+/** Props for the {@link Neo4jIOSinkProperties} component. */
 export interface Neo4jIOSinkPropertiesProps {
   node: {
     data: {
@@ -51,328 +50,395 @@ export interface Neo4jIOSinkPropertiesProps {
       properties?: {
         url?: string;
         database?: string;
-        unwindMapName?: string;
+        saveMode?: Neo4jSaveMode | string;
+        writeTarget?: Neo4jWriteTarget | string;
+        labels?: string;
+        nodeKeys?: string;
+        relationship?: string;
+        sourceLabels?: string;
+        sourceNodeKeys?: string;
+        targetLabels?: string;
+        targetNodeKeys?: string;
+        query?: string;
         cypher?: string;
         batchSize?: number | string;
-        cypherLogging?: boolean;
-        authMode?: 'none' | 'secret_manager';
-        usernameSecret?: string;
+        username?: string;
+        authMode?: string;
+        secretName?: string;
         passwordSecret?: string;
-        maxTransactionRetryTimeMs?: number | string;
-        connectionPoolSize?: number | string;
-        encrypted?: boolean;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
- * Neo4jIOSinkProperties renders the configuration panel for Neo4jIO sink writes.
- *
- * @param props Component properties containing the active node and onChange callback
+ * Resolves the Neo4j write target mode from explicit or inferred properties.
+ */
+function resolveWriteTarget(
+  properties: Record<string, unknown>,
+  query: string,
+  relationship: string
+): Neo4jWriteTarget {
+  const raw = properties.writeTarget;
+  if (raw === 'labels' || raw === 'relationship' || raw === 'query') {
+    return raw;
+  }
+  if (query.trim().length > 0) {
+    return 'query';
+  }
+  if (relationship.trim().length > 0) {
+    return 'relationship';
+  }
+  return 'labels';
+}
+
+/**
+ * Configures properties for Apache Spark 4.x Neo4j batch and streaming sink nodes.
  */
 export const Neo4jIOSinkProperties: React.FC<Neo4jIOSinkPropertiesProps> = ({ node, onChange }) => {
-  const properties = node.data?.properties || {};
+  const properties = (node?.data?.properties ?? {}) as Record<string, unknown>;
 
-  // Form field state extracted from node properties
-  const url = properties.url || '';
-  const database = properties.database !== undefined ? properties.database : 'neo4j';
-  const unwindMapName = properties.unwindMapName || '';
-  const cypher = properties.cypher || '';
-  const batchSize = properties.batchSize !== undefined && properties.batchSize !== null ? properties.batchSize : '';
-  const cypherLogging = properties.cypherLogging ?? false;
-  const authMode = properties.authMode || 'none';
-  const usernameSecret = properties.usernameSecret || '';
-  const passwordSecret = properties.passwordSecret || '';
-  const maxTransactionRetryTimeMs = properties.maxTransactionRetryTimeMs !== undefined && properties.maxTransactionRetryTimeMs !== null ? properties.maxTransactionRetryTimeMs : '';
-  const connectionPoolSize = properties.connectionPoolSize !== undefined && properties.connectionPoolSize !== null ? properties.connectionPoolSize : '';
-  const encrypted = properties.encrypted ?? false;
+  const url = typeof properties.url === 'string' ? properties.url : '';
+  const database = typeof properties.database === 'string' ? properties.database : 'neo4j';
+  const saveMode: Neo4jSaveMode = properties.saveMode === 'Append' ? 'Append' : 'Overwrite';
+  const labels = typeof properties.labels === 'string' ? properties.labels : '';
+  const nodeKeys = typeof properties.nodeKeys === 'string' ? properties.nodeKeys : '';
+  const relationship = typeof properties.relationship === 'string' ? properties.relationship : '';
+  const sourceLabels = typeof properties.sourceLabels === 'string' ? properties.sourceLabels : '';
+  const sourceNodeKeys =
+    typeof properties.sourceNodeKeys === 'string' ? properties.sourceNodeKeys : '';
+  const targetLabels = typeof properties.targetLabels === 'string' ? properties.targetLabels : '';
+  const targetNodeKeys =
+    typeof properties.targetNodeKeys === 'string' ? properties.targetNodeKeys : '';
+  const query =
+    typeof properties.query === 'string'
+      ? properties.query
+      : typeof properties.cypher === 'string'
+        ? properties.cypher
+        : '';
+  const writeTarget = resolveWriteTarget(properties, query, relationship);
+  const batchSize =
+    typeof properties.batchSize === 'number' || typeof properties.batchSize === 'string'
+      ? properties.batchSize
+      : 5000;
+  const username = typeof properties.username === 'string' ? properties.username : 'neo4j';
+  const rawAuthMode = properties.authMode;
+  const authMode =
+    rawAuthMode === 'secretManager' || rawAuthMode === 'secret_manager'
+      ? 'secretManager'
+      : 'default';
+  const secretName =
+    typeof properties.secretName === 'string'
+      ? properties.secretName
+      : typeof properties.passwordSecret === 'string'
+        ? properties.passwordSecret
+        : '';
 
-  // Local state for dynamically loaded secrets and UI toggles
-  const { items: rawSecrets, error: secretError } = useAssetLoader<SecretItem | string>('secrets');
-  const secrets: SecretItem[] = (rawSecrets || []).map(normalizeSecretItem);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Field validation
-  const isUrlEmpty = !url.trim();
-  const trimmedUrl = url.trim().toLowerCase();
-  const isSchemeValid =
+  const trimmedUrl = url.trim();
+  const isUrlEmpty = !trimmedUrl;
+  const hasInvalidScheme =
     !isUrlEmpty &&
-    (trimmedUrl.startsWith('neo4j://') ||
-      trimmedUrl.startsWith('neo4j+s://') ||
-      trimmedUrl.startsWith('bolt://') ||
-      trimmedUrl.startsWith('bolt+s://'));
-  const isUnwindMapNameEmpty = !unwindMapName.trim();
-  const isCypherEmpty = !cypher.trim();
+    !VALID_NEO4J_SCHEMES.some((scheme) => trimmedUrl.toLowerCase().startsWith(scheme));
 
-  // Fallback chain for system instructions
+  const isLabelsEmpty = writeTarget === 'labels' && !labels.trim();
+  const isNodeKeysEmpty =
+    writeTarget === 'labels' && saveMode === 'Overwrite' && !nodeKeys.trim();
+  const isRelationshipEmpty = writeTarget === 'relationship' && !relationship.trim();
+  const isSourceKeysEmpty = writeTarget === 'relationship' && !sourceNodeKeys.trim();
+  const isTargetKeysEmpty = writeTarget === 'relationship' && !targetNodeKeys.trim();
+  const isQueryEmpty = writeTarget === 'query' && !query.trim();
+
   const systemInstructions = resolveSystemInstructions(node);
 
-  /**
-   * Updates a generic property value and triggers the onChange callback.
-   *
-   * @param name The property name key
-   * @param value The updated property value
-   */
-  const updateProperty = (name: string, value: any) => {
-    // NOTE: Merges updated key/value into current properties and dispatches to parent
-    const updated = { ...properties, [name]: value };
-    onChange(updated);
-  };
-
-  /**
-   * Handles text, select, and checkbox input changes.
-   *
-   * @param e Standard React change event from input, select, or textarea
-   */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      const checked = (e.target as HTMLInputElement).checked;
-      updateProperty(name, checked);
-    } else {
-      updateProperty(name, value);
+    const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
+    if (name === 'query') {
+      delete next.cypher;
     }
+    if (name === 'secretName') {
+      delete next.passwordSecret;
+    }
+    onChange(next);
   };
 
   return (
     <div className="flex-1 flex flex-col gap-4 text-[var(--vscode-text-primary)] text-sm">
-      {/* Connection & Database Card */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Neo4j Destination Connection</span>
-          <InfoTooltip text="Connection URI and database target for Neo4jIO.DriverConfiguration." />
-        </label>
+      {/* Connector Header Badge */}
+      <div className="flex items-center justify-between p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-xs">
+        <span className="font-semibold text-slate-200">Spark Neo4j 4.0 Connector</span>
+        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[11px]">
+          org.neo4j.spark.DataSource · NATIVE
+        </span>
+      </div>
 
+      {/* Connection URL, Database & Save Mode */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
         <PropertyField
           id="neo4jSinkUrl"
           name="url"
-          label="Connection URL"
+          label="Bolt / Neo4j URL (url)"
           required="Connection URL is required"
-          tooltip="Neo4j connection URI (e.g. neo4j://localhost:7687, neo4j+s://aura.databases.neo4j.io, or bolt://localhost:7687). Required."
+          tooltip="Neo4j Bolt or Aura connection URI (for example neo4j+s://xxxx.databases.neo4j.io or bolt://localhost:7687)."
           value={url}
           invalid={isUrlEmpty}
           error={isUrlEmpty ? 'Connection URL is required' : null}
           helperText={
-            !isUrlEmpty && !isSchemeValid ? (
+            hasInvalidScheme ? (
               <span className="text-amber-400" role="alert">
-                Warning: Neo4j connection URLs typically start with neo4j://, neo4j+s://, bolt://, or bolt+s://
+                Connection URL must start with neo4j://, neo4j+s://, bolt://, or bolt+s://
               </span>
             ) : null
           }
-          placeholder="neo4j://localhost:7687"
-          onChange={handleChange}
-          mono={true}
-        />
-
-        <PropertyField
-          id="neo4jSinkDatabase"
-          name="database"
-          label="Database Name"
-          tooltip="Target Neo4j database name (e.g. 'neo4j' or 'system'). Defaults to 'neo4j'."
-          value={database}
-          onChange={handleChange}
-          placeholder="neo4j"
-          mono={true}
-        />
-      </div>
-
-      {/* Unwind Write Parameters Card */}
-      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>UNWIND Write Specification</span>
-          <InfoTooltip text="Parameters configuring Neo4jIO.writeUnwind(), which collects incoming elements into batches and applies an UNWIND Cypher statement." />
-        </label>
-
-        <PropertyField
-          id="neo4jSinkUnwindMapName"
-          name="unwindMapName"
-          label="Unwind Map Name"
-          required="Unwind map name is required"
-          tooltip="The parameter name representing the collection in the UNWIND clause (e.g. 'rows' for 'UNWIND $rows AS row') (withUnwindMapName). Required."
-          value={unwindMapName}
-          invalid={isUnwindMapNameEmpty}
-          error={isUnwindMapNameEmpty ? 'Unwind map name is required' : null}
-          placeholder="e.g. rows"
-          onChange={handleChange}
-          mono={true}
-        />
-
-        <PropertyField
-          id="neo4jSinkCypher"
-          name="cypher"
-          label="Cypher Write Statement"
-          required="Cypher write statement is required"
-          tooltip="Cypher write statement utilizing the UNWIND clause to create or update nodes/relationships in batches (withCypher). Required."
-          type="textarea"
-          rows={3}
-          value={cypher}
-          invalid={isCypherEmpty}
-          error={isCypherEmpty ? 'Cypher write statement is required' : null}
-          placeholder="UNWIND $rows AS row MERGE (p:Person {id: row.id}) SET p.name = row.name"
+          placeholder="neo4j+s://xxxx.databases.neo4j.io"
           onChange={handleChange}
           mono={true}
         />
 
         <div className="grid grid-cols-2 gap-2">
+          <PropertyField
+            id="neo4jSinkDatabase"
+            name="database"
+            label="Database"
+            tooltip="Destination Neo4j database name (default 'neo4j')."
+            value={database}
+            placeholder="neo4j"
+            onChange={handleChange}
+            mono={true}
+          />
+
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="neo4jSinkSaveMode"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Save Mode</span>
+              <InfoTooltip text="Overwrite executes idempotent Cypher MERGE by key. Append executes Cypher CREATE." />
+            </label>
+            <select
+              id="neo4jSinkSaveMode"
+              name="saveMode"
+              value={saveMode}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="Overwrite">Overwrite (Cypher MERGE)</option>
+              <option value="Append">Append (Cypher CREATE)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Graph Write Target Configuration */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="neo4jSinkWriteTarget"
+              className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]"
+            >
+              <span>Graph Write Target</span>
+              <InfoTooltip text="Write DataFrame rows as Neo4j nodes, graph relationships, or a custom Cypher MERGE query." />
+            </label>
+            <select
+              id="neo4jSinkWriteTarget"
+              name="writeTarget"
+              value={writeTarget}
+              onChange={handleChange}
+              className="bg-[#252836] text-white p-2 rounded border border-slate-700 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="labels">Node Labels (labels + node.keys)</option>
+              <option value="relationship">Relationship (source / target keys)</option>
+              <option value="query">Custom Cypher MERGE (query)</option>
+            </select>
+          </div>
+
           <PropertyField
             id="neo4jSinkBatchSize"
             name="batchSize"
-            label="Batch Size"
+            label="Transaction Batch Size (batch.size)"
             type="number"
-            tooltip="Number of records to collect and execute in each UNWIND batch (withBatchSize). Defaults to connector default."
+            min={1}
+            tooltip="Number of rows committed per Neo4j transaction batch (default 5000)."
             value={batchSize}
+            placeholder="5000"
             onChange={handleChange}
-            placeholder="1000"
             mono={true}
           />
-          <div className="flex flex-col justify-end pb-1">
-            <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-              <input
-                id="neo4jSinkCypherLogging"
-                type="checkbox"
-                name="cypherLogging"
-                checked={cypherLogging}
-                onChange={handleChange}
-                className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0"
-              />
-              <label htmlFor="neo4jSinkCypherLogging" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-                <span>Cypher Logging</span>
-                <InfoTooltip text="Enables logging of Cypher write queries and parameters during execution (withCypherLogging)." />
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Authentication Section */}
-      <div className="flex flex-col gap-2 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-[var(--vscode-text-muted)]">
-          <span>Authentication</span>
-          <InfoTooltip text="Configure authentication credentials for Neo4j server. Choose None for unauthenticated instances or Google Cloud Secret Manager to reference stored username and password securely." />
-        </label>
-        <div className="flex gap-4 mt-1">
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="none"
-              checked={authMode === 'none'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>None</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[var(--vscode-text-secondary)]">
-            <input
-              type="radio"
-              name="authMode"
-              value="secret_manager"
-              checked={authMode === 'secret_manager'}
-              onChange={handleChange}
-              className="accent-[var(--vscode-highlight)]"
-            />
-            <span>Secret Manager</span>
-          </label>
         </div>
 
-        {authMode === 'secret_manager' && (
-          <div className="flex flex-col gap-2 mt-2 pl-2 border-l-2 border-[var(--vscode-highlight)]/50">
+        {writeTarget === 'labels' && (
+          <div className="grid grid-cols-2 gap-2">
             <PropertyField
-              id="neo4jSinkUsernameSecret"
-              name="usernameSecret"
-              label="Username Secret"
-              tooltip="GCP Secret Manager secret containing the Neo4j username."
-              value={usernameSecret}
+              id="neo4jSinkLabels"
+              name="labels"
+              label="Node Labels (labels)"
+              required="Node labels are required in Labels mode"
+              tooltip="Colon-prefixed Neo4j node label(s) to write (for example :Customer)."
+              value={labels}
+              invalid={isLabelsEmpty}
+              error={isLabelsEmpty ? 'Node labels are required in Labels mode' : null}
+              placeholder=":Customer"
               onChange={handleChange}
-              list="neo4j-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. neo4j-username"
-              error={secretError}
-              invalid={!!secretError}
               mono={true}
             />
             <PropertyField
-              id="neo4jSinkPasswordSecret"
-              name="passwordSecret"
-              label="Password Secret"
-              tooltip="GCP Secret Manager secret containing the Neo4j password."
-              value={passwordSecret}
-              onChange={handleChange}
-              list="neo4j-sink-secret-options"
-              datalist={secrets.map((s) => ({ value: s.id || s.name, label: s.name || s.id }))}
-              placeholder="e.g. neo4j-password"
-              mono={true}
-              helperText={
-                <span>
-                  Values auto-populated from{' '}
-                  <code className="text-slate-300 bg-slate-800/60 px-1 py-0.5 rounded">
-                    gcloud secrets list
-                  </code>
-                </span>
+              id="neo4jSinkNodeKeys"
+              name="nodeKeys"
+              label="Node Key Columns (node.keys)"
+              required={
+                saveMode === 'Overwrite'
+                  ? 'Node keys are required for Overwrite (MERGE) mode'
+                  : undefined
               }
+              tooltip="Comma-separated key columns matched by MERGE (for example customer_id)."
+              value={nodeKeys}
+              invalid={isNodeKeysEmpty}
+              error={
+                isNodeKeysEmpty ? 'Node keys are required for Overwrite (MERGE) mode' : null
+              }
+              placeholder="customer_id"
+              onChange={handleChange}
+              mono={true}
             />
           </div>
         )}
+
+        {writeTarget === 'relationship' && (
+          <div className="flex flex-col gap-2">
+            <PropertyField
+              id="neo4jSinkRelationship"
+              name="relationship"
+              label="Relationship Type (relationship)"
+              required="Relationship type is required in Relationship mode"
+              tooltip="Neo4j relationship type to write (for example PURCHASED)."
+              value={relationship}
+              invalid={isRelationshipEmpty}
+              error={
+                isRelationshipEmpty ? 'Relationship type is required in Relationship mode' : null
+              }
+              placeholder="PURCHASED"
+              onChange={handleChange}
+              mono={true}
+            />
+
+            <div className="grid grid-cols-2 gap-2">
+              <PropertyField
+                id="neo4jSinkSourceLabels"
+                name="sourceLabels"
+                label="Source Labels"
+                tooltip="Source node labels (relationship.source.labels)."
+                value={sourceLabels}
+                placeholder=":Customer"
+                onChange={handleChange}
+                mono={true}
+              />
+              <PropertyField
+                id="neo4jSinkSourceNodeKeys"
+                name="sourceNodeKeys"
+                label="Source Node Keys"
+                required="Source node keys are required in Relationship mode"
+                tooltip="Column-to-property key mapping for source nodes (for example customer_id:id)."
+                value={sourceNodeKeys}
+                invalid={isSourceKeysEmpty}
+                error={
+                  isSourceKeysEmpty
+                    ? 'Source node keys are required in Relationship mode'
+                    : null
+                }
+                placeholder="customer_id:id"
+                onChange={handleChange}
+                mono={true}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <PropertyField
+                id="neo4jSinkTargetLabels"
+                name="targetLabels"
+                label="Target Labels"
+                tooltip="Target node labels (relationship.target.labels)."
+                value={targetLabels}
+                placeholder=":Product"
+                onChange={handleChange}
+                mono={true}
+              />
+              <PropertyField
+                id="neo4jSinkTargetNodeKeys"
+                name="targetNodeKeys"
+                label="Target Node Keys"
+                required="Target node keys are required in Relationship mode"
+                tooltip="Column-to-property key mapping for target nodes (for example product_id:id)."
+                value={targetNodeKeys}
+                invalid={isTargetKeysEmpty}
+                error={
+                  isTargetKeysEmpty
+                    ? 'Target node keys are required in Relationship mode'
+                    : null
+                }
+                placeholder="product_id:id"
+                onChange={handleChange}
+                mono={true}
+              />
+            </div>
+          </div>
+        )}
+
+        {writeTarget === 'query' && (
+          <PropertyField
+            id="neo4jSinkQuery"
+            name="query"
+            label="Custom Cypher MERGE Query (query)"
+            type="textarea"
+            rows={3}
+            required="Cypher query is required in Query mode"
+            tooltip="Cypher statement referencing each DataFrame row through event.<column>."
+            value={query}
+            invalid={isQueryEmpty}
+            error={isQueryEmpty ? 'Cypher query is required in Query mode' : null}
+            placeholder="MERGE (c:Customer {id: event.customer_id}) SET c.name = event.name"
+            onChange={handleChange}
+            mono={true}
+          />
+        )}
       </div>
 
-      {/* Collapsible Advanced Sink Settings */}
-      <CollapsibleSection
-        title="Advanced Sink Settings"
-        isOpen={showAdvanced}
-        onToggle={() => setShowAdvanced(!showAdvanced)}
-      >
-        <div className="grid grid-cols-2 gap-2">
-          <PropertyField
-            id="neo4jSinkMaxTransactionRetryTimeMs"
-            name="maxTransactionRetryTimeMs"
-            label="Max Retry Time (ms)"
-            type="number"
-            tooltip="Maximum transaction retry time in milliseconds for transient write failures."
-            value={maxTransactionRetryTimeMs}
-            onChange={handleChange}
-            placeholder="30000"
-            mono={true}
-          />
-          <PropertyField
-            id="neo4jSinkConnectionPoolSize"
-            name="connectionPoolSize"
-            label="Connection Pool Size"
-            type="number"
-            tooltip="Maximum connection pool size for Neo4j driver (DriverConfiguration)."
-            value={connectionPoolSize}
-            onChange={handleChange}
-            placeholder="50"
-            mono={true}
-          />
-        </div>
+      {/* Bolt Authentication */}
+      <div className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
+        <PropertyField
+          id="neo4jSinkUsername"
+          name="username"
+          label="Bolt Username (authentication.basic.username)"
+          tooltip="Neo4j basic authentication username (default 'neo4j')."
+          value={username}
+          placeholder="neo4j"
+          onChange={handleChange}
+          mono={true}
+        />
 
-        <div className="flex items-center gap-2 p-2 bg-[var(--vscode-subcard-bg)] rounded-md border border-[var(--vscode-border-light)]">
-          <input
-            id="neo4jSinkEncrypted"
-            type="checkbox"
-            name="encrypted"
-            checked={encrypted}
-            onChange={handleChange}
-            className="rounded border-[var(--vscode-border)] text-[var(--vscode-highlight)] accent-[var(--vscode-highlight)] focus:ring-0"
-          />
-          <label htmlFor="neo4jSinkEncrypted" className="flex items-center gap-1.5 text-xs text-[var(--vscode-text-secondary)] cursor-pointer">
-            <span>Enable TLS / Encryption</span>
-            <InfoTooltip text="Enables TLS encryption for bolt connections in driver configuration." />
-          </label>
-        </div>
-      </CollapsibleSection>
+        <SecretManagerAuthFields
+          idPrefix="neo4jSink"
+          serviceName="Neo4j"
+          authMode={authMode}
+          secretName={secretName}
+          datalistId="neo4j-sink-secret-options"
+          secretPlaceholder="e.g. neo4j-password-secret"
+          onChange={handleChange}
+        />
+      </div>
 
       {/* Code Generation Instructions */}
       <SystemInstructionsField
         id="neo4jSinkInstructions"
         value={systemInstructions}
-        tooltip="Optional custom prompt instructions passed to the LLM code generator when synthesizing Neo4j writeUnwind pipeline transforms."
-        placeholder="e.g. Write elements to Neo4j using writeUnwind with MERGE on Person nodes"
+        placeholder="Enter custom instructions for Spark Neo4j sink code generation..."
         onChange={(value) =>
           onChange({
             ...properties,
@@ -383,3 +449,5 @@ export const Neo4jIOSinkProperties: React.FC<Neo4jIOSinkPropertiesProps> = ({ no
     </div>
   );
 };
+
+export const Neo4jSinkProperties = Neo4jIOSinkProperties;

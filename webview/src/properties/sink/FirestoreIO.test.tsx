@@ -1,269 +1,145 @@
 /**
- * FirestoreIOSinkProperties Unit Tests
+ * @fileoverview Unit Tests for FirestoreIOSinkProperties Component (SNK30).
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Tests the FirestoreIOSinkProperties panel component covering initial field rendering,
- * hydration from node properties, onChange event dispatch, IPC Secret Manager communication,
- * write operation switching (update, delete, transform), batch tuning, edge cases (missing properties, 0 values),
- * validation alerts, and instruction fallback chains.
+ * Validates FirestoreIOSinkProperties rendering, projectId and collectionPath validation,
+ * WriteBatch operation switching ('set_merge' | 'set' | 'update' | 'delete'),
+ * documentIdColumn requirement, 500-mutation WriteBatch warning, SecretManagerAuthFields,
+ * and system instructions.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { FirestoreIOSinkProperties } from './FirestoreIO';
+import { FirestoreIOSinkProperties, FirestoreSinkProperties } from './FirestoreIO';
 
 describe('FirestoreIOSinkProperties', () => {
   const mockOnChange = vi.fn();
-  let postMessageSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
   });
 
-  afterEach(() => {
-    delete (window as any).vscode;
+  it('exports FirestoreSinkProperties alias and validates required projectId and collectionPath', () => {
+    expect(FirestoreSinkProperties).toBe(FirestoreIOSinkProperties);
+    render(
+      <FirestoreIOSinkProperties node={{ data: { properties: {} } }} onChange={mockOnChange} />
+    );
+
+    expect(screen.getByText('Project ID is required')).toBeInTheDocument();
+    expect(screen.getByText('Collection path is required')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('(default)')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('500')).toBeInTheDocument();
   });
 
-  it('renders required Project ID and Target Collection and shows validation errors when empty', () => {
+  it('hydrates Firestore WriteBatch properties in set_merge mode', () => {
     const node = {
       data: {
-        label: 'Firestore Sink',
-        properties: {}
-      }
-    };
-
-    render(<FirestoreIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('my-gcp-project')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. processed_events')).toBeInTheDocument();
-
-    expect(screen.getByText(/Project ID is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/Target collection is required/i)).toBeInTheDocument();
-
-    expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSecrets' });
-  });
-
-  it('hydrates all populated properties correctly in update mode', () => {
-    const node = {
-      data: {
-        label: 'Firestore Sink',
         properties: {
-          projectId: 'my-gcp-project',
-          databaseId: 'custom-db',
-          targetCollection: 'sensor_readings',
-          operation: 'update',
-          documentIdField: 'sensor_id',
-          mergeFields: 'temperature, status',
-          withDeadLetterQueue: true,
-          batchSize: 200,
-          hintMaxNumWorkers: 16,
-          failureHandling: 'dead_letter_queue',
-          authMode: 'adc',
-          emulatorHost: 'localhost:8085',
-          initialBackoffMs: 3000,
-          maxAttempts: 7,
-          throttling: true,
-          system_instructions: 'Custom instructions for sink'
-        }
-      }
+          projectId: 'analytics-gcp',
+          databaseId: 'prod-db',
+          collectionPath: 'orgs/acme/events',
+          operation: 'set_merge' as const,
+          documentIdColumn: 'event_id',
+          mergeFields: 'status, score',
+          maxBatchSize: 400,
+          authMode: 'secretManager',
+          secretName: 'firestore-sa-json',
+        },
+      },
     };
 
-    render(<FirestoreIOSinkProperties node={node} onChange={mockOnChange} />);
+    const { container } = render(
+      <FirestoreIOSinkProperties node={node} onChange={mockOnChange} />
+    );
 
-    expect(screen.getByPlaceholderText('my-gcp-project')).toHaveValue('my-gcp-project');
-    expect(screen.getByPlaceholderText('(default)')).toHaveValue('custom-db');
-    expect(screen.getByPlaceholderText('e.g. processed_events')).toHaveValue('sensor_readings');
+    expect(screen.getByDisplayValue('analytics-gcp')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('prod-db')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('orgs/acme/events')).toBeInTheDocument();
+    expect(container.querySelector('#firestoreSinkOperation')).toHaveValue('set_merge');
+    expect(screen.getByDisplayValue('event_id')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('status, score')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('400')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('firestore-sa-json')).toBeInTheDocument();
+  });
 
-    expect(screen.getByLabelText(/Write Operation/i)).toHaveValue('update');
-    expect(screen.getByPlaceholderText('e.g. id or document_id')).toHaveValue('sensor_id');
-    expect(screen.getByPlaceholderText('e.g. status, updated_at')).toHaveValue('temperature, status');
+  it('requires documentIdColumn in delete and update modes and hides mergeFields', () => {
+    const { container, rerender } = render(
+      <FirestoreIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              projectId: 'analytics-gcp',
+              collectionPath: 'users',
+              operation: 'set_merge',
+              mergeFields: 'tier',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-    expect(screen.getByLabelText(/Enable Dead-Letter Queue/i)).toBeChecked();
-    expect(screen.getByPlaceholderText('50')).toHaveValue(200);
-    expect(screen.getByPlaceholderText('e.g. 10')).toHaveValue(16);
-    expect(screen.getByLabelText(/Failure Handling Mode/i)).toHaveValue('dead_letter_queue');
+    expect(container.querySelector('#firestoreSinkMergeFields')).toBeInTheDocument();
 
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
+    const opSelect = container.querySelector('#firestoreSinkOperation') as HTMLSelectElement;
+    fireEvent.change(opSelect, { target: { name: 'operation', value: 'delete' } });
+    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ operation: 'delete' }));
 
-    expect(screen.getByPlaceholderText('localhost:8080')).toHaveValue('localhost:8085');
-    expect(screen.getByPlaceholderText('5000')).toHaveValue(3000);
-    expect(screen.getByPlaceholderText('5')).toHaveValue(7);
-    expect(screen.getByLabelText(/Enable RPC Throttling/i)).toBeChecked();
+    rerender(
+      <FirestoreIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              projectId: 'analytics-gcp',
+              collectionPath: 'users',
+              operation: 'delete',
+              documentIdColumn: '',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    expect(container.querySelector('#firestoreSinkMergeFields')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Document ID column is required for update or delete')
+    ).toBeInTheDocument();
+
+    const docIdInput = container.querySelector('#firestoreSinkDocumentIdColumn') as HTMLInputElement;
+    fireEvent.change(docIdInput, { target: { name: 'documentIdColumn', value: 'user_id' } });
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ documentIdColumn: 'user_id' })
+    );
+  });
+
+  it('warns when maxBatchSize exceeds 500 mutations and updates system_instructions', () => {
+    const { container } = render(
+      <FirestoreIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              projectId: 'analytics-gcp',
+              collectionPath: 'users',
+              maxBatchSize: 750,
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
     expect(
-      screen.getByPlaceholderText(/Map upstream elements to com.google.firestore.v1.Write/i)
-    ).toHaveValue('Custom instructions for sink');
-  });
+      screen.getByText('Firestore caps each WriteBatch commit at 500 mutations')
+    ).toBeInTheDocument();
 
-  it('dispatches updates when text, checkbox, and select fields change', () => {
-    const node = {
-      data: {
-        label: 'Firestore Sink',
-        properties: {}
-      }
-    };
-
-    render(<FirestoreIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    // Change Project ID
-    const projectInput = screen.getByPlaceholderText('my-gcp-project');
-    fireEvent.change(projectInput, { target: { name: 'projectId', value: 'my-project-123' } });
+    const textarea = container.querySelector('#firestoreSinkInstructions') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'Add server_timestamp updated_at' } });
     expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'my-project-123' })
-    );
-
-    // Change Target Collection
-    const collectionInput = screen.getByPlaceholderText('e.g. processed_events');
-    fireEvent.change(collectionInput, { target: { name: 'targetCollection', value: 'events' } });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({ targetCollection: 'events' })
-    );
-
-    // Toggle Dead Letter Queue
-    const dlqCheckbox = screen.getByLabelText(/Enable Dead-Letter Queue/i);
-    fireEvent.click(dlqCheckbox);
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        withDeadLetterQueue: true,
-        failureHandling: 'dead_letter_queue'
-      })
-    );
-  });
-
-  it('switches write operations hiding merge fields when not in update mode', () => {
-    const { rerender } = render(
-      <FirestoreIOSinkProperties
-        node={{
-          data: {
-            properties: {
-              operation: 'update',
-              mergeFields: 'fieldA, fieldB'
-            }
-          }
-        }}
-        onChange={mockOnChange}
-      />
-    );
-
-    expect(screen.getByPlaceholderText('e.g. status, updated_at')).toBeInTheDocument();
-
-    // Switch to delete mode
-    rerender(
-      <FirestoreIOSinkProperties
-        node={{
-          data: {
-            properties: {
-              operation: 'delete'
-            }
-          }
-        }}
-        onChange={mockOnChange}
-      />
-    );
-
-    expect(screen.queryByPlaceholderText('e.g. status, updated_at')).not.toBeInTheDocument();
-
-    // Switch to transform mode
-    rerender(
-      <FirestoreIOSinkProperties
-        node={{
-          data: {
-            properties: {
-              operation: 'transform'
-            }
-          }
-        }}
-        onChange={mockOnChange}
-      />
-    );
-
-    expect(screen.queryByPlaceholderText('e.g. status, updated_at')).not.toBeInTheDocument();
-  });
-
-  it('switches to Secret Manager auth mode and loads secrets into datalist', () => {
-    const node = {
-      data: {
-        label: 'Firestore Sink',
-        properties: {
-          authMode: 'secret_manager',
-          serviceAccountSecret: 'firestore-key'
-        }
-      }
-    };
-
-    render(<FirestoreIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const secretInput = screen.getByPlaceholderText('e.g. firestore-sa-key');
-    expect(secretInput).toHaveValue('firestore-key');
-
-    fireEvent.change(secretInput, { target: { name: 'serviceAccountSecret', value: 'new-key' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      serviceAccountSecret: 'new-key'
-    }));
-  });
-
-  it('handles edge case: numeric fields set to 0', () => {
-    const node = {
-      data: {
-        label: 'Firestore Sink',
-        properties: {
-          batchSize: 0,
-          hintMaxNumWorkers: 0,
-          initialBackoffMs: 0,
-          maxAttempts: 0
-        }
-      }
-    };
-
-    render(<FirestoreIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('50')).toHaveValue(0);
-    expect(screen.getByPlaceholderText('e.g. 10')).toHaveValue(0);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    expect(screen.getByPlaceholderText('5000')).toHaveValue(0);
-    expect(screen.getByPlaceholderText('5')).toHaveValue(0);
-  });
-
-  it('handles missing node.data.properties gracefully without crashing', () => {
-    const node = {
-      data: {
-        label: 'Firestore Sink'
-      }
-    };
-
-    render(<FirestoreIOSinkProperties node={node as any} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('my-gcp-project')).toHaveValue('');
-    expect(screen.getByPlaceholderText('e.g. processed_events')).toHaveValue('');
-  });
-
-  it('respects system_instructions fallback chain and handles edits', () => {
-    const node = {
-      data: {
-        properties: {}
-      }
-    };
-
-    render(<FirestoreIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const instructionsTextarea = screen.getByPlaceholderText(
-      /Map upstream elements to com.google.firestore.v1.Write/i
-    );
-
-    fireEvent.change(instructionsTextarea, { target: { value: 'New sink prompt' } });
-    expect(mockOnChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system_instructions: 'New sink prompt'
-      })
+      expect.objectContaining({ system_instructions: 'Add server_timestamp updated_at' })
     );
   });
 });

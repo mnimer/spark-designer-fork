@@ -1,256 +1,151 @@
 /**
- * SingleStoreDBIOSinkProperties Unit Tests
+ * Unit Tests for SingleStoreDBIOSinkProperties Component (SNK28)
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Tests the SingleStoreDBIOSinkProperties panel component covering field rendering,
- * hydration from node properties, onChange event dispatch, IPC Secret Manager communication,
- * batch size settings, edge cases (missing properties, 0 values), validation alerts,
- * and instruction fallback chains.
+ * Validates SingleStoreDBIOSinkProperties rendering, required ddlEndpoint/database/table
+ * validation, writeFormat switching (singlestore vs jdbc fallback), loadDataCompression,
+ * overwriteBehavior (truncate, dropAndCreate, merge), onDuplicateKeySQL upsert clause,
+ * legacy alias cleanup, SecretManagerAuthFields, and system instructions.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { SingleStoreDBIOSinkProperties } from './SingleStoreDBIO';
+import { SingleStoreDBIOSinkProperties, SingleStoreSinkProperties } from './SingleStoreDBIO';
 
 describe('SingleStoreDBIOSinkProperties', () => {
   const mockOnChange = vi.fn();
-  let postMessageSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
   });
 
-  afterEach(() => {
-    delete (window as any).vscode;
+  it('exports SingleStoreSinkProperties alias and validates required ddlEndpoint, database, and table', () => {
+    expect(SingleStoreSinkProperties).toBe(SingleStoreDBIOSinkProperties);
+
+    const { container } = render(
+      <SingleStoreDBIOSinkProperties node={{ data: { properties: {} } }} onChange={mockOnChange} />
+    );
+
+    expect(screen.getByText('DDL endpoint host:port is required')).toBeInTheDocument();
+    expect(screen.getByText('Database name is required')).toBeInTheDocument();
+    expect(screen.getByText('Destination table is required')).toBeInTheDocument();
+    expect(container.querySelector('#singleStoreSinkWriteFormat')).toHaveValue('singlestore');
+    expect(container.querySelector('#singleStoreSinkSaveMode')).toHaveValue('append');
+    expect(container.querySelector('#singleStoreSinkOverwriteBehavior')).toHaveValue('truncate');
+    expect(container.querySelector('#singleStoreSinkLoadDataCompression')).toHaveValue('LZ4');
   });
 
-  it('renders required endpoint, database, and destination table and shows errors when empty', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {}
+  it('updates overwriteBehavior, loadDataCompression, and onDuplicateKeySQL in native singlestore mode', () => {
+    const { container } = render(
+      <SingleStoreDBIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              ddlEndpoint: 'svc-s2.internal:3306',
+              database: 'telemetry_db',
+              table: 'sensor_rollups',
+              saveMode: 'overwrite',
+              overwriteBehavior: 'merge',
+              loadDataCompression: 'GZip',
+              onDuplicateKeySQL: 'metric_val = VALUES(metric_val)',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
+
+    expect(container.querySelector('#singleStoreSinkOverwriteBehavior')).toHaveValue('merge');
+    expect(container.querySelector('#singleStoreSinkLoadDataCompression')).toHaveValue('GZip');
+    expect(container.querySelector('#singleStoreSinkOnDuplicateKeySQL')).toHaveValue(
+      'metric_val = VALUES(metric_val)'
+    );
+
+    fireEvent.change(
+      container.querySelector('#singleStoreSinkOverwriteBehavior') as HTMLSelectElement,
+      { target: { name: 'overwriteBehavior', value: 'dropAndCreate' } }
+    );
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ overwriteBehavior: 'dropAndCreate' })
+    );
+
+    fireEvent.change(
+      container.querySelector('#singleStoreSinkOnDuplicateKeySQL') as HTMLTextAreaElement,
+      {
+        target: {
+          name: 'onDuplicateKeySQL',
+          value: 'metric_val = VALUES(metric_val), ts = VALUES(ts)',
+        },
       }
-    };
-
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('127.0.0.1:3306')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. telemetry_db')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. telemetry_rollups')).toBeInTheDocument();
-
-    expect(screen.getByText(/Endpoint host:port is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/Database name is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/Destination table is required/i)).toBeInTheDocument();
-
-    expect(postMessageSpy).toHaveBeenCalledWith({ command: 'getSecrets' });
+    );
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onDuplicateKeySQL: 'metric_val = VALUES(metric_val), ts = VALUES(ts)',
+      })
+    );
   });
 
-  it('hydrates all populated sink properties correctly', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          endpoint: 'singlestore.prod:3306',
-          database: 'iot_metrics',
-          table: 'sensor_rollups',
-          userDataMapper: 'com.example.SensorRollupMapper',
-          batchSize: 50000,
-          authMode: 'none',
-          connectionProperties: 'connectTimeout=30000',
-          connectTimeout: 30000,
-          sslMode: 'TRUST',
-          system_instructions: 'Insert aggregated rollups using UserDataMapper'
-        }
-      }
-    };
+  it('switches to jdbc fallback format, cleans legacy endpoint/passwordSecret aliases, and updates instructions', () => {
+    const { container, rerender } = render(
+      <SingleStoreDBIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              endpoint: 'legacy-s2.internal:3306',
+              database: 'iot_db',
+              table: 'events',
+              authMode: 'secretManager',
+              passwordSecret: 's2-sink-pw',
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
+    expect(container.querySelector('#singleStoreSinkDdlEndpoint')).toHaveValue(
+      'legacy-s2.internal:3306'
+    );
+    expect(container.querySelector('#singleStoreSinkSecretName')).toHaveValue('s2-sink-pw');
 
-    expect(screen.getByPlaceholderText('127.0.0.1:3306')).toHaveValue('singlestore.prod:3306');
-    expect(screen.getByPlaceholderText('e.g. telemetry_db')).toHaveValue('iot_metrics');
-    expect(screen.getByPlaceholderText('e.g. telemetry_rollups')).toHaveValue('sensor_rollups');
-    expect(screen.getByPlaceholderText('com.example.SensorRollupUserDataMapper')).toHaveValue('com.example.SensorRollupMapper');
-    expect(screen.getByPlaceholderText('10000')).toHaveValue(50000);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    expect(screen.getByPlaceholderText('connectTimeout=30000;useServerPrepStmts=FALSE')).toHaveValue('connectTimeout=30000');
-    expect(screen.getByPlaceholderText('30000')).toHaveValue(30000);
-    expect(screen.getByRole('combobox', { name: 'SSL Mode' })).toHaveValue('TRUST');
-    expect(screen.getByPlaceholderText(/Write SensorRollup records to SingleStore table/i)).toHaveValue('Insert aggregated rollups using UserDataMapper');
-  });
-
-  it('dispatches updates when text and number fields change', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          endpoint: '127.0.0.1:3306',
-          database: 'iot_metrics'
-        }
-      }
-    };
-
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const tableInput = screen.getByPlaceholderText('e.g. telemetry_rollups');
-    fireEvent.change(tableInput, { target: { name: 'table', value: 'daily_rollups' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      endpoint: '127.0.0.1:3306',
-      database: 'iot_metrics',
-      table: 'daily_rollups'
+    fireEvent.change(container.querySelector('#singleStoreSinkDdlEndpoint') as HTMLInputElement, {
+      target: { name: 'ddlEndpoint', value: 's2-prod.internal:3306' },
     });
+    const updated = mockOnChange.mock.calls[0][0];
+    expect(updated.ddlEndpoint).toBe('s2-prod.internal:3306');
+    expect(updated.endpoint).toBeUndefined();
 
-    const batchSizeInput = screen.getByPlaceholderText('10000');
-    fireEvent.change(batchSizeInput, { target: { name: 'batchSize', value: '25000' } });
-    expect(mockOnChange).toHaveBeenCalledWith({
-      endpoint: '127.0.0.1:3306',
-      database: 'iot_metrics',
-      batchSize: '25000'
-    });
-  });
+    rerender(
+      <SingleStoreDBIOSinkProperties
+        node={{
+          data: {
+            properties: {
+              ddlEndpoint: 's2-prod.internal:3306',
+              database: 'iot_db',
+              table: 'events',
+              writeFormat: 'jdbc',
+              batchsize: 8000,
+            },
+          },
+        }}
+        onChange={mockOnChange}
+      />
+    );
 
-  it('switches to Secret Manager auth mode and updates passwordSecret', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          endpoint: '127.0.0.1:3306',
-          authMode: 'secret_manager' as const
-        }
-      }
-    };
+    expect(container.querySelector('#singleStoreSinkBatchsize')).toHaveValue(8000);
+    expect(container.querySelector('#singleStoreSinkOnDuplicateKeySQL')).not.toBeInTheDocument();
 
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const usernameInput = screen.getByPlaceholderText('e.g. singlestore-username');
-    const passwordInput = screen.getByPlaceholderText('e.g. singlestore-password');
-    expect(usernameInput).toBeInTheDocument();
-    expect(passwordInput).toBeInTheDocument();
-
-    fireEvent.change(passwordInput, { target: { name: 'passwordSecret', value: 'singlestore-sink-pass' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      passwordSecret: 'singlestore-sink-pass'
-    }));
-  });
-
-  it('handles edge case: numeric fields set to 0', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          batchSize: 0,
-          connectTimeout: 0
-        }
-      }
-    };
-
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('10000')).toHaveValue(0);
-
-    const advancedButton = screen.getByRole('button', { name: /Advanced Sink Settings/i });
-    fireEvent.click(advancedButton);
-
-    expect(screen.getByPlaceholderText('30000')).toHaveValue(0);
-  });
-
-  it('handles missing node.data.properties gracefully without crashing', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink'
-      }
-    } as any;
-
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    expect(screen.getByPlaceholderText('127.0.0.1:3306')).toHaveValue('');
-  });
-
-  it('updates system_instructions when textarea changes', () => {
-    const node = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {}
-      }
-    };
-    render(<SingleStoreDBIOSinkProperties node={node} onChange={mockOnChange} />);
-
-    const textarea = screen.getByPlaceholderText(/Write SensorRollup records to SingleStore table/i);
-    fireEvent.change(textarea, { target: { value: 'New singlestore sink prompt' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      system_instructions: 'New singlestore sink prompt'
-    }));
-  });
-
-  it('supports mapperStrategy switching between auto-infer, schema definition, and custom class', () => {
-    // 1. Default / infer strategy: shows dynamic inference banner, no schema or custom class input
-    const nodeInfer = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          endpoint: '127.0.0.1:3306',
-          database: 'telemetry_db',
-          table: 'telemetry_rollups',
-          mapperStrategy: 'infer'
-        }
-      }
-    };
-    const { unmount } = render(<SingleStoreDBIOSinkProperties node={nodeInfer} onChange={mockOnChange} />);
-    expect(screen.getByText(/Dynamic Inference:/i)).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText(/id:BIGINT, device_id:VARCHAR/i)).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('com.example.SensorRollupUserDataMapper')).not.toBeInTheDocument();
-    unmount();
-
-    // 2. Schema strategy: renders 3-tab SchemaEditor and dispatches changes
-    const nodeSchema = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          endpoint: '127.0.0.1:3306',
-          database: 'telemetry_db',
-          table: 'telemetry_rollups',
-          mapperStrategy: 'schema',
-          schemaString: 'id:BIGINT, metric_val:DOUBLE'
-        }
-      }
-    };
-    const { unmount: unmountSchema } = render(<SingleStoreDBIOSinkProperties node={nodeSchema} onChange={mockOnChange} />);
-    expect(screen.getByText('Field Builder (2)')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Schema String Tab/i }));
-    const schemaInput = screen.getByPlaceholderText(/id:BIGINT, device_id:VARCHAR/i);
-    expect(schemaInput).toHaveValue('id:BIGINT, metric_val:DOUBLE');
-    fireEvent.change(schemaInput, { target: { value: 'id:BIGINT, metric_val:DOUBLE, ts:TIMESTAMP' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      schemaString: 'id:BIGINT, metric_val:DOUBLE, ts:TIMESTAMP'
-    }));
-    unmountSchema();
-
-    // 3. Custom class strategy: renders userDataMapper class input
-    const nodeCustom = {
-      data: {
-        label: 'SingleStore Sink',
-        properties: {
-          endpoint: '127.0.0.1:3306',
-          database: 'telemetry_db',
-          table: 'telemetry_rollups',
-          mapperStrategy: 'customClass',
-          userDataMapper: 'com.example.CustomUserDataMapper'
-        }
-      }
-    };
-    render(<SingleStoreDBIOSinkProperties node={nodeCustom} onChange={mockOnChange} />);
-    const userDataMapperInput = screen.getByPlaceholderText('com.example.SensorRollupUserDataMapper');
-    expect(userDataMapperInput).toHaveValue('com.example.CustomUserDataMapper');
-    fireEvent.change(userDataMapperInput, { target: { name: 'userDataMapper', value: 'com.example.NewUserDataMapper' } });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({
-      userDataMapper: 'com.example.NewUserDataMapper'
-    }));
+    fireEvent.change(
+      container.querySelector('#singleStoreSinkInstructions') as HTMLTextAreaElement,
+      { target: { value: 'Use LZ4 compression for parallel leaf ingest' } }
+    );
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system_instructions: 'Use LZ4 compression for parallel leaf ingest',
+      })
+    );
   });
 });
