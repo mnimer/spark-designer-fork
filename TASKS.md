@@ -28,6 +28,7 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 > - `T1–T10`: Unit Tests & Multi-Agent Spark Evaluator Harness (10 tasks)
 > - `I1–I10`: Starter Samples & End-to-End Integration Pipelines (10 tasks)
 > - `DOC1–DOC6`: Documentation & Walkthroughs (6 tasks)
+> - `EXT1–EXT8`: Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (8 tasks)
 > - `V2`: Phase-2 Deferred Backlog (5 items)
 
 ### Phase 0 — Repository Scaffold & Hygiene (`S0`–`S11`)
@@ -275,6 +276,19 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 | [DOC5](#doc5) | 📖 Docs | Author `resources/codegen-skills/README.md` documenting the skill authoring contract and `ExecutionPlan` placeholders. | ⬜ Not Started |
 | [DOC6](#doc6) | 📖 Docs | Author `src/test/integration/README.md` documenting how to run the `SparkArchitectureAgent` evaluation suite and offline `pytest` harness. | ⬜ Not Started |
 
+### Phase 11 — Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (`EXT1`–`EXT8`)
+
+| # | Type | `sparkTransform` | Scope & PySpark 4.x Pattern | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| [EXT1](#ext1) | 🔌 Source | `RestApiSource` | Add batch HTTP/REST ingestion source via Spark 4.0 Python `DataSourceReader` with offset, cursor, or link-header pagination, parallel partition parameters, Secret Manager auth, and explicit `schemaDDL`. | ⬜ Not Started |
+| [EXT2](#ext2) | 🔌 Source | `SftpSource` | Add standalone batch SFTP source via Spark 4.0 Python `DataSourceReader` (`paramiko`), Secret Manager SSH key or password auth, remote glob filter, and `csv`/`json`/`parquet`/`text`/`xml` parsing. | ⬜ Not Started |
+| [EXT3](#ext3) | 📤 Sink | `VectorStoreSink` | Add `foreachBatch` vector sink with backend selector for `AlloyDB pgvector` (AlloyDB Socket Factory + `psycopg` `::vector` upsert) and `Vertex AI Vector Search` (`upsert_datapoints` or GCS batch JSONL export). | ⬜ Not Started |
+| [EXT4](#ext4) | 🔄 Step | `MergeCdcScd` | Add 2-input pure CDC/SCD step (`left` = incoming CDC, `right` = current target) deduplicating keys, computing SCD Type 1 or Type 2 `_scd_action`/`is_current`/effective-date columns inside `transform()`, and updating `io-iceberg`/`io-delta` `MERGE INTO` rules. | ⬜ Not Started |
+| [EXT5](#ext5) | 🛡️ Step | `EnforceSchemaAndCast` | Add Data Contract step (`errorOutput: true`) enforcing target `schemaDDL` with schema drift policies (`fail`, `drop_extra`, `add_nulls`), Spark 4.0 ANSI-safe `F.try_cast`, and DLQ routing for cast failures. | ⬜ Not Started |
+| [EXT6](#ext6) | 🧩 Step | `NestedStructArrayOps` | Add zero-shuffle nested data step supporting recursive struct flattening, `F.struct`/`F.named_struct` packing, and Catalyst higher-order functions (`F.transform`, `F.filter`, `F.exists`, `F.forall`, `F.aggregate`). | ⬜ Not Started |
+| [EXT7](#ext7) | 🤖 Step | `TextChunkAndEmbed` | Add RAG preparation step (`Spark ML & AI`, `errorOutput: true`) supporting `chunk_only`, `embed_only`, and `chunk_and_embed` modes with configurable chunk overlap and batched `mapInPandas` Vertex AI / Gemini embeddings (`embed_content`). | ⬜ Not Started |
+| [EXT8](#ext8) | 🔧 Parity | `IcebergSource` | Add missing `glue`, `nessie`, and `bigquery` catalog type options to `IcebergSource` (`webview/src/properties/source/IcebergIO.tsx`) and `io-iceberg/SKILL.md` to match `IcebergSink`. | ⬜ Not Started |
+
 ### Phase-2 Deferred Backlog (`V2`)
 
 | # | Type | Task | Status |
@@ -295,14 +309,14 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 4. **`D4` — Latest Spark 4.x Runtime Baseline + Python `DataSource` API**: Default to the latest Spark 4.x runtime (`4.0` = Spark 4.2 on Serverless Spark in `standard` tier, `3.0` = Spark 4.1 on Dataproc Clusters and Spark 4.0 on Spark Connect). When a connector does not publish a Spark 4.x / Scala 2.13 JVM JAR, generate a Spark 4.0 Python `DataSource` (`pyspark.sql.datasource.DataSource`) or `foreachBatch` / `mapInPandas` implementation so every node runs on the latest Spark 4.x runtime without needing legacy Spark 3.5 runtimes.
 5. **`D5` — Direct `SOURCE -> SINK` Connections Allowed**: Remove the Beam Designer rule blocking direct `Source -> Sink` edges so zero-transform format conversion and replication jobs (`CSV -> Parquet`, `JDBC -> BigQuery`) can be wired directly.
 6. **`D6` — Format-First File Nodes with Shared `StorageBackendFields`**: Represent file sources and sinks by format (`Parquet`, `ORC`, `Avro`, `CSV`, `JSON`, `Text`, `XML`, `BinaryFile`, `TFRecord`) and embed a shared `StorageBackendFields` component (`GCS gs://`, `S3 s3a://`, `Azure abfss:// / wasbs://`, `HDFS hdfs://`, `Local file://` + Secret Manager auth) instead of duplicating cloud-storage nodes in the palette.
-7. **`D7` — DLQ `error` Handle Restricted to Error-Capable Steps**: Render the red `error` output handle only on steps where `errorOutput: true` (`ParsePayload`, `Filter`, `DataQualityAssert`, `PandasUdfTransform`, `CustomTransform`, `SparkSqlQuery`, `SparkMlAndVertexAi`, `StatefulTransform`).
+7. **`D7` — DLQ `error` Handle Restricted to Error-Capable Steps**: Render the red `error` output handle only on steps where `errorOutput: true` (`ParsePayload`, `Filter`, `DataQualityAssert`, `EnforceSchemaAndCast`, `PandasUdfTransform`, `CustomTransform`, `SparkSqlQuery`, `SparkMlAndVertexAi`, `TextChunkAndEmbed`, `StatefulTransform`).
 8. **`D8` — Spark-Idiomatic Watermark, Windowing & Streaming Sink Settings**:
    - `Watermark` (`df.withWatermark()`) is an explicit Step node placed after payload parsing.
    - `Time Window` (`None | Tumbling | Sliding | Session` via `F.window` / `F.session_window`) is built directly into the `GroupBy & Aggregate` step.
    - `Checkpoint Root URI` and default `Trigger` live in pipeline/deployment settings, with per-Sink overrides (`outputMode`, `triggerType`, `triggerInterval`, `checkpointLocation`) on every streaming Sink.
 9. **`D9` — Deterministic Pre-Gemini Execution Planner (`src/shared/executionPlanner.ts`)**: Before calling Gemini, compute a deterministic `ExecutionPlan` that specifies node execution order, batch vs. streaming mode, `.cache()`/`.unpersist()` insertion on batch fan-out (out-degree $> 1$), `.writeStream.foreachBatch(...)` grouping for multi-sink streaming fan-outs and batch-only sinks, DLQ split nodes, and required runtime JARs from `versionMatrix.ts`.
 10. **`D10` — Multi-Input & Multi-Output Steps**:
-    - `Join` exposes 2 left handles (`left` and `right`) with a `Broadcast Right Input` (`F.broadcast()`) toggle.
+    - `Join` and `MergeCdcScd` expose 2 left handles (`left` and `right`). `Join` also adds a `Broadcast Right Input` (`F.broadcast()`) toggle.
     - `UnionByName`, `SetOperation`, and `SparkSqlQuery` accept $N$ incoming edges.
     - `ConditionalSplit` exposes dynamic output handles (one per rule plus `else`).
 11. **`D11` — Three Runners + Optional Spark Connect**: Support `Local` (`local[*]` or `ManagedSparkSession` Spark Connect), `DataprocCluster` (`gcloud dataproc jobs submit pyspark` with live cluster dropdown), and `ServerlessSpark` (`gcloud dataproc batches submit pyspark`).
