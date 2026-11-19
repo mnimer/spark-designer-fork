@@ -29,17 +29,23 @@ describe('findMainPipelineFile', () => {
 
   it('selects matching python pipeline file based on filename', () => {
     const files = ['setup.py', 'wordcount.py', 'utils.py'];
-    expect(findMainPipelineFile(files, 'Python', 'wordcount.beam')).toBe('wordcount.py');
+    expect(findMainPipelineFile(files, 'Python', 'wordcount.spark')).toBe('wordcount.py');
   });
 
   it('selects matching java pipeline file based on filename', () => {
     const files = ['WordCount.java', 'Utils.java', 'pom.xml'];
-    expect(findMainPipelineFile(files, 'Java', 'wordcount.beam')).toBe('WordCount.java');
+    expect(findMainPipelineFile(files, 'Java', 'wordcount.spark')).toBe('WordCount.java');
   });
 
   it('falls back to generic pipeline file when exact name match is missing', () => {
     const files = ['pipeline.py', 'helper.py'];
-    expect(findMainPipelineFile(files, 'Python', 'unknown.beam')).toBe('pipeline.py');
+    expect(findMainPipelineFile(files, 'Python', 'unknown.spark')).toBe('pipeline.py');
+  });
+
+  it('strips .spark case-insensitively when matching generated Python files', () => {
+    const files = ['src/gcs-parquet-etl.py', 'src/helpers.py'];
+    expect(findMainPipelineFile(files, 'Python', 'gcs-parquet-etl.spark')).toBe('src/gcs-parquet-etl.py');
+    expect(findMainPipelineFile(files, 'Python', 'GCS-PARQUET-ETL.SPARK')).toBe('src/gcs-parquet-etl.py');
   });
 });
 
@@ -106,8 +112,8 @@ describe('useVsCodeBridge - projectIdResolved (P9 deferred gcloud lookup)', () =
   });
 
   it('does not clobber a project the user (or the pipeline) already set', () => {
-    // The lookup can take seconds; by then the user may have typed a value or the
-    // loaded .beam may have supplied one. The late gcloud answer must lose.
+    // The lookup can take seconds, and by then the user may have typed a value or the
+    // loaded .spark may have supplied one. The late gcloud answer must lose.
     const setProjectId = renderWithProject('user-typed-project');
     dispatchResolved('gcloud-default');
     expect(setProjectId).not.toHaveBeenCalled();
@@ -124,7 +130,7 @@ describe('useVsCodeBridge - projectIdResolved (P9 deferred gcloud lookup)', () =
     act(() => {
       window.dispatchEvent(
         new MessageEvent('message', {
-          data: { command: 'loadPipeline', filename: 'a.beam', data: null, projectId: 'legacy-proj' },
+          data: { command: 'loadPipeline', filename: 'a.spark', data: null, projectId: 'legacy-proj' },
         })
       );
     });
@@ -285,14 +291,14 @@ pipelineConfig:
         new MessageEvent('message', {
           data: {
             command: 'loadPipeline',
-            filename: 'my_job.beam',
+            filename: 'my_job.spark',
             data: yamlData,
           },
         })
       );
     });
 
-    expect(setFilename).toHaveBeenCalledWith('my_job.beam');
+    expect(setFilename).toHaveBeenCalledWith('my_job.spark');
     expect(setNodes).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ id: '1' }),
@@ -691,7 +697,7 @@ runtimeVariables:
         new MessageEvent('message', {
           data: {
             command: 'loadPipeline',
-            filename: 'test_pipeline.beam',
+            filename: 'test_pipeline.spark',
             data: yamlData,
           },
         })
@@ -706,7 +712,7 @@ runtimeVariables:
     }
 
     // Verify sanitized log message format
-    expect(logSpy).toHaveBeenCalledWith('[useVsCodeBridge] Received loadPipeline for', 'test_pipeline.beam');
+    expect(logSpy).toHaveBeenCalledWith('[useVsCodeBridge] Received loadPipeline for', 'test_pipeline.spark');
 
     logSpy.mockRestore();
   });
@@ -998,6 +1004,79 @@ pipelineConfig:
       { name: 'spark-connect-tpl', value: 'spark-connect-tpl' },
     ]);
     expect(result.current.regions).toEqual(['us-central1', 'us-east1']);
+  });
+
+  it('strips .spark suffix when deriving default JOB_ID and outputFolder on loadPipeline', () => {
+    const setRuntimeVariables = vi.fn();
+    const setPipelineConfig = vi.fn();
+
+    renderHook(() =>
+      useVsCodeBridge({
+        setNodes: vi.fn(),
+        setEdges: vi.fn(),
+        setRuntimeVariables,
+        setJobConfig: vi.fn(),
+        pipelineConfig: { language: 'Python', outputFolder: '', needsRebuild: false },
+        setPipelineConfig,
+        filename: 'default_job',
+        setFilename: vi.fn(),
+        projectId: 'proj',
+        setProjectId: vi.fn(),
+      })
+    );
+
+    const sampleYaml = [
+      'nodes: []',
+      'edges: []',
+      'pipelineConfig:',
+      '  language: PySpark',
+      '  outputFolder: ""',
+      '',
+    ].join('\n');
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'loadPipeline',
+            filename: 'gcs-parquet-etl.spark',
+            relativeFolder: 'samples',
+            data: sampleYaml,
+          },
+        })
+      );
+    });
+
+    expect(setRuntimeVariables).toHaveBeenCalledWith([
+      { key: 'JOB_ID', value: 'gcs-parquet-etl' },
+    ]);
+
+    const configUpdater = setPipelineConfig.mock.calls[0][0] as (prev: PipelineConfig) => PipelineConfig;
+    const updatedConfig = configUpdater({
+      language: 'Python',
+      outputFolder: '',
+      needsRebuild: false,
+    });
+    expect(updatedConfig.outputFolder).toBe('samples/gcs-parquet-etl');
+    expect(updatedConfig.outputFolder.endsWith('.spark')).toBe(false);
+
+    // Also verify empty-pipeline loadPipeline strips .spark from default JOB_ID
+    setRuntimeVariables.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'loadPipeline',
+            filename: 'rate stream delta.SPARK',
+            data: null,
+          },
+        })
+      );
+    });
+
+    expect(setRuntimeVariables).toHaveBeenCalledWith([
+      { key: 'JOB_ID', value: 'rate_stream_delta' },
+    ]);
   });
 });
 

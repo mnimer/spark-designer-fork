@@ -49,13 +49,13 @@ export function isPlaceholderProjectId(projectId: string | undefined): boolean {
  *
  * @param files List of relative file paths in the generated output directory.
  * @param language Target programming language ('Python' | 'Java').
- * @param filename Optional current pipeline .beam filename used for name matching.
+ * @param filename Optional current pipeline .spark filename used for name matching.
  * @returns The best matching main pipeline code file path, or null if empty.
  */
 export const findMainPipelineFile = (files: string[], language: 'Python' | 'Java', filename?: string): string | null => {
   if (!files || files.length === 0) return null;
 
-  const baseName = filename ? filename.replace(/\.beam$/, '').toLowerCase() : '';
+  const baseName = filename ? filename.replace(/\.spark$/i, '').toLowerCase() : '';
   const pascalBaseName = baseName ? baseName.charAt(0).toUpperCase() + baseName.slice(1) : '';
 
   // Filter code files by language preference, but fall back to the other language if preferred language has no files
@@ -285,7 +285,7 @@ export function useVsCodeBridge({
               const hasJobId = variables.some((v: any) => v.key === 'JOB_ID');
               if (!hasJobId) {
                 const defaultJobId = message.filename
-                  ? message.filename.replace('.beam', '').replace(/ /g, '_')
+                  ? message.filename.replace(/\.spark$/i, '').replace(/ /g, '_')
                   : 'default_job';
                 variables.unshift({ key: 'JOB_ID', value: defaultJobId });
               }
@@ -308,7 +308,7 @@ export function useVsCodeBridge({
                 outputFolder: rawConfig.outputFolder || '',
                 needsRebuild: rawConfig.needsRebuild ?? false,
               };
-              const nameWithoutExt = message.filename ? message.filename.replace('.beam', '') : '';
+              const nameWithoutExt = message.filename ? message.filename.replace(/\.spark$/i, '') : '';
               const relativeFolder = message.relativeFolder || '';
               const defaultOutputFolder =
                 message.defaultOutputFolder ||
@@ -335,7 +335,7 @@ export function useVsCodeBridge({
             setNodes([]);
             setEdges([]);
             const defaultJobId = message.filename
-              ? message.filename.replace('.beam', '').replace(/ /g, '_')
+              ? message.filename.replace(/\.spark$/i, '').replace(/ /g, '_')
               : 'default_job';
             setRuntimeVariables([{ key: 'JOB_ID', value: defaultJobId }]);
             setJobConfig({

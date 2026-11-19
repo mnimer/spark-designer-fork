@@ -88,12 +88,17 @@ describe('Vitest and Test Suite Configuration', () => {
         expect(unitConfigContent).not.toContain("180000");
     });
 
-    it('integration test config targets integration suites with extended timeout', () => {
+    it('integration test config targets integration suites with extended timeout and .spark raw loader', () => {
         const integConfigPath = path.join(rootDir, 'vitest.integration.config.mts');
         expect(fs.existsSync(integConfigPath)).toBe(true);
         const integConfigContent = fs.readFileSync(integConfigPath, 'utf-8');
         expect(integConfigContent).toContain("src/test/integration/**/*.test.ts");
         expect(integConfigContent).toContain("180000");
+        expect(integConfigContent).toContain("cleanId.endsWith('.spark')");
+
+        const integEnvDts = fs.readFileSync(path.join(rootDir, 'src/test/integration/env.d.ts'), 'utf-8');
+        expect(integEnvDts).toContain("declare module '*.spark'");
+        expect(integEnvDts).toContain("declare module '*.spark?raw'");
     });
 });
 
@@ -101,10 +106,13 @@ describe('Package.json Scripts', () => {
     const rootDir = path.resolve(__dirname, '../../../');
     const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
 
-    it('defines vitest unit, integration, webview, and combined test runners', () => {
+    it('defines vitest unit, integration, e2e, webview, and combined test runners', () => {
         expect(pkg.scripts.test).toBe('npm run test:unit');
         expect(pkg.scripts['test:unit']).toBe('vitest run');
         expect(pkg.scripts['test:integration']).toBe('vitest run --config vitest.integration.config.mts');
+        expect(pkg.scripts['test:integration:e2e']).toBe(
+            'vitest run --config vitest.integration.config.mts src/test/integration/e2e'
+        );
         expect(pkg.scripts['test:webview']).toBe('npm --prefix webview test');
         expect(pkg.scripts['test:all']).toBe('npm run test:unit && npm run test:webview');
     });

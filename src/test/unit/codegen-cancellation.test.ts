@@ -105,7 +105,7 @@ describe('F1 — code generation cancellation', () => {
 
         expect(fs.existsSync(path.join(tempDir, 'src', 'pipe.py'))).toBe(false);
         expect(fs.existsSync(path.join(tempDir, '.dockerignore'))).toBe(false);
-        expect(fs.existsSync(path.join(tempDir, '.beamgen.json'))).toBe(false);
+        expect(fs.existsSync(path.join(tempDir, '.sparkgen.json'))).toBe(false);
         expect(showErrorMessage).not.toHaveBeenCalled();
         expect(posted).toContainEqual(expect.objectContaining({
             command: 'codeRegenerated', success: false, cancelled: true,

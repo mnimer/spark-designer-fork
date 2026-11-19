@@ -3,10 +3,10 @@
  * (pipeline runner child process and Gemini code generation).
  *
  * Before this module the extension kept a single module-level
- * `activeExecutionProcess` / `activeGenerationCts` pair, so two open `.beam`
+ * `activeExecutionProcess` / `activeGenerationCts` pair, so two open `.spark`
  * tabs clobbered each other (findings F1/F4): starting a run in tab B killed
  * tab A's process, and Stop never reached the Gemini request. Each webview
- * panel now owns one {@link EditorSession}; disposing the panel disposes the
+ * panel now owns one {@link EditorSession}. Disposing the panel disposes the
  * session, which stops its process and aborts its generation.
  *
  * Author: Mike Nimer <mikenimer@google.com>

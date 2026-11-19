@@ -2,7 +2,7 @@
  * @fileoverview Validation of user-supplied runtime variables before they are
  * merged into the environment of a spawned runner script (finding S1).
  *
- * Runtime variables come from the `.beam` file, which may be authored by
+ * Runtime variables come from the `.spark` file, which may be authored by
  * someone else (a cloned repo, a shared sample). Letting such a file set
  * variables like `BASH_ENV`, `LD_PRELOAD` or `JAVA_TOOL_OPTIONS` would allow it
  * to execute arbitrary code the moment the user clicks Run, independent of the

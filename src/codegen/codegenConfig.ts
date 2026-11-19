@@ -130,7 +130,7 @@ export const CUSTOM_INSTRUCTION_KEYS = {
 } as const;
 
 /**
- * SDK-style prefixes that a legacy `.spark` or `.beam` file can put in front of a connector name
+ * SDK-style prefixes that a legacy `.spark` file can put in front of a connector name
  * (for example `ReadFromKafka`, `WriteToBigQuery`). The transform resolver strips them,
  * longest first, before it matches the name against the skill catalog.
  */

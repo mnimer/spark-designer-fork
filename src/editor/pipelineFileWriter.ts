@@ -19,7 +19,7 @@ import { resolveOutputFolder } from './outputFolder';
  * - If targetUri is NOT currently open as a TextDocument, direct filesystem write via
  *   fs.writeFileSync is used since no in-memory buffer exists.
  * - Auxiliary generated artifacts (code, requirements.txt, Dockerfile, runner scripts, ignore files)
- *   are output files not held open as .beam documents in VS Code, so writing them directly via fs is safe.
+ *   are output files not held open as .spark documents in VS Code, so writing them directly via fs is safe.
  * 
  * @param targetUri File URI to save the pipeline definition to
  * @param data Serialized YAML content of the pipeline
@@ -60,7 +60,7 @@ export async function savePipelineFiles(
 
     if (openDoc) {
         // Path A: Document is open in VS Code editor.
-        // Skip WorkspaceEdit when content is already identical so opening a clean .beam file does not mark it dirty.
+        // Skip WorkspaceEdit when content is already identical so opening a clean .spark file does not mark it dirty.
         if (openDoc.getText() === data) {
             if (syncState) {
                 syncState.lastSavedContent = data;

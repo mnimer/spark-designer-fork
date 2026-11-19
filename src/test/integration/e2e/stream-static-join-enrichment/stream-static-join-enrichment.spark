@@ -1,0 +1,114 @@
+nodes:
+  - id: src_pubsub
+    type: pipeline
+    position:
+      x: 100
+      y: 120
+    data:
+      label: Pub/Sub Clickstream Events
+      type: SOURCE
+      iconName: Radio
+      spark_transform: PubSubSource
+      properties:
+        readMode: streaming
+        subscription: projects/analytics-demo-project/subscriptions/clickstream-events-sub
+        projectId: analytics-demo-project
+        maxMessagesPerBatch: 1000
+        ackDeadlineSeconds: 60
+        includeAttributes: true
+  - id: src_bq_lookup
+    type: pipeline
+    position:
+      x: 100
+      y: 340
+    data:
+      label: BigQuery Campaign Lookup
+      type: SOURCE
+      iconName: Database
+      spark_transform: BigQuerySource
+      properties:
+        readMode: batch
+        readModeType: table
+        projectId: analytics-demo-project
+        dataset: reference_dimensions
+        table: analytics-demo-project.reference_dimensions.message_dispatch_lookup
+        filter: is_active = TRUE
+        maxParallelism: 16
+  - id: step_join_enrich
+    type: pipeline
+    position:
+      x: 440
+      y: 230
+    data:
+      label: Broadcast Stream-Static Enrichment Join
+      type: STEP
+      iconName: GitMerge
+      spark_transform: Join
+      properties:
+        joinType: left
+        broadcastRight: true
+        conditionMode: keys
+        joinKeys:
+          - leftColumn: message_id
+            rightColumn: message_id
+        dropDuplicateRightKeys: true
+        rightColumnPrefix: lookup_
+  - id: snk_bigquery
+    type: pipeline
+    position:
+      x: 780
+      y: 230
+    data:
+      label: BigQuery Enriched Events Sink
+      type: SINK
+      iconName: Database
+      spark_transform: BigQuerySink
+      properties:
+        projectId: analytics-demo-project
+        dataset: streaming_curated
+        table: analytics-demo-project.streaming_curated.enriched_clickstream_events
+        writeMethod: direct
+        saveMode: append
+        createDisposition: CREATE_IF_NEEDED
+        allowFieldAddition: true
+        allowFieldRelaxation: false
+        outputMode: append
+        triggerType: processingTime
+        triggerInterval: 10 seconds
+        checkpointLocation: gs://analytics-demo-checkpoints/stream-static-join-enrichment/snk_bigquery
+edges:
+  - id: e-src_pubsub-step_join_enrich-left
+    source: src_pubsub
+    target: step_join_enrich
+    targetHandle: left
+  - id: e-src_bq_lookup-step_join_enrich-right
+    source: src_bq_lookup
+    target: step_join_enrich
+    targetHandle: right
+  - id: e-step_join_enrich-snk_bigquery
+    source: step_join_enrich
+    sourceHandle: valid
+    target: snk_bigquery
+runtimeVariables:
+  - key: GCP_PROJECT_ID
+    value: analytics-demo-project
+  - key: PUBSUB_SUBSCRIPTION
+    value: projects/analytics-demo-project/subscriptions/clickstream-events-sub
+  - key: BQ_LOOKUP_TABLE
+    value: analytics-demo-project.reference_dimensions.message_dispatch_lookup
+  - key: BQ_SINK_TABLE
+    value: analytics-demo-project.streaming_curated.enriched_clickstream_events
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  jobName: stream-static-join-enrichment
+  projectId: analytics-demo-project
+  region: us-central1
+  checkpointRoot: gs://analytics-demo-checkpoints/stream-static-join-enrichment
+  defaultTriggerType: processingTime
+  defaultTriggerInterval: 10 seconds
+pipelineConfig:
+  language: PySpark
+  outputFolder: ""
+  needsRebuild: false

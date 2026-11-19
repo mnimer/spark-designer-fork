@@ -108,9 +108,9 @@ export interface AssetListResponse {
 /** Pipeline document contents pushed to the webview on load and on external edits. */
 export interface LoadPipelineMessage {
     command: 'loadPipeline';
-    /** Raw `.beam` YAML text, or null for a new, empty pipeline. */
+    /** Raw `.spark` YAML text, or null for a new, empty pipeline. */
     data: string | null;
-    /** File name of the pipeline (for example `orders.beam`). */
+    /** File name of the pipeline (for example `orders.spark`). */
     filename?: string;
     /**
      * Default GCP project from gcloud, when known.
@@ -120,7 +120,7 @@ export interface LoadPipelineMessage {
      * separately via {@link ProjectIdResolvedMessage}. Still honoured by the webview if set.
      */
     projectId?: string;
-    /** Folder of the `.beam` file relative to the workspace root, or ''. */
+    /** Folder of the `.spark` file relative to the workspace root, or ''. */
     relativeFolder: string;
     /** Default generated-code folder for this pipeline. */
     defaultOutputFolder: string;

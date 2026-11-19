@@ -4,14 +4,14 @@
  * Author: Mike Nimer <mikenimer@google.com>
  * 
  * Purpose:
- * Main application component for the visual Apache Beam Pipeline Designer canvas and property inspector.
+ * Main application component for the visual Apache Spark Pipeline Designer canvas and property inspector.
  * Decomposed (A6) into custom hooks for persistence (usePipelinePersistence), graph mutations
  * (usePipelineGraph), and extension host IPC (useVsCodeBridge).
  * 
  * Architectural Decisions:
  * - Uses React Flow for interactive drag-and-drop pipeline graph editing.
- * - Initial state for nodes and edges is empty array to prevent phantom pipeline flash when opening .beam files.
- * - Nodes are passed untouched to ReactFlow; node label edits are injected via stable LabelChangeContext.
+ * - Initial state for nodes and edges is empty array to prevent phantom pipeline flash when opening .spark files.
+ * - Nodes are passed untouched to ReactFlow, and node label edits are injected via stable LabelChangeContext.
  * - Autosave debounced at 2s with dirty-check byte comparison (P6).
  * - Adheres to 8pt grid system and modern React state/effects.
  */

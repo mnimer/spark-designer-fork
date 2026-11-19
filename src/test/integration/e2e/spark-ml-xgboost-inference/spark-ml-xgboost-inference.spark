@@ -1,0 +1,189 @@
+# Spark ML XGBoost Fraud Inference Pipeline (I10)
+# Scores BigLake Iceberg card transactions with FeaturePrep and SparkXGBClassifier and splits risk tiers to BigQuery.
+
+pipelineConfig:
+  language: PySpark
+
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  projectId: fraud-scoring-prod
+  region: us-central1
+  batchId: spark-ml-xgboost-inference-batch
+  stagingBucket: gs://fraud-scoring-staging/spark-staging
+
+runtimeVariables:
+  - key: GCP_PROJECT_ID
+    value: fraud-scoring-prod
+  - key: XGBOOST_MODEL_URI
+    value: gs://fraud-scoring-models/xgboost/fraud-classifier-v2
+  - key: HIGH_RISK_THRESHOLD
+    value: "0.8"
+
+nodes:
+  - id: src_transactions_iceberg
+    type: pipeline
+    position:
+      x: 80
+      y: 240
+    data:
+      label: Transactions Iceberg
+      type: SOURCE
+      iconName: Database
+      spark_transform: IcebergSource
+      supportedReadModes:
+        - batch
+        - streaming
+      defaultReadMode: batch
+      properties:
+        readMode: batch
+        catalogName: biglake
+        catalogType: biglake
+        catalogUri: https://biglake.googleapis.com/iceberg/v1beta/restcatalog
+        warehouseLocation: gs://fraud-scoring-lakehouse/iceberg/warehouse
+        warehouse: gs://fraud-scoring-lakehouse/iceberg/warehouse
+        namespace: payments
+        table: card_transactions
+        columnProjection: transaction_id, account_id, merchant_category, payment_channel, device_os, transaction_amount, velocity_24h, account_age_days, event_timestamp
+        filterExpression: status = 'SETTLED'
+        authMode: default
+
+  - id: step_feature_prep
+    type: pipeline
+    position:
+      x: 400
+      y: 240
+    data:
+      label: Assemble Fraud Features
+      type: STEP
+      iconName: Wrench
+      spark_transform: FeaturePrep
+      inputArity: 1
+      errorOutput: false
+      properties:
+        categoricalColumns:
+          - merchant_category
+          - payment_channel
+          - device_os
+        numericColumns:
+          - transaction_amount
+          - velocity_24h
+          - account_age_days
+        enableOneHotEncoding: true
+        imputeStrategy: median
+        scalerType: standard
+        handleInvalid: keep
+        outputFeaturesColumn: features
+
+  - id: step_xgboost_score
+    type: pipeline
+    position:
+      x: 720
+      y: 240
+    data:
+      label: Score SparkXGBClassifier
+      type: STEP
+      iconName: Cpu
+      spark_transform: SparkMlAndVertexAi
+      inputArity: 1
+      errorOutput: true
+      properties:
+        engine: xgboost
+        useXgboost: true
+        useVertexAi: false
+        modelUri: gs://fraud-scoring-models/xgboost/fraud-classifier-v2
+        xgboostTask: classification
+        featuresColumn: features
+        predictionColumn: prediction
+        convertVectorsToArray: true
+        system_instructions: Load SparkXGBClassifierModel from modelUri, score features, and convert VectorUDT columns including probability, rawPrediction, and features via vector_to_array so BigQuery tables accept the scored schema.
+
+  - id: step_risk_split
+    type: pipeline
+    position:
+      x: 1040
+      y: 240
+    data:
+      label: Split Fraud Risk Tier
+      type: STEP
+      iconName: Share2
+      spark_transform: ConditionalSplit
+      inputArity: 1
+      errorOutput: false
+      properties:
+        evaluationMode: first_match
+        rules:
+          - name: high_risk
+            condition: size(probability) > 1 AND probability[1] >= 0.8
+
+  - id: snk_high_risk_bq
+    type: pipeline
+    position:
+      x: 1380
+      y: 120
+    data:
+      label: High Risk Alerts BigQuery
+      type: SINK
+      iconName: Database
+      spark_transform: BigQuerySink
+      streamingSinkMode: native
+      inputArity: 1
+      properties:
+        projectId: fraud-scoring-prod
+        dataset: fraud_detection
+        table: fraud-scoring-prod.fraud_detection.high_risk_transactions
+        writeMethod: direct
+        saveMode: append
+        createDisposition: CREATE_IF_NEEDED
+        partitionField: event_timestamp
+        partitionType: DAY
+        clusteredFields: merchant_category,payment_channel
+        allowFieldAddition: true
+        allowFieldRelaxation: false
+
+  - id: snk_standard_bq
+    type: pipeline
+    position:
+      x: 1380
+      y: 360
+    data:
+      label: Standard Scored BigQuery
+      type: SINK
+      iconName: Database
+      spark_transform: BigQuerySink
+      streamingSinkMode: native
+      inputArity: 1
+      properties:
+        projectId: fraud-scoring-prod
+        dataset: fraud_detection
+        table: fraud-scoring-prod.fraud_detection.standard_transactions
+        writeMethod: direct
+        saveMode: append
+        createDisposition: CREATE_IF_NEEDED
+        partitionField: event_timestamp
+        partitionType: DAY
+        clusteredFields: merchant_category,payment_channel
+        allowFieldAddition: true
+        allowFieldRelaxation: false
+
+edges:
+  - id: edge_iceberg_to_features
+    source: src_transactions_iceberg
+    target: step_feature_prep
+  - id: edge_features_to_xgboost
+    source: step_feature_prep
+    sourceHandle: valid
+    target: step_xgboost_score
+  - id: edge_xgboost_to_split
+    source: step_xgboost_score
+    sourceHandle: valid
+    target: step_risk_split
+  - id: edge_split_high_risk_to_bq
+    source: step_risk_split
+    sourceHandle: high_risk
+    target: snk_high_risk_bq
+  - id: edge_split_else_to_bq
+    source: step_risk_split
+    sourceHandle: else
+    target: snk_standard_bq

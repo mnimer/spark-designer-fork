@@ -1,3 +1,8 @@
+/**
+ * PropertyPane Component Unit Tests
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -60,7 +65,7 @@ describe('PropertyPane', () => {
     expect(mockClipboard.writeText).toHaveBeenCalledWith('$VAR1');
   });
 
-  it('renders PropertyPane for Create SOURCE node with JSON string elements (e.g. from avro-sink.beam)', async () => {
+  it('renders PropertyPane for Create SOURCE node with JSON string elements (e.g. from avro-sink.spark)', async () => {
     const avroSinkSourceNode = {
       id: 'source-1',
       type: 'pipeline',
@@ -70,7 +75,7 @@ describe('PropertyPane', () => {
         iconName: 'Box',
         spark_transform: 'Create',
         properties: {
-          elements: '["{\\"id\\": 1, \\\"name\\\": \\\"alpha\\\", \\\"score\\\": 99.5}", "{\\"id\\": 2, \\\"name\\\": \\\"beta\\\", \\\"score\\\": 88.0}"]'
+          elements: '["{\\"id\\": 1, \\"name\\": \\"alpha\\", \\"score\\": 99.5}", "{\\"id\\": 2, \\"name\\": \\"beta\\", \\"score\\": 88.0}"]'
         },
         system_instructions: 'In-memory test batch records.'
       }

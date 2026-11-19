@@ -1,14 +1,17 @@
 /**
- * Integration Suites Topology & Schema Unit Test
+ * Integration Suites & Bundled Samples Topology Unit Test
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
  *
  * Validates that every `.spark` pipeline file under:
  * - src/test/integration/sources/
  * - src/test/integration/sinks/
  * - src/test/integration/steps/
+ * - src/test/integration/e2e/
+ * - resources/samples/
  *
- * strictly adheres to topological DAG rules via Kahn's algorithm (0 cycles, 0 orphans, valid edges),
- * starts at a SOURCE node, ends at a SINK node, and carries a `spark_transform` on every node.
- * Phase 9 adds the suites. Until then, the discovery helper keeps its own fixture coverage.
+ * adheres to topological DAG rules via Kahn's algorithm with zero cycles, zero orphans,
+ * valid edges, zero validation warnings, SOURCE -> STEP* -> SINK shape, and `spark_transform` metadata.
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
@@ -55,7 +58,7 @@ describe('getSparkFiles discovery helper', () => {
     it('finds nested .spark files and ignores other extensions', () => {
         fs.mkdirSync(path.join(tmpRoot, 'sources', 'kafka'), { recursive: true });
         fs.writeFileSync(path.join(tmpRoot, 'sources', 'kafka', 'kafka-source.spark'), 'nodes: []');
-        fs.writeFileSync(path.join(tmpRoot, 'sources', 'legacy.beam'), 'nodes: []');
+        fs.writeFileSync(path.join(tmpRoot, 'sources', 'legacy.yaml'), 'nodes: []');
         fs.writeFileSync(path.join(tmpRoot, 'sources', 'notes.md'), '# x');
         const found = getSparkFiles(path.join(tmpRoot, 'sources'));
         expect(found.map(f => path.basename(f))).toEqual(['kafka-source.spark']);
@@ -68,24 +71,37 @@ describe('getSparkFiles discovery helper', () => {
 
 describe('Integration Suites DAG Topology and Pattern Verification', () => {
     const integrationDir = path.resolve(__dirname, '../integration');
+    const samplesDir = path.resolve(__dirname, '../../../resources/samples');
+    const e2eFiles = getSparkFiles(path.join(integrationDir, 'e2e'));
+    const sampleFiles = getSparkFiles(samplesDir);
     const suiteFiles = [
         ...getSparkFiles(path.join(integrationDir, 'sources')),
         ...getSparkFiles(path.join(integrationDir, 'sinks')),
         ...getSparkFiles(path.join(integrationDir, 'steps')),
+        ...e2eFiles,
+        ...sampleFiles,
     ];
 
-    it('never ships legacy .beam suites next to the Spark suites', () => {
-        const legacy: string[] = [];
+    it('discovers at least 6 E2E .spark pipelines and all 4 bundled sample .spark pipelines', () => {
+        expect(e2eFiles.length).toBeGreaterThanOrEqual(6);
+        expect(sampleFiles.length).toBe(4);
+    });
+
+    it('never ships unexpected non-Spark pipeline suites next to the Spark suites', () => {
+        const allowedExts = new Set(['.spark', '.md', '.ts']);
+        const unexpected: string[] = [];
         const walk = (dir: string): void => {
             if (!fs.existsSync(dir)) return;
             for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                if (e.name.startsWith('.')) continue;
                 const full = path.join(dir, e.name);
                 if (e.isDirectory()) walk(full);
-                else if (e.name.endsWith('.beam')) legacy.push(full);
+                else if (!allowedExts.has(path.extname(e.name))) unexpected.push(full);
             }
         };
         walk(integrationDir);
-        expect(legacy).toEqual([]);
+        walk(samplesDir);
+        expect(unexpected).toEqual([]);
     });
 
     it('validates every .spark file passes Kahn algorithm with 0 cycles and 0 orphans', () => {
@@ -95,8 +111,12 @@ describe('Integration Suites DAG Topology and Pattern Verification', () => {
             expect(Array.isArray(parsed.nodes), `Nodes missing in ${filePath}`).toBe(true);
             expect(Array.isArray(parsed.edges), `Edges missing in ${filePath}`).toBe(true);
 
-            const result = validateDagTopology(parsed.nodes, parsed.edges);
+            const result = validateDagTopology(parsed.nodes, parsed.edges, {
+                jobConfig: parsed.jobConfig,
+            });
             expect(result.isValid, `DAG invalid in ${filePath}: ${result.errors.join(', ')}`).toBe(true);
+            expect(result.errors, `DAG errors in ${filePath}`).toEqual([]);
+            expect(result.warnings, `DAG warnings in ${filePath}`).toEqual([]);
             expect(result.hasCycles, `Cycle detected in ${filePath}`).toBe(false);
             expect(result.orphanNodeIds.length, `Orphan nodes in ${filePath}`).toBe(0);
         }

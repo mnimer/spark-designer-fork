@@ -315,7 +315,8 @@ export class CodegenPromptBuilder {
      * @throws Error when the catalog has no `codegen-common` skill for the language.
      */
     public build(input: PromptBuildInput): BuiltPrompt {
-        const sparkVersion = input.sparkVersion || input.beamVersion || DEFAULT_SPARK_VERSION;
+        const { sparkVersion: explicitSparkVersion, beamVersion: legacyRuntimeVersion } = input;
+        const sparkVersion = explicitSparkVersion || legacyRuntimeVersion || DEFAULT_SPARK_VERSION;
         const caller = input.caller ?? SKILL_CALLERS.generator;
 
         // 1. Detect features, compute deterministic ExecutionPlan, and select skills.
@@ -395,6 +396,7 @@ export interface PipelinePrompt extends BuiltPrompt {
  * @throws Error when the YAML cannot be parsed (redaction refuses to guess).
  */
 export function buildPromptFromPipelineYaml(request: PipelinePromptRequest): PipelinePrompt {
+    const { sparkVersion: explicitSparkVersion, beamVersion: legacyRuntimeVersion } = request;
     const { value: redactedYaml, redactedPaths, document } = redactPipelineDocument(request.yamlText);
     const builder = new CodegenPromptBuilder(getCodegenSkillCatalog(request.skillsRoot));
     const built = builder.build({
@@ -402,7 +404,7 @@ export function buildPromptFromPipelineYaml(request: PipelinePromptRequest): Pip
         redactedYaml,
         redactedPaths,
         language: request.language,
-        sparkVersion: request.sparkVersion ?? request.beamVersion,
+        sparkVersion: explicitSparkVersion ?? legacyRuntimeVersion,
         caller: request.caller,
     });
     return { ...built, redactedPaths };

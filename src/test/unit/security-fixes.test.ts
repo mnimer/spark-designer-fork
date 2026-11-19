@@ -221,7 +221,7 @@ describe('M15 — Ignore Files Exclude *.log and gemini.log', () => {
         expect(DEFAULT_IGNORE_PATTERNS).toContain('node_modules');
         expect(DEFAULT_IGNORE_PATTERNS).toContain('__pycache__');
         expect(DEFAULT_IGNORE_PATTERNS).toContain('target/');
-        expect(DEFAULT_IGNORE_PATTERNS).toContain('*.beam');
+        expect(DEFAULT_IGNORE_PATTERNS).toContain('*.spark');
         expect(DEFAULT_IGNORE_PATTERNS).toContain('*.tf');
         expect(DEFAULT_IGNORE_PATTERNS).toContain('*.log');
         expect(DEFAULT_IGNORE_PATTERNS).toContain('gemini.log');

@@ -1,14 +1,16 @@
 /**
  * Utility functions for managing and computing pipeline output folder paths.
- * 
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ *
  * Purpose:
  * Ensures generated code output paths stay synchronized and relative to the
- * location and filename of the `.beam` pipeline design file currently open.
+ * location and filename of the `.spark` pipeline design file currently open.
  */
 
 /**
- * Dynamically computes an updated output folder path for a `.beam` pipeline file.
- * 
+ * Dynamically computes an updated output folder path for a `.spark` pipeline file.
+ *
  * Logic Flow:
  * 1. If no saved output folder exists or it is empty, returns `defaultOutputFolder`.
  * 2. Normalizes path separators and trims trailing slashes.
@@ -17,10 +19,10 @@
  *    - If `savedFolder` does not match `relativeFolder`, or if it contains stale/nested
  *      concatenated path fragments from previous file renames (e.g. `foobar/job1-pipeline`),
  *      resets the path to `defaultOutputFolder` (`relativeFolder/nameWithoutExt`).
- * 
+ *
  * @param savedFolder Output folder path saved in the pipeline's YAML definition
- * @param relativeFolder Workspace-relative folder path where the `.beam` file resides
- * @param nameWithoutExt Filename of the `.beam` file without extension (e.g. 'parse-message-pipeline')
+ * @param relativeFolder Workspace-relative folder path where the `.spark` file resides
+ * @param nameWithoutExt Filename of the `.spark` file without extension (e.g. 'parse-message-pipeline')
  * @param defaultOutputFolder Default output folder path (e.g. 'relativeFolder/nameWithoutExt')
  * @returns Updated workspace-relative or absolute output folder path
  */

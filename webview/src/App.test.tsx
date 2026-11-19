@@ -103,7 +103,7 @@ describe('App', () => {
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         data: `
 nodes:
   - id: '1'
@@ -152,7 +152,7 @@ edges: []
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         data: `
 nodes:
   - id: '1'
@@ -192,7 +192,7 @@ edges:
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         data: `
 nodes:
   - id: 'a'
@@ -305,7 +305,7 @@ edges:
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'my-pipeline.beam',
+        filename: 'my-pipeline.spark',
         relativeFolder: 'src/pipelines',
         defaultOutputFolder: 'src/pipelines/my-pipeline',
         data: 'nodes: []\nedges: []\npipelineConfig:\n  language: Python\n  outputFolder: ""\n  needsRebuild: false'
@@ -336,19 +336,19 @@ edges:
 
     const outputFolderInput = screen.getByPlaceholderText('./scratch_flow/') as HTMLInputElement;
 
-    // Simulate loading renamed file test/parse message/parse-message-pipeline.beam
+    // Simulate loading renamed file test/parse message/parse-message-pipeline.spark
     // with stale output folder test/job1/job1 in saved YAML
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'parse-message-pipeline.beam',
+        filename: 'parse-message-pipeline.spark',
         relativeFolder: 'test/parse message',
         defaultOutputFolder: 'test/parse message/parse-message-pipeline',
         data: 'nodes: []\nedges: []\npipelineConfig:\n  language: Python\n  outputFolder: "test/job1/job1"\n  needsRebuild: false'
       }
     }));
 
-    // Expect the output folder to be updated relative to the new .beam file location and name
+    // Expect the output folder to be updated relative to the new .spark file location and name
     expect(outputFolderInput.value).toBe('test/parse message/parse-message-pipeline');
   });
 
@@ -488,7 +488,7 @@ edges:
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         data: `
 nodes:
   - id: 'node-1'
@@ -517,10 +517,10 @@ edges: []
 
   /**
    * P6 & Unsaved-on-Open Regression Test:
-   * Opening a .beam file via loadPipeline must NOT post savePipeline when no changes are made.
+   * Opening a .spark file via loadPipeline must NOT post savePipeline when no changes are made.
    * After a real change, two consecutive debounce ticks with identical state produce ONE post, not two.
    */
-  it('P6: opening a pipeline does not post savePipeline; after a real change, two consecutive debounce ticks produce one post, not two', async () => {
+  it('P6: opening a pipeline does not post savePipeline, and two consecutive debounce ticks produce one post after a real change', async () => {
     vi.useFakeTimers();
     try {
       render(<AppWithProvider />);
@@ -529,7 +529,7 @@ edges: []
       fireEvent(window, new MessageEvent('message', {
         data: {
           command: 'loadPipeline',
-          filename: 'test.beam',
+          filename: 'test.spark',
           data: `
 nodes:
   - id: 'node-1'
@@ -605,7 +605,7 @@ edges: []
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         relativeFolder: 'src',
         defaultOutputFolder: 'src/test',
         data: `
@@ -644,7 +644,7 @@ edges: []
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         relativeFolder: 'src',
         defaultOutputFolder: 'src/test',
         data: `
@@ -692,7 +692,7 @@ edges: []
     fireEvent(window, new MessageEvent('message', {
       data: {
         command: 'loadPipeline',
-        filename: 'test.beam',
+        filename: 'test.spark',
         relativeFolder: 'src',
         defaultOutputFolder: 'src/test',
         data: `

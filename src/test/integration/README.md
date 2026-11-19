@@ -32,7 +32,7 @@ src/test/integration/
 ```
 
 > [!NOTE]
-> Phase 9 (`I1`–`I4`) adds the `.spark` suites under `sources/`, `sinks/`, and `steps/`. The unit test `integration-suites-topology` validates every suite file: zero cycles, zero orphans, a SOURCE start, a SINK end, and a `spark_transform` on every node. It rejects legacy `.beam` suite files.
+> Phase 9 (`I1`–`I4`) adds the `.spark` suites under `sources/`, `sinks/`, and `steps/`. The unit test `integration-suites-topology` validates every suite file: zero cycles, zero orphans, a SOURCE start, a SINK end, and a `spark_transform` on every node. It rejects unexpected non-Spark suite files.
 
 ---
 

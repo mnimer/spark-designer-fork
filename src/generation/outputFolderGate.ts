@@ -26,17 +26,17 @@ import { tryGetDesignerOutputChannel } from '../core/outputChannel';
  *
  * PRECEDENCE:
  * 1. `pipelineConfig.pipelineId` if present and non-empty (written to new pipelines).
- * 2. Deterministic hash of the `.beam` file's workspace-relative path (stable fallback
+ * 2. Deterministic hash of the `.spark` file's workspace-relative path (stable fallback
  *    for older pipelines that predate the pipelineId field).
  * 3. Deterministic hash of the absolute path if outside any workspace folder.
  *
  * This ensures that saving a pipeline and then immediately generating into an existing
- * target folder classifies the folder as `owned`, while opening a second `.beam` file
+ * target folder classifies the folder as `owned`, while opening a second `.spark` file
  * and generating into the first pipeline's folder classifies it as `foreign` and prompts
  * before touching anything (finding C3).
  *
  * @param pipelineConfig The pipeline configuration from the webview
- * @param documentPath Absolute path of the .beam document
+ * @param documentPath Absolute path of the .spark document
  * @returns A stable pipeline identifier
  */
 export function resolvePipelineId(pipelineConfig: any, documentPath: string): string {
@@ -52,7 +52,7 @@ export function resolvePipelineId(pipelineConfig: any, documentPath: string): st
 }
 
 /**
- * Reads and validates the `.beamgen.json` ownership marker from an output folder.
+ * Reads and validates the `.sparkgen.json` ownership marker from an output folder.
  *
  * @param folderPath Absolute output folder
  * @returns The parsed manifest, or null when absent, unreadable or malformed
@@ -287,7 +287,7 @@ export function executeScopedCleanup(
 }
 
 /**
- * Writes the `.beamgen.json` ownership marker recording what this generation produced.
+ * Writes the `.sparkgen.json` ownership marker recording what this generation produced.
  *
  * @param targetFolderPath Absolute output folder
  * @param pipelineId Owning pipeline identifier

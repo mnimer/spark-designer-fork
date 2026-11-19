@@ -7,7 +7,7 @@
  * Owns the "what are we allowed to delete" decision for code generation (finding C3).
  * The designer regenerates a pipeline's source into a user-chosen output folder. Before
  * this module existed, regeneration called `deleteCodeFiles()` which read the directory
- * and removed *everything* non-hidden except `*.beam` -- and did so BEFORE calling Gemini,
+ * and removed *everything* non-hidden except `*.spark` -- and did so BEFORE calling Gemini,
  * so a timeout, rate-limit or unparseable response left the user with nothing.
  *
  * Architectural decisions (read before changing any of this):
@@ -79,7 +79,7 @@ export interface ManifestFileEntry {
     sha256: string;
 }
 
-/** The `.beamgen.json` ownership marker. */
+/** The `.sparkgen.json` ownership marker. */
 export interface GenerationManifest {
     schemaVersion: number;
     /** Stable identity of the pipeline that owns this folder. */
@@ -140,7 +140,7 @@ export function generatePipelineId(): string {
 }
 
 /**
- * Validates and normalises a parsed `.beamgen.json`.
+ * Validates and normalises a parsed `.sparkgen.json`.
  *
  * Returns null for anything malformed rather than throwing or guessing: an unreadable
  * marker must degrade to "no marker", which routes into the *more* cautious
@@ -321,7 +321,7 @@ export function planCleanup(
  * executed. Mirrors the write-side guard used for generated files.
  *
  * Defence in depth: a manifest is on-disk data and therefore attacker-influenced if a
- * malicious `.beam`/folder is shared. A crafted manifest entry of `../../.ssh/id_rsa`
+ * malicious `.spark`/folder is shared. A crafted manifest entry of `../../.ssh/id_rsa`
  * must never escape the output folder.
  *
  * @param folderPath Absolute output folder
@@ -359,7 +359,7 @@ export function resolveDeletablePath(folderPath: string, relativePath: string): 
  * @param pipelineId Owning pipeline identifier
  * @param language Language generated
  * @param files Relative path -> written content, used to record hashes
- * @returns A manifest ready to serialise to `.beamgen.json`
+ * @returns A manifest ready to serialise to `.sparkgen.json`
  */
 export function buildManifest(
     pipelineId: string,

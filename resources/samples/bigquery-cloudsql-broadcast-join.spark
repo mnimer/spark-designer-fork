@@ -1,0 +1,150 @@
+pipelineConfig:
+  language: PySpark
+  outputFolder: ""
+  needsRebuild: false
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  region: us-central1
+  projectId: example-analytics-prod
+  depsBucket: gs://example-spark-deps
+  gcsStagingPath: gs://example-spark-deps
+  serviceAccount: spark-etl-runner@example-analytics-prod.iam.gserviceaccount.com
+  batchTtlMinutes: 120
+  subnetwork: default
+runtimeVariables:
+  - key: JOB_ID
+    value: bigquery-cloudsql-broadcast-join
+  - key: GCP_PROJECT
+    value: example-analytics-prod
+  - key: BQ_SOURCE_TABLE
+    value: example-analytics-prod.commerce_raw.payment_transactions
+  - key: CLOUDSQL_INSTANCE
+    value: example-analytics-prod:us-central1:merchant-directory-pg
+  - key: CLOUDSQL_IAM_USER
+    value: spark-etl-runner@example-analytics-prod.iam
+  - key: BQ_SINK_TABLE
+    value: example-analytics-prod.commerce_curated.enriched_merchant_transactions
+nodes:
+  - id: src_bq_transactions
+    type: pipeline
+    position:
+      x: 80
+      y: 90
+    data:
+      label: BigQuery Transactions Fact
+      type: SOURCE
+      iconName: Database
+      spark_transform: BigQuerySource
+      properties:
+        readModeType: table
+        projectId: example-analytics-prod
+        dataset: commerce_raw
+        table: example-analytics-prod.commerce_raw.payment_transactions
+        filter: "transaction_status = 'CAPTURED'"
+        maxParallelism: 32
+  - id: src_cloudsql_accounts
+    type: pipeline
+    position:
+      x: 80
+      y: 240
+    data:
+      label: Cloud SQL Merchant Accounts
+      type: SOURCE
+      iconName: Database
+      spark_transform: CloudSqlSource
+      properties:
+        instanceConnectionName: example-analytics-prod:us-central1:merchant-directory-pg
+        dbEngine: postgresql
+        database: merchants
+        readTargetMode: table
+        table: public.merchant_accounts
+        authMode: iam
+        username: spark-etl-runner@example-analytics-prod.iam
+        partitionColumn: merchant_id
+        numPartitions: 8
+        dynamicBounds: true
+        fetchsize: 5000
+        driverJarUri: gs://example-spark-deps/jars/postgresql-42.7.4.jar
+        socketFactoryJarUri: gs://example-spark-deps/jars/postgres-socket-factory-1.21.0-jar-with-dependencies.jar
+  - id: step_broadcast_join
+    type: pipeline
+    position:
+      x: 420
+      y: 165
+    data:
+      label: Enrich Merchant Tier
+      type: STEP
+      iconName: GitMerge
+      spark_transform: Join
+      properties:
+        joinType: left_outer
+        broadcastRight: true
+        conditionMode: keys
+        joinKeys:
+          - leftColumn: merchant_id
+            rightColumn: merchant_id
+        dropDuplicateRightKeys: true
+        rightColumnPrefix: merchant_
+  - id: step_latest_tx_window
+    type: pipeline
+    position:
+      x: 760
+      y: 165
+    data:
+      label: Rank Merchant Transactions
+      type: STEP
+      iconName: BarChart
+      spark_transform: WindowOver
+      properties:
+        partitionByColumns:
+          - merchant_id
+        orderByColumns:
+          - column: event_timestamp
+            direction: desc
+          - column: transaction_id
+            direction: asc
+        frameType: default
+        windowMetrics:
+          - fn: row_number
+            alias: merchant_tx_rank
+  - id: snk_bq_enriched
+    type: pipeline
+    position:
+      x: 1100
+      y: 165
+    data:
+      label: BigQuery Enriched Ledger
+      type: SINK
+      iconName: Database
+      spark_transform: BigQuerySink
+      properties:
+        projectId: example-analytics-prod
+        dataset: commerce_curated
+        table: example-analytics-prod.commerce_curated.enriched_merchant_transactions
+        writeMethod: direct
+        saveMode: overwrite
+        createDisposition: CREATE_IF_NEEDED
+        partitionField: event_timestamp
+        partitionType: DAY
+        clusteredFields: merchant_id,merchant_tier
+        allowFieldAddition: false
+        allowFieldRelaxation: false
+edges:
+  - id: e_bq_to_join_left
+    source: src_bq_transactions
+    target: step_broadcast_join
+    targetHandle: left
+  - id: e_sql_to_join_right
+    source: src_cloudsql_accounts
+    target: step_broadcast_join
+    targetHandle: right
+  - id: e_join_to_window
+    source: step_broadcast_join
+    target: step_latest_tx_window
+    sourceHandle: valid
+  - id: e_window_to_bq_sink
+    source: step_latest_tx_window
+    target: snk_bq_enriched
+    sourceHandle: valid

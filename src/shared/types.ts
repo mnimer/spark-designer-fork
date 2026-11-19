@@ -24,27 +24,27 @@ export interface TokenUsage {
  * Built-in sample pipeline catalog entry.
  */
 export interface SamplePipeline {
-    /** Unique identifier for the sample (e.g. 'generate-mock-data'). */
+    /** Unique identifier for the sample (e.g. 'gcs-parquet-etl'). */
     id: string;
-    /** Bundled .beam file name (e.g. 'generate-mock-data.beam'). */
+    /** Bundled .spark file name (e.g. 'gcs-parquet-etl.spark'). */
     filename: string;
-    /** Human-readable title of the sample (e.g. 'Generate Mock Data'). */
+    /** Human-readable title of the sample (e.g. 'GCS Parquet ETL'). */
     title: string;
     /** Summary description or flow of what the sample demonstrates. */
     description: string;
     /** Optional category group (e.g. 'Samples'). */
     category?: string;
-    /** Optional visual badge text (e.g. 'Java' or 'Python'). */
+    /** Optional visual badge text (e.g. 'PySpark'). */
     badge?: string;
-    /** Optional normalized pipeline language ('Python' | 'Java'). */
+    /** Optional normalized pipeline language ('PySpark'). */
     language?: string;
-    /** Optional recommended runner name ('DirectRunner' | 'Dataflow' | 'Spark'). */
+    /** Optional recommended runner name ('Local' | 'DataprocCluster' | 'ServerlessSpark'). */
     runner?: string;
     /** Optional number of nodes in the sample pipeline DAG. */
     nodesCount?: number;
     /** Optional full Markdown README documentation for the sample pipeline. */
     readmeContent?: string;
-    /** Raw .beam YAML text content. */
+    /** Raw .spark YAML text content. */
     content: string;
 }
 

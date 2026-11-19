@@ -15,7 +15,11 @@ const yamlRawPlugin = {
     transform(code: string, id: string) {
         // Strip any query parameters (like ?raw) if present before checking extension
         const cleanId = id.split('?')[0];
-        if (cleanId.endsWith('.yaml') || cleanId.endsWith('.yml') || cleanId.endsWith('.beam')) {
+        if (
+            cleanId.endsWith('.yaml') ||
+            cleanId.endsWith('.yml') ||
+            cleanId.endsWith('.spark')
+        ) {
             return {
                 code: `export default ${JSON.stringify(code)};`,
                 map: null,

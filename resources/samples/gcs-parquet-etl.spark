@@ -1,0 +1,191 @@
+pipelineConfig:
+  language: PySpark
+  outputFolder: ""
+  needsRebuild: false
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  region: us-central1
+  projectId: example-analytics-prod
+  depsBucket: gs://example-spark-deps
+  gcsStagingPath: gs://example-spark-deps
+  serviceAccount: spark-etl-runner@example-analytics-prod.iam.gserviceaccount.com
+  batchTtlMinutes: 120
+  subnetwork: default
+runtimeVariables:
+  - key: JOB_ID
+    value: gcs-parquet-etl
+  - key: GCP_PROJECT
+    value: example-analytics-prod
+  - key: INPUT_PARQUET_URI
+    value: gs://example-analytics-lake/raw/orders/
+  - key: OUTPUT_PARQUET_URI
+    value: gs://example-analytics-lake/curated/daily_regional_revenue/
+  - key: TARGET_PARTITIONS
+    value: "4"
+nodes:
+  - id: src_raw_orders
+    type: pipeline
+    position:
+      x: 80
+      y: 150
+    data:
+      label: Raw Orders Parquet
+      type: SOURCE
+      iconName: FileCode
+      spark_transform: ParquetSource
+      properties:
+        readMode: batch
+        storageBackend: gcs
+        path: gs://example-analytics-lake/raw/orders/
+        pathGlobFilter: "*.parquet"
+        recursiveFileLookup: false
+        mergeSchema: false
+        datetimeRebaseMode: CORRECTED
+        int96RebaseMode: CORRECTED
+        schemaFields:
+          - name: order_id
+            type: STRING
+            mode: REQUIRED
+            description: Unique order identifier
+          - name: customer_id
+            type: STRING
+            mode: REQUIRED
+            description: Customer account identifier
+          - name: region
+            type: STRING
+            mode: REQUIRED
+            description: Geographic sales region
+          - name: status
+            type: STRING
+            mode: REQUIRED
+            description: Order fulfillment status
+          - name: gross_amount
+            type: DOUBLE
+            mode: REQUIRED
+            description: Gross order value before discount
+          - name: discount_amount
+            type: DOUBLE
+            mode: NULLABLE
+            description: Optional promotional discount amount
+          - name: event_timestamp
+            type: TIMESTAMP
+            mode: REQUIRED
+            description: Order creation UTC timestamp
+  - id: step_filter_completed
+    type: pipeline
+    position:
+      x: 400
+      y: 150
+    data:
+      label: Filter Completed Orders
+      type: STEP
+      iconName: Filter
+      spark_transform: Filter
+      properties:
+        mode: sql
+        condition: "status = 'COMPLETED' AND gross_amount > 0"
+  - id: step_derive_columns
+    type: pipeline
+    position:
+      x: 720
+      y: 150
+    data:
+      label: Derive Revenue Columns
+      type: STEP
+      iconName: Wrench
+      spark_transform: WithColumns
+      properties:
+        columns:
+          - name: net_amount
+            expression: "gross_amount - COALESCE(discount_amount, 0.0)"
+            castType: "DECIMAL(18, 2)"
+          - name: event_date
+            expression: "TO_DATE(event_timestamp)"
+            castType: DATE
+          - name: normalized_region
+            expression: "UPPER(TRIM(region))"
+            castType: STRING
+  - id: step_daily_region_agg
+    type: pipeline
+    position:
+      x: 1040
+      y: 150
+    data:
+      label: Aggregate Daily Revenue
+      type: STEP
+      iconName: BarChart
+      spark_transform: GroupByAgg
+      properties:
+        windowType: None
+        groupByColumns:
+          - event_date
+          - normalized_region
+        aggregations:
+          - column: "*"
+            fn: count
+            alias: order_count
+          - column: net_amount
+            fn: sum
+            alias: total_net_revenue
+          - column: net_amount
+            fn: avg
+            alias: avg_order_value
+          - column: customer_id
+            fn: countDistinct
+            alias: unique_customers
+  - id: step_coalesce_files
+    type: pipeline
+    position:
+      x: 1360
+      y: 150
+    data:
+      label: Coalesce Partitions
+      type: STEP
+      iconName: Shuffle
+      spark_transform: RepartitionCoalesce
+      properties:
+        operation: coalesce
+        numPartitions: 4
+        partitionColumns: []
+  - id: snk_curated_parquet
+    type: pipeline
+    position:
+      x: 1680
+      y: 150
+    data:
+      label: Curated Revenue Parquet
+      type: SINK
+      iconName: FileCode
+      spark_transform: ParquetSink
+      properties:
+        storageBackend: gcs
+        path: gs://example-analytics-lake/curated/daily_regional_revenue/
+        saveMode: overwrite
+        mode: overwrite
+        compression: zstd
+        partitionBy: "event_date, normalized_region"
+        maxRecordsPerFile: 500000
+        datetimeRebaseMode: CORRECTED
+        int96RebaseMode: CORRECTED
+edges:
+  - id: e_src_to_filter
+    source: src_raw_orders
+    target: step_filter_completed
+  - id: e_filter_to_derive
+    source: step_filter_completed
+    target: step_derive_columns
+    sourceHandle: valid
+  - id: e_derive_to_agg
+    source: step_derive_columns
+    target: step_daily_region_agg
+    sourceHandle: valid
+  - id: e_agg_to_coalesce
+    source: step_daily_region_agg
+    target: step_coalesce_files
+    sourceHandle: valid
+  - id: e_coalesce_to_sink
+    source: step_coalesce_files
+    target: snk_curated_parquet
+    sourceHandle: valid

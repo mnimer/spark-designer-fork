@@ -360,12 +360,11 @@ nodes:
     }
   });
 
-  it('loads any bundled .spark sample files when present and resolves every node without unregistered warnings', async () => {
+  it('loads all 4 bundled .spark sample files and resolves every node without unregistered warnings', async () => {
     const samplesDir = path.resolve(__dirname, '../../../resources/samples');
-    if (!fs.existsSync(samplesDir)) {
-      return;
-    }
-    const sampleFiles = fs.readdirSync(samplesDir).filter((f) => f.endsWith('.spark'));
+    expect(fs.existsSync(samplesDir)).toBe(true);
+    const sampleFiles = fs.readdirSync(samplesDir).filter((f) => f.endsWith('.spark')).sort();
+    expect(sampleFiles).toHaveLength(4);
     for (const sampleFile of sampleFiles) {
       const content = fs.readFileSync(path.join(samplesDir, sampleFile), 'utf8');
       const parsed = YAML.parse(content);
@@ -378,7 +377,40 @@ nodes:
         unmount();
       }
     }
-  });
+  }, 30_000);
+
+  it('loads all E2E .spark integration pipelines and resolves every node without unregistered warnings', async () => {
+    const e2eDir = path.resolve(__dirname, '../../../src/test/integration/e2e');
+    expect(fs.existsSync(e2eDir)).toBe(true);
+    const e2eFiles: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath);
+        } else if (entry.isFile() && entry.name.endsWith('.spark')) {
+          e2eFiles.push(fullPath);
+        }
+      }
+    };
+    walk(e2eDir);
+    e2eFiles.sort();
+    expect(e2eFiles.length).toBeGreaterThanOrEqual(6);
+
+    for (const e2eFile of e2eFiles) {
+      const content = fs.readFileSync(e2eFile, 'utf8');
+      const parsed = YAML.parse(content);
+      const migratedNodes = migrateLegacyNodes(parsed.nodes || []);
+      expect(migratedNodes.length).toBeGreaterThan(0);
+      for (const node of migratedNodes) {
+        const { container, unmount } = render(<PropertyForm node={node} onChange={vi.fn()} />);
+        await waitForPanelToLoad();
+        expect(screen.queryByText(/No property form registered for type/i)).not.toBeInTheDocument();
+        await waitFor(() => expect(container.querySelectorAll('input, select, textarea').length).toBeGreaterThan(0));
+        unmount();
+      }
+    }
+  }, 30_000);
 });
 
 // =========================================================================

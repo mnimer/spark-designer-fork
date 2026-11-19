@@ -5,9 +5,9 @@
  *
  * Purpose:
  * Strips plaintext credentials out of a pipeline definition before that definition
- * leaves the user's machine. The Beam Designer canvas lets a user type a database
+ * leaves the user's machine. The Spark Designer canvas lets a user type a database
  * password (or an AWS secret access key, or a JMS broker password) directly into a
- * property form. That value is serialized into the `.beam` YAML, and the same YAML
+ * property form. That value is serialized into the `.spark` YAML, and the same YAML
  * string is then (a) interpolated into the code-generation prompt sent to the Gemini
  * API and (b) written verbatim to `gemini.log` inside the user's output folder --
  * a file that routinely gets committed to source control.
@@ -50,7 +50,7 @@
  *   free-text transform body. `URL_EMBEDDED_CREDENTIAL_PATTERN` covers the common
  *   connection-string case, but free-text fields are not scanned.
  * - Redaction protects the outbound prompt and the log. It does NOT retroactively
- *   clean a `.beam` file that already contains a plaintext password on disk.
+ *   clean a `.spark` file that already contains a plaintext password on disk.
  *   The real fix for that is to stop collecting the plaintext at all, which is why
  *   the JDBC and JMS property forms now default to a Secret Manager reference.
  */

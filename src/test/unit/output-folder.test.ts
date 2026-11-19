@@ -91,4 +91,9 @@ describe('nextAvailableSparkFilename', () => {
         const result = nextAvailableSparkFilename(dir, 'sample.spark', exists);
         expect(result).toBe('sample-1.spark');
     });
+
+    it('strips uppercase .SPARK suffix without duplicating extensions', () => {
+        const exists = (_p: string) => false;
+        expect(nextAvailableSparkFilename(dir, 'GCS-PARQUET-ETL.SPARK', exists)).toBe('GCS-PARQUET-ETL.spark');
+    });
 });

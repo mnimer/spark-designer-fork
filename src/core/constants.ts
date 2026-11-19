@@ -63,7 +63,7 @@ export function getInitialPipelineContent(): string {
  */
 export const PIPELINE_SEARCH_EXCLUDE_DIRS: readonly string[] = [
     ...DEFAULT_IGNORE_PATTERNS
-        .filter(p => !p.startsWith('*') && !p.endsWith('.spark') && !p.endsWith('.beam') && !p.endsWith('.tf') && !p.endsWith('.log'))
+        .filter(p => !p.startsWith('*') && !p.endsWith('.spark') && !p.endsWith('.tf') && !p.endsWith('.log'))
         .map(p => p.replace(/\/$/, '')),
     'dist',
     'build',
@@ -72,7 +72,7 @@ export const PIPELINE_SEARCH_EXCLUDE_DIRS: readonly string[] = [
 
 /**
  * Glob pattern for excluding dependency, build, and VCS directories when scanning
- * workspace files for .beam pipelines.
+ * workspace files for .spark pipelines.
  */
 export const PIPELINE_SEARCH_EXCLUDE_PATTERN: string = `{${PIPELINE_SEARCH_EXCLUDE_DIRS.map(dir => `**/${dir}/**`).join(',')}}`;
 

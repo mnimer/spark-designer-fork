@@ -12,7 +12,7 @@
  * Architectural decisions / notes for future sessions:
  * - The detector receives the ALREADY-PARSED YAML. It never parses YAML a second time.
  * - Selection keys on `data.spark_transform` (with fallback to `data.sparkTransform` or
- *   legacy `data.beam_transform`). A node without a transform is skipped with a warning.
+ *   legacy `beam_transform` metadata). A node without a transform is skipped with a warning.
  *   The detector never maps node labels to transforms (labels are user-editable).
  *   Fix the `.spark` file instead.
  * - Legacy `spark_transform` spellings (`ReadFromKafka`) are resolved to the catalog value
@@ -130,11 +130,12 @@ function hasCustomInstructions(data: NodeData): boolean {
  * @returns Raw transform value, if present.
  */
 function extractRawTransform(data: NodeData, nodeRecord?: Record<string, unknown>): unknown {
+    const { beam_transform: legacySnakeTransform, beamTransform: legacyCamelTransform } = data;
     return (
         data.spark_transform ??
         data.sparkTransform ??
-        data.beam_transform ??
-        data.beamTransform ??
+        legacySnakeTransform ??
+        legacyCamelTransform ??
         nodeRecord?.spark_transform ??
         nodeRecord?.sparkTransform
     );

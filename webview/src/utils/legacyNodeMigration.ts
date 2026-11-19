@@ -4,7 +4,7 @@
  * Author: Mike Nimer <mikenimer@google.com>
  * 
  * Purpose:
- * Provides deterministic, one-time migration for legacy canvas nodes saved in older .beam
+ * Provides deterministic, one-time migration for legacy canvas nodes saved in older .spark
  * files that lack an explicit `spark_transform` metadata property.
  * 
  * Architectural Decisions:
@@ -520,7 +520,7 @@ export function inferBeamTransform(data: LegacyNodeData): string | null {
 }
 
 /**
- * Migrates an array of canvas nodes loaded from a .beam YAML file, enriching
+ * Migrates an array of canvas nodes loaded from a .spark YAML file, enriching
  * legacy nodes that lack `spark_transform` metadata.
  * 
  * NOTE: Logs a single-line summary when legacy nodes are migrated.

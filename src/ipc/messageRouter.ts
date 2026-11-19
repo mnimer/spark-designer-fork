@@ -144,8 +144,8 @@ export function withRequestParamsEcho(ctx: MessageContext, message: unknown): Me
  * 
  * @param webview Webview instance to post messages to
  * @param context Extension context
- * @param document Active TextDocument for .beam file if open in CustomTextEditor
- * @param uri URI of the .beam file
+ * @param document Active TextDocument for .spark file if open in CustomTextEditor
+ * @param uri URI of the .spark file
  * @param pipelineName Pipeline name
  * @param isDisposed Callback returning whether the panel has been disposed (M5)
  * @param syncState Shared edit synchronization state for echo suppression (M4)

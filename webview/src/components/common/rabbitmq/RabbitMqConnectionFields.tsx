@@ -15,7 +15,7 @@
  *   window message listeners or vscode.postMessage calls directly.
  * - Connection URI security: RabbitMqIO embeds credentials in the connection URI (amqp://user:pass@host:5672/vhost).
  *   Separating host, port, vhost, username, and secretName ensures no plaintext password is ever persisted
- *   in the .beam pipeline specification. Runtime code constructs the URI dynamically from Secret Manager.
+ *   in the .spark pipeline specification. Runtime code constructs the URI dynamically from Secret Manager.
  * - Verbatim Tailwind styling and 8pt grid alignment ensures pixel-perfect UI consistency across source and sink.
  */
 

@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { NodesCard } from './NodesCard';
+import { NodesCard, DEFAULT_SAMPLES } from './NodesCard';
 
 describe('NodesCard', () => {
   const mockOnDragStart = vi.fn();
@@ -339,7 +339,7 @@ describe('NodesCard', () => {
     const customSamples = [
       {
         id: 'sample-1',
-        filename: 'custom-sample.beam',
+        filename: 'custom-sample.spark',
         title: 'Custom Sample Title',
         description: 'Test custom sample description',
         badge: 'Java',
@@ -363,7 +363,7 @@ describe('NodesCard', () => {
 
     expect(screen.getByText(/SAMPLES \(/i)).toBeInTheDocument();
     expect(screen.getByText('Custom Sample Title')).toBeInTheDocument();
-    expect(screen.getByText('custom-sample.beam')).toBeInTheDocument();
+    expect(screen.getByText('custom-sample.spark')).toBeInTheDocument();
     expect(screen.getByText('Test custom sample description')).toBeInTheDocument();
     expect(screen.queryByText('Java')).not.toBeInTheDocument();
 
@@ -383,7 +383,7 @@ describe('NodesCard', () => {
     const customSamples = [
       {
         id: 'sample-1',
-        filename: 'generate-mock.beam',
+        filename: 'generate-mock.spark',
         title: 'Generate Mock Data',
         description: 'Generates test records',
         badge: 'Java',
@@ -391,7 +391,7 @@ describe('NodesCard', () => {
       },
       {
         id: 'sample-2',
-        filename: 'pubsub-to-bigquery.beam',
+        filename: 'pubsub-to-bigquery.spark',
         title: 'PubSub to BigQuery',
         description: 'Streams data to BQ',
         badge: 'Python',
@@ -698,7 +698,7 @@ describe('NodesCard', () => {
       const unsortedSamples = [
         {
           id: 'sample-z',
-          filename: 'z-pipeline.beam',
+          filename: 'z-pipeline.spark',
           title: 'Zebra Pipeline',
           description: 'Z description',
           badge: 'Python',
@@ -706,7 +706,7 @@ describe('NodesCard', () => {
         },
         {
           id: 'sample-a',
-          filename: 'a-pipeline.beam',
+          filename: 'a-pipeline.spark',
           title: 'Alpha Pipeline',
           description: 'A description',
           badge: 'Java',
@@ -714,7 +714,7 @@ describe('NodesCard', () => {
         },
         {
           id: 'sample-m',
-          filename: 'm-pipeline.beam',
+          filename: 'm-pipeline.spark',
           title: 'Metrics Pipeline',
           description: 'M description',
           badge: 'Python',
@@ -733,11 +733,31 @@ describe('NodesCard', () => {
         />
       );
 
-      const sampleButtons = screen.getAllByTitle(/Save ".*" as a new \.beam file and open in editor/i);
+      const sampleButtons = screen.getAllByTitle(/Save ".*" as a new \.spark file and open in editor/i);
       const renderedTitles = sampleButtons.map((el) => el.getAttribute('title') || '');
       expect(renderedTitles[0]).toContain('Alpha Pipeline');
       expect(renderedTitles[1]).toContain('Metrics Pipeline');
       expect(renderedTitles[2]).toContain('Zebra Pipeline');
+    });
+
+    it('provides four Apache Spark 4.x PySpark fallback entries in DEFAULT_SAMPLES using only .spark filenames', () => {
+      render(
+        <NodesCard
+          activeTab="SAMPLES"
+          setActiveTab={vi.fn()}
+          nodesCount={0}
+          hasPubSubSource={false}
+          onDragStart={mockOnDragStart}
+          isOpen={true}
+        />
+      );
+
+      expect(screen.getByText(/Samples \(4\)/i)).toBeInTheDocument();
+      expect(screen.getByText('gcs-parquet-etl.spark')).toBeInTheDocument();
+      expect(screen.getByText('kafka-streaming-to-iceberg.spark')).toBeInTheDocument();
+      expect(screen.getByText('bigquery-cloudsql-broadcast-join.spark')).toBeInTheDocument();
+      expect(screen.getByText('rate-stream-to-delta.spark')).toBeInTheDocument();
+      expect(DEFAULT_SAMPLES.every((s) => s.filename.endsWith('.spark'))).toBe(true);
     });
 
     it('renders Spark 4.x Source categories and omits legacy Beam-only Source nodes', () => {

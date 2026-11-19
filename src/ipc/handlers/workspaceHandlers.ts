@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
+    PIPELINE_FILE_EXT,
     SPARK_EDITOR_VIEW_TYPE,
     GENERATED_FILE_LIST_EXCLUDE_DIRS
 } from '../../core/constants';
@@ -101,21 +102,23 @@ export async function handleGetSamples(ctx: MessageContext, _message: any): Prom
 
 /**
  * Handler for 'openSample' command.
- * Prompts user to save sample pipeline to disk and opens it in the custom beam editor.
+ * Prompts user to save sample pipeline to disk and opens it in the custom Spark editor.
  *
  * @param ctx Message context
  * @param message Incoming IPC message with sample content or filename
  */
 export async function handleOpenSample(ctx: MessageContext, message: any): Promise<void> {
     let sampleContent = message.content;
-    let sampleFilename = message.filename || 'sample-pipeline.beam';
-    if (!sampleFilename.endsWith('.beam')) {
-        sampleFilename += '.beam';
-    }
+    const rawFilename = typeof message.filename === 'string' && message.filename.trim()
+        ? message.filename.trim()
+        : `sample-pipeline${PIPELINE_FILE_EXT}`;
+    const sampleFilename = rawFilename.toLowerCase().endsWith(PIPELINE_FILE_EXT)
+        ? rawFilename.slice(0, -PIPELINE_FILE_EXT.length) + PIPELINE_FILE_EXT
+        : `${rawFilename}${PIPELINE_FILE_EXT}`;
 
     if (!sampleContent && message.filename) {
         const available = await getSamplePipelines(ctx.context);
-        const found = available.find(s => s.filename === message.filename);
+        const found = available.find(s => s.filename === sampleFilename || s.filename === message.filename);
         if (found) {
             sampleContent = found.content;
         }
@@ -217,7 +220,7 @@ export async function handleReadFolderFiles(ctx: MessageContext, message: any): 
     let folderPath = message.folderPath;
     const activeUriForFolder = ctx.document ? ctx.document.uri : ctx.uri;
     if (!folderPath && activeUriForFolder) {
-        const baseName = path.basename(activeUriForFolder.fsPath, '.beam');
+        const baseName = path.basename(activeUriForFolder.fsPath, PIPELINE_FILE_EXT);
         folderPath = path.join(path.dirname(activeUriForFolder.fsPath), baseName);
     } else if (folderPath && !path.isAbsolute(folderPath)) {
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -310,7 +313,7 @@ export async function handleReadFileContent(ctx: MessageContext, message: any): 
 
     const activeUriForRead = ctx.document ? ctx.document.uri : ctx.uri;
     if (!readFolder && activeUriForRead) {
-        const baseName = path.basename(activeUriForRead.fsPath, '.beam');
+        const baseName = path.basename(activeUriForRead.fsPath, PIPELINE_FILE_EXT);
         readFolder = path.join(path.dirname(activeUriForRead.fsPath), baseName);
     } else if (readFolder && !path.isAbsolute(readFolder)) {
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;

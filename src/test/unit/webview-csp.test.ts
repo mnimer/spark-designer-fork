@@ -4,7 +4,7 @@
  * Author: Mike Nimer <mikenimer@google.com>
  * 
  * Purpose:
- * Validates the fix for finding M2 in BeamEditorProvider:
+ * Validates the fix for finding M2 in SparkEditorProvider:
  * - Ensures a strong Content-Security-Policy meta tag is injected into webview HTML.
  * - Enforces script execution protection via cryptographically secure nonces.
  * - Verifies style-src includes 'unsafe-inline' required by React Flow dynamic node transforms.
@@ -262,9 +262,9 @@ describe('M2 — Webview HTML Builder and CSP Enforcement (buildWebviewHtml)', (
     });
 });
 
-describe('M2 — BeamEditorProvider Integration', () => {
+describe('M2 — SparkEditorProvider Integration', () => {
     it('resolveCustomTextEditor generates CSP, replaces assets, and sets webview.html', async () => {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-csp-test-'));
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-csp-test-'));
         try {
             const distDir = path.join(tempDir, 'webview', 'dist');
             const assetsDir = path.join(distDir, 'assets');
@@ -290,7 +290,7 @@ describe('M2 — BeamEditorProvider Integration', () => {
             };
 
             const mockDocument = {
-                uri: { scheme: 'file', fsPath: '/test/pipeline.beam', toString: () => 'file:///test/pipeline.beam' },
+                uri: { scheme: 'file', fsPath: '/test/pipeline.spark', toString: () => 'file:///test/pipeline.spark' },
                 getText: () => 'nodes: []\nedges: []\n'
             };
 

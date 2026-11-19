@@ -1,0 +1,184 @@
+pipelineConfig:
+  language: PySpark
+
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  projectId: my-gcp-project
+  region: us-central1
+  jobId: kafka-streaming-to-iceberg
+  depsBucket: gs://my-spark-deps-bucket
+  checkpointRoot: gs://my-lakehouse-bucket/checkpoints/kafka-to-iceberg
+  defaultTriggerType: processingTime
+  defaultTriggerInterval: 30 seconds
+
+runtimeVariables:
+  - key: JOB_ID
+    value: kafka-streaming-to-iceberg
+  - key: KAFKA_BOOTSTRAP_SERVERS
+    value: kafka-broker.internal:9092
+  - key: KAFKA_TOPIC
+    value: commerce.order_events
+  - key: ICEBERG_WAREHOUSE
+    value: gs://my-lakehouse-bucket/iceberg/warehouse
+  - key: CHECKPOINT_ROOT
+    value: gs://my-lakehouse-bucket/checkpoints/kafka-to-iceberg
+
+nodes:
+  - id: src_kafka
+    type: pipeline
+    position:
+      x: 80
+      y: 180
+    data:
+      label: Kafka Event Stream
+      type: SOURCE
+      iconName: Cable
+      spark_transform: KafkaSource
+      supportedReadModes:
+        - batch
+        - streaming
+      defaultReadMode: streaming
+      properties:
+        readMode: streaming
+        bootstrapServers: kafka-broker.internal:9092
+        subscriptionMode: subscribe
+        topics: commerce.order_events
+        startingOffsets: latest
+        maxOffsetsPerTrigger: 50000
+        failOnDataLoss: true
+        includeHeaders: false
+        securityProtocol: SASL_SSL
+        saslMechanism: SCRAM-SHA-512
+        authMode: secretManager
+        secretName: projects/my-gcp-project/secrets/kafka-scram-jaas/versions/latest
+
+  - id: step_parse_payload
+    type: pipeline
+    position:
+      x: 380
+      y: 180
+    data:
+      label: Parse Order JSON
+      type: STEP
+      iconName: FileCode
+      spark_transform: ParsePayload
+      errorOutput: true
+      properties:
+        format: json
+        sourceColumn: value
+        schemaDDL: order_id STRING, customer_id STRING, region STRING, amount DOUBLE, event_timestamp TIMESTAMP
+        flattenFields: true
+        corruptRecordColumn: _corrupt_record
+        keepSourceColumn: false
+
+  - id: step_watermark
+    type: pipeline
+    position:
+      x: 700
+      y: 100
+    data:
+      label: Event-Time Watermark
+      type: STEP
+      iconName: Clock
+      spark_transform: Watermark
+      properties:
+        eventTimeColumn: event_timestamp
+        delayThreshold: 10 minutes
+        sourceTimestampType: timestamp
+
+  - id: sink_dlq_console
+    type: pipeline
+    position:
+      x: 700
+      y: 320
+    data:
+      label: Corrupt Payload DLQ
+      type: SINK
+      iconName: Terminal
+      spark_transform: ConsoleSink
+      streamingSinkMode: native
+      properties:
+        numRows: 25
+        truncate: false
+        logLevel: WARNING
+        outputMode: append
+        triggerType: processingTime
+        triggerInterval: 30 seconds
+        checkpointLocation: gs://my-lakehouse-bucket/checkpoints/kafka-to-iceberg/sink_dlq_console
+
+  - id: step_window_agg
+    type: pipeline
+    position:
+      x: 1020
+      y: 100
+    data:
+      label: Tumbling Window Metrics
+      type: STEP
+      iconName: BarChart
+      spark_transform: GroupByAgg
+      properties:
+        groupByColumns:
+          - region
+        windowType: Tumbling
+        timeColumn: event_timestamp
+        windowDuration: 5 minutes
+        flattenWindowStruct: true
+        aggregations:
+          - column: "*"
+            fn: count
+            alias: order_count
+          - column: amount
+            fn: sum
+            alias: gross_revenue
+
+  - id: sink_iceberg
+    type: pipeline
+    position:
+      x: 1340
+      y: 100
+    data:
+      label: BigLake Iceberg Sink
+      type: SINK
+      iconName: Database
+      spark_transform: IcebergSink
+      streamingSinkMode: native
+      properties:
+        catalogName: biglake
+        catalogType: biglake
+        catalogUri: https://biglake.googleapis.com/iceberg/v1beta/restcatalog
+        namespace: commerce_analytics
+        table: commerce_analytics.regional_order_metrics_5m
+        warehouse: gs://my-lakehouse-bucket/iceberg/warehouse
+        warehouseLocation: gs://my-lakehouse-bucket/iceberg/warehouse
+        writeOperation: append
+        partitionFields: days(window_start), region
+        partitionSpec: days(window_start), region
+        fanoutEnabled: true
+        authMode: default
+        outputMode: append
+        triggerType: processingTime
+        triggerInterval: 30 seconds
+        checkpointLocation: gs://my-lakehouse-bucket/checkpoints/kafka-to-iceberg/sink_iceberg
+
+edges:
+  - id: e_kafka_to_parse
+    source: src_kafka
+    target: step_parse_payload
+  - id: e_parse_to_watermark
+    source: step_parse_payload
+    sourceHandle: valid
+    target: step_watermark
+  - id: e_parse_to_dlq
+    source: step_parse_payload
+    sourceHandle: error
+    target: sink_dlq_console
+  - id: e_watermark_to_agg
+    source: step_watermark
+    sourceHandle: valid
+    target: step_window_agg
+  - id: e_agg_to_iceberg
+    source: step_window_agg
+    sourceHandle: valid
+    target: sink_iceberg

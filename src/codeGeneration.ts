@@ -925,7 +925,7 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
     const baseName = (typeof filenameVal === 'string' && filenameVal
         ? filenameVal
         : path.basename(targetFolderPath)
-    ).replace(/\.(spark|beam)$/, '');
+    ).replace(/\.spark$/i, '');
 
     // C3: the folder is NOT cleaned here. Deleting before the model call meant a
     // timeout, rate-limit or unparseable response left the user with nothing.

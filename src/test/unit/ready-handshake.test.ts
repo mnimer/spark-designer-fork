@@ -59,7 +59,7 @@ function makeContext(text = '{"nodes":[],"edges":[]}'): MessageContext & { poste
         context: { extensionPath: '/ext' } as any,
         webview: {} as any,
         document: {
-            uri: { fsPath: '/ws/pipelines/demo.beam' },
+            uri: { fsPath: '/ws/pipelines/demo.spark' },
             getText: () => text
         } as any,
         syncState: { lastSavedContent: '' } as any,
@@ -90,7 +90,7 @@ describe('handleReady (P9 ordering)', () => {
         expect(ctx.posted[0]).toMatchObject({
             command: 'loadPipeline',
             data: '{"nodes":[{"id":"1"}],"edges":[]}',
-            filename: 'demo.beam'
+            filename: 'demo.spark'
         });
         expect(ctx.posted[0]).not.toHaveProperty('projectId');
 

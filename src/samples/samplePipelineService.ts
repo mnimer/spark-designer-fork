@@ -128,14 +128,14 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
 }
 
 /**
- * Synthesizes README-level markdown documentation from a parsed `.beam` sample structure
- * when no standalone `<baseName>.md` or `<baseName>/README.md` file is present on disk.
+ * Synthesizes fallback README documentation from a parsed `.spark` sample pipeline
+ * when no standalone `<baseName>.md` or `<baseName>/README.md` file exists on disk.
  *
  * @param title Human-readable title of the sample pipeline.
- * @param filename Sample `.beam` filename.
+ * @param filename Sample `.spark` filename.
  * @param flow Topological DAG flow summary string.
  * @param runner Default runner name.
- * @param parsed Parsed `.beam` YAML object.
+ * @param parsed Parsed `.spark` YAML object.
  * @returns Comprehensive Markdown README string.
  */
 export function buildSampleReadmeMarkdown(
@@ -153,10 +153,10 @@ export function buildSampleReadmeMarkdown(
         '',
         '## Overview',
         flow
-            ? `Pre-configured Apache Beam sample pipeline (\`${filename}\`) implementing the flow: **${flow}**.`
-            : `Pre-configured Apache Beam sample pipeline (\`${filename}\`) configured for the **${runner}** runner.`,
+            ? `Pre-configured Apache Spark 4.x (PySpark) sample pipeline (\`${filename}\`) implementing the flow: **${flow}**.`
+            : `Pre-configured Apache Spark 4.x (PySpark) sample pipeline (\`${filename}\`) configured for the **${runner}** runner.`,
         '',
-        'This sample can be generated and executed in either **Python** or **Java** using the **Generate Code** panel.',
+        'Generate and execute this Apache Spark 4.x (PySpark) pipeline from the **Source Code** panel.',
     ];
 
     if (flow || nodes.length > 0) {
@@ -172,7 +172,7 @@ export function buildSampleReadmeMarkdown(
             nodes.forEach((node, index) => {
                 const label = node?.data?.label || node?.id || 'Node';
                 const type = node?.data?.type || 'STEP';
-                const transform = node?.data?.spark_transform || node?.data?.spark_transform || node?.data?.label || type;
+                const transform = node?.data?.spark_transform || node?.data?.label || type;
                 lines.push(`${index + 1}. **${label} (\`${transform}\` / \`${type}\`)**`);
             });
         }
@@ -198,10 +198,10 @@ export function buildSampleReadmeMarkdown(
         '',
         '## Code Generation & Execution',
         `1. Click **New File** to save a copy of \`${filename}\` in your workspace.`,
-        '2. Open the **Generate Code** tab, choose **Python** or **Java**, and click **Generate Code**.',
-        '3. Run locally with DirectRunner or deploy to Google Cloud Dataflow:',
+        '2. Open the **Source Code** tab and click **Generate Code** to synthesize the Apache Spark 4.x (PySpark) project.',
+        '3. Run the generated pipeline locally or deploy it to Google Cloud Managed Spark:',
         '```bash',
-        './run_directrunner.sh',
+        './run_local.sh',
         '```'
     );
 
@@ -209,7 +209,7 @@ export function buildSampleReadmeMarkdown(
 }
 
 /**
- * Discovers and parses all .beam sample pipelines located in the resources/samples directory.
+ * Discovers and parses all `.spark` sample pipelines in the `resources/samples` directory.
  *
  * Converted to `fs.promises` so that opening the webview no longer blocks the extension
  * host while every sample file is read off disk (finding M18).

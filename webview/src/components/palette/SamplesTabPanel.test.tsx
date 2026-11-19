@@ -13,9 +13,9 @@ describe('SamplesTabPanel', () => {
     {
       id: 'sample-1',
       title: 'Word Count Batch',
-      filename: 'wordcount.beam',
+      filename: 'wordcount.spark',
       badge: 'Batch',
-      description: 'Classic Apache Beam word count batch pipeline example.',
+      description: 'Classic Apache Spark word count batch pipeline example.',
       nodesCount: 5,
       readmeContent: '# Word Count Batch\n\n## Overview\nCounts word frequencies from input text.\n\n## Pipeline Architecture & Data Flow\nReads lines, splits words, counts occurrences.\n\n## Pipeline Nodes & Transforms\nDuplicate table.',
       content: '{"nodes":[],"edges":[]}',
@@ -23,7 +23,7 @@ describe('SamplesTabPanel', () => {
     {
       id: 'sample-2',
       title: 'PubSub to BigQuery Streaming',
-      filename: 'streaming.beam',
+      filename: 'streaming.spark',
       badge: 'Streaming',
       description: 'Reads JSON events from Pub/Sub and writes to BigQuery.',
       nodesCount: 4,
@@ -35,13 +35,17 @@ describe('SamplesTabPanel', () => {
     render(<SamplesTabPanel samples={mockSamples} searchQuery="" />);
 
     expect(screen.getByText('Word Count Batch')).toBeInTheDocument();
-    expect(screen.getByText('wordcount.beam')).toBeInTheDocument();
+    expect(screen.getByText('wordcount.spark')).toBeInTheDocument();
     expect(screen.getByText('PubSub to BigQuery Streaming')).toBeInTheDocument();
-    expect(screen.getByText('streaming.beam')).toBeInTheDocument();
+    expect(screen.getByText('streaming.spark')).toBeInTheDocument();
     expect(screen.getByText('5 nodes')).toBeInTheDocument();
     expect(screen.getByText('4 nodes')).toBeInTheDocument();
     expect(screen.getByTestId('sample-info-btn-sample-1')).toBeInTheDocument();
     expect(screen.getByTestId('sample-new-file-btn-sample-1')).toBeInTheDocument();
+    expect(screen.getByTestId('sample-new-file-btn-sample-1')).toHaveAttribute(
+      'title',
+      'Save "Word Count Batch" as a new .spark file and open in editor'
+    );
     expect(screen.getByTestId('sample-info-btn-sample-2')).toBeInTheDocument();
     expect(screen.getByTestId('sample-new-file-btn-sample-2')).toBeInTheDocument();
     expect(screen.queryByText('Open sample')).not.toBeInTheDocument();

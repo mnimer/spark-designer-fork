@@ -27,7 +27,7 @@ export const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
     'node_modules',
     '__pycache__',
     'target/',
-    '*.beam',
+    '*.spark',
     '*.tf',
     '*.log',
     'gemini.log',

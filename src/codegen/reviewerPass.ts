@@ -101,11 +101,12 @@ export function isReviewerEnabled(
  */
 export async function runReviewerPass(options: ReviewerPassOptions): Promise<ReviewOutcome> {
     // 1. Reviewer context: the reviewer-selected skills with the pipeline YAML.
+    const { sparkVersion: explicitSparkVersion, beamVersion: legacyRuntimeVersion } = options;
     const reviewerPrompt = buildPromptFromPipelineYaml({
         skillsRoot: options.skillsRoot,
         yamlText: options.yamlText,
         language: options.language,
-        sparkVersion: options.sparkVersion ?? options.beamVersion,
+        sparkVersion: explicitSparkVersion ?? legacyRuntimeVersion,
         caller: SKILL_CALLERS.reviewer,
     });
     const checkRunner = options.checkRunner ?? new ReadOnlyCheckRunner();

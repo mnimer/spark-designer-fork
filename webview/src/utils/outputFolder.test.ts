@@ -1,3 +1,9 @@
+/**
+ * Unit tests for computeUpdatedOutputFolder utility.
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
 import { describe, it, expect } from 'vitest';
 import { computeUpdatedOutputFolder } from './outputFolder';
 
@@ -12,8 +18,8 @@ describe('computeUpdatedOutputFolder', () => {
     expect(result).toBe('test/parse message/parse-message-pipeline');
   });
 
-  it('resets old output folder to clean relative default when beam file is renamed and moved', () => {
-    // User renamed test/job1/job1.beam to test/parse message/parse-message-pipeline.beam
+  it('resets old output folder to clean relative default when spark file is renamed and moved', () => {
+    // User renamed test/job1/job1.spark to test/parse message/parse-message-pipeline.spark
     // Old saved output folder was test/job1/job1
     const result = computeUpdatedOutputFolder(
       'test/job1/job1',
@@ -43,7 +49,7 @@ describe('computeUpdatedOutputFolder', () => {
     expect(result2).toBe('test/parse message/parse-message-pipeline');
   });
 
-  it('updates output folder when beam file is renamed in the same directory', () => {
+  it('updates output folder when spark file is renamed in the same directory', () => {
     const result = computeUpdatedOutputFolder(
       'src/pipelines/my-pipeline',
       'src/pipelines',
@@ -53,7 +59,7 @@ describe('computeUpdatedOutputFolder', () => {
     expect(result).toBe('src/pipelines/our-pipeline');
   });
 
-  it('handles beam file at workspace root', () => {
+  it('handles spark file at workspace root', () => {
     const result = computeUpdatedOutputFolder(
       'job1',
       '',

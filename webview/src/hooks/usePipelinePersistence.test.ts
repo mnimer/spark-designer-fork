@@ -61,7 +61,7 @@ describe('usePipelinePersistence (P6 autosave)', () => {
     expect(mockPostMessage).not.toHaveBeenCalled();
   });
 
-  it('does not post save message on initial load when no changes have been made (regression: opening .beam file must not mark it unsaved)', () => {
+  it('does not post save message on initial load when no changes have been made (regression: opening .spark file must not mark it unsaved)', () => {
     const mockPostMessage = vi.fn();
     const { rerender } = renderHook(
       (props: UsePipelinePersistenceOptions) => usePipelinePersistence(props),

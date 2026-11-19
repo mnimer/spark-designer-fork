@@ -95,7 +95,7 @@ export const SamplesTabPanel: React.FC<SamplesTabPanelProps> = ({
                         e.stopPropagation();
                         onOpenSample?.(sample);
                       }}
-                      title={`Save "${sample.title}" as a new .beam file and open in editor`}
+                      title={`Save "${sample.title}" as a new .spark file and open in editor`}
                       aria-label={`Open ${sample.title} as new file`}
                       data-testid={`sample-new-file-btn-${sampleKey}`}
                       className="px-2 py-1 rounded bg-[#161b22] hover:bg-[#21262d] border border-amber-500/40 text-amber-300 hover:text-white transition-colors cursor-pointer text-[10px] font-medium flex items-center justify-center gap-1"

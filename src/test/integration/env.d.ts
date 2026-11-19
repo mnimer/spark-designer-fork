@@ -19,11 +19,12 @@ declare module '*.yaml?raw' {
     export default content;
 }
 
-declare module '*.beam' {
+declare module '*.spark' {
     const content: string;
     export default content;
 }
-declare module '*.beam?raw' {
+
+declare module '*.spark?raw' {
     const content: string;
     export default content;
 }

@@ -219,6 +219,7 @@
     "test:integration:sources": "vitest run --config vitest.integration.config.mts src/test/integration/sources",
     "test:integration:sinks": "vitest run --config vitest.integration.config.mts src/test/integration/sinks",
     "test:integration:steps": "vitest run --config vitest.integration.config.mts src/test/integration/steps",
+    "test:integration:e2e": "vitest run --config vitest.integration.config.mts src/test/integration/e2e",
     "test:integration:java": "vitest run --config vitest.integration.config.mts src/test/integration/**/java",
     "test:integration:python": "vitest run --config vitest.integration.config.mts src/test/integration/**/python",
     "test:integration:sources:java": "vitest run --config vitest.integration.config.mts src/test/integration/sources/java",

@@ -5,7 +5,7 @@
  *
  * Purpose:
  * Regression coverage for the C2 finding: plaintext JDBC/JMS passwords were being
- * serialized into the `.beam` pipeline, interpolated into the Gemini code-generation
+ * serialized into the `.spark` pipeline, interpolated into the Gemini code-generation
  * prompt, and written verbatim to `gemini.log`.
  *
  * These tests are the barrier that keeps that from coming back. The highest-value

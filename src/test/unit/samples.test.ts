@@ -14,6 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type * as vscode from 'vscode';
 import { formatSampleTitle, getSamplePipelines, computePipelineFlow } from '../../extension';
+import { buildSampleReadmeMarkdown } from '../../samples/samplePipelineService';
 
 // Mock vscode module
 vi.mock('vscode', async () => (await import('./helpers/vscodeMock')).createVscodeMock());
@@ -138,7 +139,7 @@ describe('getSamplePipelines', () => {
                 '',
             ].join('\n')
         );
-        writeFixture('resources/samples/legacy-pipeline.beam', 'nodes: []\n');
+        writeFixture('resources/samples/legacy-pipeline.yaml', 'nodes: []\n');
         writeFixture('resources/samples/notes.txt', 'ignored\n');
 
         const samples = await getSamplePipelines({ extensionPath: extensionRoot } as unknown as vscode.ExtensionContext);
@@ -173,5 +174,88 @@ describe('getSamplePipelines', () => {
     it('returns an empty list when no samples directory exists', async () => {
         const samples = await getSamplePipelines({ extensionPath: extensionRoot } as unknown as vscode.ExtensionContext);
         expect(samples).toEqual([]);
+    });
+});
+
+describe('buildSampleReadmeMarkdown', () => {
+    it('synthesizes Apache Spark 4.x PySpark fallback markdown with flow and runtime variables', () => {
+        const markdown = buildSampleReadmeMarkdown(
+            'Orders Etl',
+            'orders-etl.spark',
+            'Parquet Source ➔ Filter ➔ Parquet Sink',
+            'ServerlessSpark',
+            {
+                nodes: [
+                    { id: 'n1', data: { label: 'Parquet Source', type: 'SOURCE', spark_transform: 'ParquetSource' } },
+                    { id: 'n2', data: { label: 'Filter', type: 'STEP', spark_transform: 'Filter' } },
+                    { id: 'n3', data: { label: 'Parquet Sink', type: 'SINK', spark_transform: 'ParquetSink' } },
+                ],
+                runtimeVariables: [
+                    { key: 'INPUT_URI', value: 'gs://bucket/orders' },
+                    { key: 'OPTIONAL_TAG', value: '' },
+                ],
+            }
+        );
+
+        expect(markdown).toContain('# Orders Etl');
+        expect(markdown).toContain('## Overview');
+        expect(markdown).toContain('Apache Spark 4.x (PySpark)');
+        expect(markdown).toContain('`orders-etl.spark`');
+        expect(markdown).toContain('## Pipeline Architecture & Data Flow');
+        expect(markdown).not.toContain('## Pipeline Nodes & Transforms');
+        expect(markdown).toContain('## Runtime Parameters');
+        expect(markdown).toContain('| `INPUT_URI` | `gs://bucket/orders` |');
+        expect(markdown).toContain('| `OPTIONAL_TAG` | *(unset)* |');
+        expect(markdown).toContain('./run_local.sh');
+        expect(markdown).not.toContain('Apache Beam');
+        expect(markdown).not.toContain('run_directrunner.sh');
+    });
+
+    it('falls back to runner summary when flow and nodes are empty', () => {
+        const markdown = buildSampleReadmeMarkdown('Empty Sample', 'empty.spark', '', 'Local', {});
+        expect(markdown).toContain('# Empty Sample');
+        expect(markdown).toContain('configured for the **Local** runner');
+        expect(markdown).toContain('./run_local.sh');
+    });
+});
+
+describe('bundled resources/samples catalog (Phase 9 I1-I4)', () => {
+    const repoRoot = path.resolve(__dirname, '../../../');
+    const bundledSamplesDir = path.join(repoRoot, 'resources', 'samples');
+    const expectedSlugs = [
+        'bigquery-cloudsql-broadcast-join',
+        'gcs-parquet-etl',
+        'kafka-streaming-to-iceberg',
+        'rate-stream-to-delta',
+    ];
+
+    it('ships all four bundled .spark and .md sample pairs and zero unexpected files', () => {
+        expect(fs.existsSync(bundledSamplesDir)).toBe(true);
+        const entries = fs.readdirSync(bundledSamplesDir).sort();
+
+        expect(entries.filter((f) => !f.endsWith('.spark') && !f.endsWith('.md'))).toEqual([]);
+        expect(entries.filter((f) => f.endsWith('.spark'))).toEqual(
+            expectedSlugs.map((slug) => `${slug}.spark`)
+        );
+        expect(entries.filter((f) => f.endsWith('.md'))).toEqual(
+            expectedSlugs.map((slug) => `${slug}.md`)
+        );
+    });
+
+    it('discovers all four bundled samples cleanly through getSamplePipelines', async () => {
+        const samples = await getSamplePipelines({ extensionPath: repoRoot } as unknown as vscode.ExtensionContext);
+        expect(samples.map((s) => s.id).sort()).toEqual(expectedSlugs);
+
+        for (const sample of samples) {
+            expect(sample.filename).toBe(`${sample.id}.spark`);
+            expect(sample.language).toBe('PySpark');
+            expect(sample.badge).toBe('PySpark');
+            expect(['ServerlessSpark', 'Local']).toContain(sample.runner);
+            expect(sample.nodesCount).toBeGreaterThanOrEqual(5);
+            expect(sample.description).toMatch(/^Pipeline flow: /);
+            expect(sample.readmeContent).toContain('## Overview');
+            expect(sample.readmeContent).toContain('## Pipeline Architecture & Data Flow');
+            expect(sample.readmeContent).not.toContain('## Pipeline Nodes & Transforms');
+        }
     });
 });

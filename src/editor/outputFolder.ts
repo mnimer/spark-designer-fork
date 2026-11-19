@@ -1,5 +1,5 @@
 /**
- * @fileoverview Helpers for resolving pipeline output folders and generating collision-free .beam filenames.
+ * @fileoverview Helpers for resolving pipeline output folders and generating collision-free .spark filenames.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
@@ -51,7 +51,7 @@ export function nextAvailableSparkFilename(
     baseName: string,
     exists: (p: string) => boolean = fs.existsSync
 ): string {
-    const base = baseName.replace(/\.spark$/, '');
+    const base = baseName.replace(/\.spark$/i, '');
     let candidate = `${base}${PIPELINE_FILE_EXT}`;
     let counter = 1;
     while (exists(path.join(dir, candidate))) {
