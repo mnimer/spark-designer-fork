@@ -29,7 +29,8 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 > - `I1–I10`: Starter Samples & End-to-End Integration Pipelines (10 tasks)
 > - `DOC1–DOC6`: Documentation & Walkthroughs (6 tasks)
 > - `EXT1–EXT8`: Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (8 tasks)
-> - `V2`: Phase-2 Deferred Backlog (5 items)
+> - `SDP1–SDP12`: Spark Declarative Pipelines (SDP) Mode (12 tasks)
+> - `V2`: Phase-2 Deferred Backlog (8 items)
 
 ### Phase 0 — Repository Scaffold & Hygiene (`S0`–`S11`)
 
@@ -289,6 +290,32 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 | [EXT7](#ext7) | 🤖 Step | `TextChunkAndEmbed` | Add RAG preparation step (`Spark ML & AI`, `errorOutput: true`) supporting `chunk_only`, `embed_only`, and `chunk_and_embed` modes with configurable chunk overlap and batched `mapInPandas` Vertex AI / Gemini embeddings (`embed_content`). | ⬜ Not Started |
 | [EXT8](#ext8) | 🔧 Parity | `IcebergSource` | Add missing `glue`, `nessie`, and `bigquery` catalog type options to `IcebergSource` (`webview/src/properties/source/IcebergIO.tsx`) and `io-iceberg/SKILL.md` to match `IcebergSink`. | ⬜ Not Started |
 
+### Phase 12 — Spark Declarative Pipelines (SDP) Mode (`SDP1`–`SDP12`)
+
+Planned as a follow-on release after Phases 9–11. Imperative PySpark stays the default paradigm. SDP mode generates a `spark-pipeline.yml` project with `from pyspark import pipelines as dp` for Apache Spark 4.2+ only. Design rules for this phase:
+
+- **Canvas-level paradigm**: The user picks the paradigm per pipeline in the diagram editor, not in the Generate Code tab, because SDP changes the palette, property forms, badges, validation, and Deployment controls.
+- **Hard-block unsupported nodes**: In SDP mode, the canvas greys out nodes that SDP cannot express. A hybrid SDP-plus-imperative output is deferred to `V2.6`.
+- **OSS Spark 4.2 APIs only**: Auto CDC supports SCD Type 1 only (`AUTOCDC_SCD2_NOT_SUPPORTED`). `@dp.expect*`, `dlt`, `dp.apply_changes`, and `append_flow(once=...)` do not exist in OSS Spark. SCD Type 2 stays on imperative `MergeCdcScd` (`EXT4`).
+- **Triggered execution only**: Each `spark-pipelines run` processes available data with `Trigger.AvailableNow` and exits. Materialized views are truncated and recomputed on every run. Continuous streaming needs scheduled runs that never overlap.
+- **Testable helpers**: Generated `@dp.*` dataset functions only return DataFrames and call pure helpers in `src/transforms.py`, so offline `pytest` still covers all transformation logic (`D3`).
+- **Grounding source**: Use the Google Cloud `spark-declarative-pipelines` registry skill (`branch-4.2` API reference, Apache-2.0) when authoring SDP codegen skills.
+
+| # | Type | Task | Status |
+| :--- | :--- | :--- | :--- |
+| [SDP1](#sdp1) | 🧭 Architecture | Add a top-level `paradigm` field (`'imperative' \| 'sdp'`, default `'imperative'`) to the `.spark` YAML format, a paradigm prompt in **New Pipeline**, a paradigm indicator in `CanvasToolbar.tsx`, and a switch flow: SDP to Imperative always succeeds, while Imperative to SDP runs the `SDP5` compatibility gate and lists blocking nodes first. | ⬜ Not Started |
+| [SDP2](#sdp2) | 🎨 Canvas UI | In SDP mode, grey out unsupported palette nodes with an explanatory tooltip, render dataset badges (`VIEW`, `MV`, `TABLE`, `CDC`, `SINK`) instead of `CACHE`/`foreachBatch`, and swap sink property fields: catalog table name and format, mutually exclusive `partition_cols` or `cluster_by`, and `pipelines.reset.allowed`. Hide per-sink trigger and checkpoint fields. | ⬜ Not Started |
+| [SDP3](#sdp3) | ⚙️ Settings | Add pipeline-level SDP settings: `storage` (absolute `gs://` URI outside source folders), `catalog` alias (plain identifier validation), `database`, and BigLake Iceberg REST catalog configuration (`bl://` or bucket-root `gs://` warehouse). Route static settings (`spark.jars*`, `spark.sql.extensions`, `spark.driver.*`, `spark.executor.*`) to runner configuration, never to `spark-pipeline.yml`. | ⬜ Not Started |
+| [SDP4](#sdp4) | 🧭 Architecture | Extend `src/spark/versionMatrix.ts` with an SDP capability flag per runtime. Add Dataproc Cluster image `4.0` (Spark 4.2, `--optional-components=ICEBERG`, driver `zstandard>=0.25.0`), mark Serverless `4.0` as SDP-capable, and add a Local Spark 4.2 Spark Connect profile that flags the missing local Iceberg runtime for Spark 4.2. | ⬜ Not Started |
+| [SDP5](#sdp5) | 🧭 Architecture | Build `src/shared/sdpPlanner.ts`: a deterministic compatibility gate and dataset mapper. Block `foreachBatch`-only sinks, Spark ML steps, SCD Type 2, continuous triggers, runtimes below Spark 4.2, streaming aggregations, dedup, or stream-stream joins without watermarks, non-`MERGE` Auto CDC targets, and `PivotUnpivot` without explicit values. Map remaining nodes to `@dp.temporary_view`, `@dp.materialized_view`, `@dp.table`, `dp.create_streaming_table` + `@dp.append_flow`, `dp.create_auto_cdc_flow`, or `dp.create_sink`. | ⬜ Not Started |
+| [SDP6](#sdp6) | 🧠 Codegen | Author SDP codegen skills (`sdp-core`, `sdp-spec`, `sdp-auto-cdc`, `sdp-quality-quarantine`) and add `paradigms: [imperative, sdp]` metadata to existing `io-*` and `transform-*` skills so `CodegenSkillCatalog` loads only SDP-capable guidance. Ban Databricks-only APIs (`dlt`, `@dp.expect*`, `dp.apply_changes`, `once=`, `stored_as_scd_type=2`, `cloudFiles`). | ⬜ Not Started |
+| [SDP7](#sdp7) | 🧠 Codegen | Route `CodegenPromptBuilder.ts` in SDP mode to generate `spark-pipeline.yml`, Python-only `transformations/*.py`, pure helpers in `src/transforms.py`, and offline `tests/test_transforms.py`. Map `DataQualityAssert` to filter-based clean and `_quarantine` datasets, and map SCD Type 1 `MergeCdcScd` to `dp.create_auto_cdc_flow`. | ⬜ Not Started |
+| [SDP8](#sdp8) | 🚀 Run/Deploy | Author `runner-sdp` skill and templates: `run_sdp_local.sh` (`spark-pipelines dry-run` and `run` over local Spark Connect), a Managed Data Pipelines `sdp` stage YAML as the primary production path (static properties in `execution_config`), and a standalone Dataproc image `4.0` launch script for development (driver local mode). Generate `CREATE NAMESPACE IF NOT EXISTS <catalog>.<database>` setup and register every new script in `ALLOWED_EXECUTABLE_SCRIPTS`. | ⬜ Not Started |
+| [SDP9](#sdp9) | 🚀 Run/Deploy | Add SDP refresh controls to `DeploymentTab.tsx`: incremental run, `--refresh` and `--full-refresh` with dataset multi-select built from the graph (SDP silently ignores unknown names), confirmation that names each reset dataset, a duplicate warning for `dp.create_sink` targets on `--full-refresh-all`, an overlapping-run guard, and a note that materialized views are empty during and after a failed run. | ⬜ Not Started |
+| [SDP10](#sdp10) | 🧪 Testing | Extend `ReadOnlyCheckRunner.ts`, `deterministic-gate.ts`, and `SparkArchitectureAgent` with SDP rules: spec field allowlist, no static settings in `configuration`, no `SparkSession.builder`, `spark.conf.set`, writers, actions, or `.schema`/`.columns` inside dataset functions, and no Databricks-only APIs. Run `spark-pipelines dry-run` when a local Spark 4.2 environment exists. Add unit tests for `sdpPlanner.ts`. | ⬜ Not Started |
+| [SDP11](#sdp11) | 📦 Sample | Add two bundled SDP samples: a BigLake Iceberg medallion pipeline (file stream to bronze streaming table, silver streaming table, gold materialized view) and an Auto CDC SCD Type 1 pipeline with delete tombstones and out-of-order sequence numbers. | ⬜ Not Started |
+| [SDP12](#sdp12) | 📖 Docs | Document the Imperative vs. SDP decision guide, SDP ceilings, and triggered execution model in `ARCHITECTURE.md`, `DESIGN.md` (paradigm indicator, dataset badges, greyed palette), `README.md`, and a new walkthrough step. | ⬜ Not Started |
+
 ### Phase-2 Deferred Backlog (`V2`)
 
 | # | Type | Task | Status |
@@ -298,6 +325,9 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 | `V2.3` | ⏸️ V2 | Live schema introspection from BigQuery / Dataplex / Iceberg catalogs to auto-populate column dropdowns in downstream Step forms. | ⏸️ Deferred |
 | `V2.4` | ⏸️ V2 | Dataproc Workflow Templates & Serverless Spark scheduled Cloud Composer / Cloud Scheduler export. | ⏸️ Deferred |
 | `V2.5` | ⏸️ V2 | Spark Event Log / Driver Log analyzer integration (`gcp-spark-troubleshooting`) inside the Deployment Execution Terminal on job failure. | ⏸️ Deferred |
+| `V2.6` | ⏸️ V2 | Hybrid SDP output: generate an SDP project for catalog datasets plus a companion imperative job for `foreachBatch`-only sinks that SDP cannot express. | ⏸️ Deferred |
+| `V2.7` | ⏸️ V2 | SDP SQL output mode: emit `transformations/*.sql` (`CREATE STREAMING TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE FLOW ... INSERT INTO ... BY NAME`) for nodes that need no Python UDFs or sinks. | ⏸️ Deferred |
+| `V2.8` | ⏸️ V2 | Optional SDP expectations support through the `sdp_extensions.expectations` library when available on the target runtime, as an alternative to quarantine datasets. | ⏸️ Deferred |
 
 ---
 
