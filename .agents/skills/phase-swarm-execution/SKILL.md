@@ -35,14 +35,14 @@ description: >-
 
 Include these 5 rules in every `workspace: "share"` author brief:
 
-1. **Verify isolated worktree & bootstrap `node_modules` via hardlinks** (never run `npm ci` or `git worktree add` into scratch folders; if `pwd` is the shared phase worktree instead of a `swarm-*` worktree, stop and alert `@coordinator`):
+1. **Verify isolated worktree & bootstrap `node_modules` via hardlinks**: Never run `npm ci` or `git worktree add` into scratch folders. If `pwd` is the shared phase worktree instead of a `swarm-*` worktree, stop and alert `@coordinator`:
    ```bash
    test -d node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/node_modules ./node_modules
    test -d webview/node_modules || cp -al /usr/local/google/home/mikenimer/Development/apache-spark-designer/webview/node_modules ./webview/node_modules
    ```
 2. **Search with Git, not `cs`**: Never run `cs --corpus=local` (fails outside CitC and Cog). Use `git grep` and `git ls-files`.
 3. **Enforce file boundaries & webview lint rules**: Touch only owned files. Never stage `node_modules/`, `out/`, or `webview/dist/`. Place any agent skills or rules under `.agents/` (never `.gemini/`). In `webview/src/`, keep non-component helpers in `.ts` modules (`react-refresh/only-export-components`), document every `interface` and exported arrow component with JSDoc, and pass `{ selector }` to `getByLabelText(...)` when `<InfoTooltip>` sits inside `<label>`.
-4. **Commit verified work cleanly**: After targeted unit tests (`npx vitest run <paths>` for host and `(cd webview && npx vitest run <paths>)` for webview), typecheck (`npm run typecheck` and `npm run typecheck:webview`), lint (`npm run lint` and `npm --prefix webview run lint`), single-header `Author:` check, and ASD-STE100 zero-semicolon check pass, commit as `<type>(<scope>): <summary> (<TASK_ID>)` with **zero file paths, zero file extensions, and zero markdown links** in subject or body (`.agents/workflows/gitcommit.md`).
+4. **Commit verified work cleanly**: After targeted unit tests (`npx vitest run <paths>` for host and `(cd webview && npx vitest run <paths>)` for webview), typecheck (`npm run typecheck` and `npm run typecheck:webview`), lint (`npm run lint` and `npm --prefix webview run lint`), single-header `Author:` check, and ASD-STE100 zero-semicolon check pass, commit as `<type>(<scope>): <summary> (<TASK_ID>)` with **zero file paths, zero file extensions (including bare `.spark`, `.beam`, `.md`, `.ts`, and URI schemes like `gs://` or `file://`), and zero markdown links** in subject or body (`.agents/workflows/gitcommit.md`).
 5. **Clean peer handoffs**: Post only authored commit SHAs and branch names, and `@mention` only the next peer (`@verifier` or `@integrator`). Tag `@coordinator` only on blockers or final completion.
 
 ## 3. Integration, Bundle Build & Phase Completion
@@ -56,8 +56,8 @@ Include these 5 rules in every `workspace: "share"` author brief:
    - Verify **zero regressions** relative to the recorded base baseline across `npm run typecheck:integration`, `npm run lint`, `npm --prefix webview run lint`, `npm run test:unit`, and `npm run test:webview` (`npm run test:all`) without modifying unrelated legacy suites scheduled for later phases.
    - Update `TASKS.md` (`Status` -> `✅ Done`), sync `ARCHITECTURE.md` / `DESIGN.md` if applicable, and create the phase completion commit.
    - Run `npm run build` (`npm run build:webview && npm run compile`) so `out/extension.js` and `webview/dist/` are ready for immediate Extension Development Host (`F5`) testing, and confirm `git status` remains clean.
-   - Have a read-only verifier audit the final branch commits, test outputs, and PR description accuracy (such as verifying which panels actually import `useAssetLoader`) before notifying `@coordinator`.
+   - Have a read-only verifier audit the final branch commits, test outputs, and PR description accuracy (such as verifying which panels actually import `useAssetLoader`) before notifying `@coordinator`. If a `workspace: "inherit"` verifier runs a live `vitest.integration.config.mts` smoke test, remove the generated `src/test/integration/test-report.md` afterward so `git status --short` stays clean.
 2. **Coordinator wrap-up**:
    - Post `[done] <summary>` (no `@` mentions) so `monitor` goes quiet, then `kill` finished workers (excluding `monitor`) only after all commits are landed on the phase branch.
-   - `swarm{action: "kill"}` deletes each author worktree and its `swarm-*` branch in the background. Do not force-remove them by hand. Wait for cleanup to finish, then run `git worktree prune`. Confirm `git worktree list` and `git branch` contain zero leftover `swarm-*` entries. Delete any extra side branches that authors created.
+   - `swarm{action: "kill"}` runs `git worktree remove --force` on each author worktree in the background (1–2 minutes when `node_modules/` is hardlinked). Do not force-remove them by hand, and never wait with `pgrep -f "swarm-..."` (which matches its own shell command line and loops forever). Wait with a bracket pattern (`while pgrep -f "[s]warm-" >/dev/null; do sleep 1; done`), then run `git worktree prune`. Confirm `git worktree list` and `git branch --list 'swarm-*'` contain zero leftover entries.
    - Present the copy-ready `phase -> develop` PR description artifact or ` ```text ` block.

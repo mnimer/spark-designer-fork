@@ -2,10 +2,12 @@
 name: spark-connector-authoring
 description: >-
   Authors and wires Apache Spark 4.x catalog nodes (Sources, Sinks, and Steps),
-  React property forms, documentation entries, and resources/codegen-skills/
-  SKILL.md files while satisfying all repository invariant tests. Use when
-  implementing SRC*, SNK*, or OP* tasks or adding a new Spark connector or
-  transformation node.
+  React property forms, documentation entries, bundled .spark samples, E2E
+  integration pipelines, and resources/codegen-skills/ SKILL.md files while
+  satisfying all repository invariant tests. Use when implementing SRC*, SNK*,
+  OP*, EXT*, or sample and E2E .spark pipeline tasks. Don't use for pure swarm
+  branch orchestration without node or pipeline authoring (use
+  phase-swarm-execution).
 ---
 
 # Spark 4.x Connector & Transform Authoring Guide
@@ -71,7 +73,20 @@ Every catalog `sparkTransform` must resolve to an `io-*` or `transform-*` skill 
    - **`Watermark` & `GroupByAgg`**: `Watermark` uses `properties.eventTimeColumn` and `properties.delayThreshold`. `GroupByAgg` uses `properties.groupByColumns`, `properties.windowType` (`'None' | 'Tumbling' | 'Sliding' | 'Session'`), `properties.timeColumn`, `properties.windowDuration`, `properties.slideDuration`, `properties.sessionGapDuration`, and `properties.aggregations`.
    - **`SparkMlAndVertexAi`**: `versionMatrix.ts` (`resolveMlAndVertexConnector`) inspects `properties.engine` (`'spark_ml' | 'xgboost' | 'vertex_ai_endpoint' | 'vertex_ai_gemini'`), `properties.useXgboost`, `properties.useVertexAi`, `properties.endpointId`, and `properties.geminiModel` (default `'gemini-3.8-flash'` with `location: 'global'` enforced for `/^gemini-3\./i`).
 
-## 3. Verification Checklist
+## 3. Bundled `.spark` Sample & E2E Pipeline YAML Contract
+
+1. **React Flow Canvas & Handle Fidelity**:
+   - Set `type: 'pipeline'` on every serialized node and use valid `data.iconName` keys from `webview/src/catalog/nodeIcons.ts`.
+   - Wire explicit `sourceHandle: 'valid'` and `sourceHandle: 'error'` on error-capable steps (`errorOutput: true`), rule `name` and `'else'` handles on `ConditionalSplit`, and `targetHandle: 'left'` and `'right'` on `Join`.
+2. **Zero-Warning DAG & Streaming Validation**:
+   - Include `pipelineConfig: { language: 'PySpark' }` and align every `data.properties` key and enum value with both its React form (`webview/src/properties/`) and its owning skill (`resources/codegen-skills/`).
+   - For streaming pipelines, configure `jobConfig.checkpointRoot`, per-sink `checkpointLocation`, and an upstream `Watermark` step before streaming `GroupByAgg`, `Deduplicate` (`within_watermark`), or stream-stream outer `Join` so `validateDagTopology(nodes, edges, { jobConfig, requireCheckpoints: true })` returns `isValid: true`, `errors: []`, and `warnings: []`.
+   - Use Secret Manager secret IDs or IAM authentication so `redactPipelineDocument` reports `redactedPaths: []`.
+   - Verify `(cd webview && npx vitest run src/components/PropertyForm.test.tsx)` renders every node in `resources/samples/*.spark` and `src/test/integration/e2e/**/*.spark` with `> 0` form controls and zero unregistered warnings.
+3. **Companion Sample Markdown (`resources/samples/<slug>.md`)**:
+   - Write in ASD-STE100 active voice with zero semicolons in prose. Include `# <Title>`, `## Overview`, `## Pipeline Architecture & Data Flow`, `## Runtime Parameters`, and `## Code Generation & Execution`, and omit `## Pipeline Nodes & Transforms`.
+
+## 4. Verification Checklist
 
 Run these checks before committing:
 

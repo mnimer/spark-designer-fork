@@ -26,6 +26,6 @@ Detailed rules live in `.agents/rules/`. If your tool does not load that folder 
 | `shared-module-purity.md` | `model_decision` | `src/shared/` and `src/spark/` import bans, webview TypeScript syntax limits, JSDoc safety. |
 | `webview-ui-design-system.md` | `model_decision` | 8pt grid, theme tokens, property form contracts, RTL queries, property registry parity. |
 | `asset-discovery-ipc.md` | `model_decision` | Four-registry lockstep for discovery commands, safe CLI execution, region validation. |
-| `custom-editor-activation.md` | `model_decision` | `SPARK_EDITOR_VIEW_TYPE` sync and restored `.spark` tab upgrade. |
+| `custom-editor-activation.md` | `model_decision` | `SPARK_EDITOR_VIEW_TYPE` sync, restored `.spark` tab upgrade, `PIPELINE_FILE_EXT` normalization, and zero-`.beam` rule. |
 | `deployment-state-and-runners.md` | `model_decision` | Functional `jobConfig` updaters and runner script allowlist. |
 | `codegen-skill-library.md` | `model_decision` | Codegen skill invariants, transform sync, byte-identical runner templates, no undocumented fallbacks. |
