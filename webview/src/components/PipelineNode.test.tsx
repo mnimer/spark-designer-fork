@@ -547,6 +547,32 @@ describe('PipelineNode', () => {
     expect(screen.getByTestId('split-handle-label-vip')).toHaveTextContent('vip');
     expect(screen.getByTestId('split-handle-label-else')).toHaveTextContent('else');
   });
+
+  it('renders dual left and right target handles without BROADCAST badge on MergeCdcScd nodes (EXT4)', () => {
+    render(
+      <PipelineNode
+        id="merge-cdc-1"
+        data={{
+          label: 'Merge CDC / SCD',
+          type: 'STEP',
+          iconName: 'GitMerge',
+          spark_transform: 'MergeCdcScd',
+          properties: { scdType: 'scd2', broadcastRight: true },
+        }}
+      />
+    );
+
+    const card = screen.getByTestId('pipeline-node-merge-cdc-1');
+    expect(card).toHaveClass('min-h-[64px]');
+    expect(screen.getByTestId('handle-target-left-left')).toHaveStyle({ top: '32%' });
+    expect(screen.getByTestId('handle-target-left-right')).toHaveStyle({ top: '68%' });
+    expect(screen.getByTestId('join-left-handle-label')).toHaveTextContent('L');
+    expect(screen.getByTestId('join-right-handle-label')).toHaveTextContent('R');
+    expect(screen.queryByTestId('handle-target-left')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('node-broadcast-badge')).not.toBeInTheDocument();
+    expect(screen.getByTestId('handle-source-right-valid')).toHaveStyle({ top: '50%' });
+    expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
+  });
 });
 
 

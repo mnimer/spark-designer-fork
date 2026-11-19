@@ -221,8 +221,8 @@ Surfaces use a combination of layered background shades and subtle drop shadows 
 - **Connection Handles**:
   - `Source`: 1 right output handle (`bg-emerald-500`). Direct `SOURCE -> SINK` connections are valid.
   - `Step (Structural)`: 1 left target handle (`bg-blue-500`) and 1 centered right output handle (`id="valid"` at `50%`).
-  - `Step (Error-Capable)`: 1 left target handle and 2 right output handles (`id="valid"` at `30%` in green, `id="error"` DLQ at `70%` in red) when `errorOutput: true`.
-  - `Step (Join)`: 2 labeled left target handles (`id="left"` at `32%` and `id="right"` at `68%`), each accepting 1 upstream edge.
+  - `Step (Error-Capable)`: 1 left target handle and 2 right output handles (`id="valid"` at `30%` in green, `id="error"` DLQ at `70%` in red) when `errorOutput: true` (`Filter`, `ParsePayload`, `DataQualityAssert`, `EnforceSchemaAndCast`, `StatefulTransform`, `SparkSqlQuery`, `PandasUdfTransform`, `CustomTransform`, `SparkMlAndVertexAi`, `TextChunkAndEmbed`).
+  - `Step (Join / MergeCdcScd)`: 2 labeled left target handles (`id="left"` at `32%` and `id="right"` at `68%`), each accepting 1 upstream edge.
   - `Step (N-Input)`: 1 left target handle accepting $N$ ordered upstream inputs (`UnionByName`, `SetOperation`, `SparkSqlQuery`).
   - `Step (ConditionalSplit)`: Dynamic right output handles (1 per configured rule plus `id="else"`), scaling node `minHeight` on the 8pt grid.
   - `Sink`: 1 left target handle (`bg-rose-500`).

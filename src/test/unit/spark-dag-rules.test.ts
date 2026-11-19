@@ -20,8 +20,10 @@ import {
     getNodeInputArity,
     getNodeSparkTransform,
     isConditionalSplitNode,
+    isDualInputNode,
     isErrorCapableStep,
     isJoinNode,
+    isMergeCdcScdNode,
     SPARK_NODE_CAPABILITIES,
 } from '../../shared/sparkDagRules';
 
@@ -454,6 +456,17 @@ describe('sparkDagRules helpers (A3)', () => {
 
         expect(isJoinNode({ id: 'j', data: { type: 'STEP', spark_transform: 'Join' } })).toBe(true);
         expect(isJoinNode({ id: 'j', data: { type: 'SOURCE', spark_transform: 'Join' } })).toBe(false);
+
+        expect(isMergeCdcScdNode({ id: 'm', data: { type: 'STEP', spark_transform: 'MergeCdcScd' } })).toBe(true);
+        expect(isMergeCdcScdNode({ id: 'm', data: { type: 'SOURCE', spark_transform: 'MergeCdcScd' } })).toBe(false);
+        expect(isMergeCdcScdNode({ id: 'm', data: { type: 'SINK', spark_transform: 'MergeCdcScd' } })).toBe(false);
+        expect(isMergeCdcScdNode({ id: 'm', data: { type: 'STEP', spark_transform: 'Join' } })).toBe(false);
+
+        expect(isDualInputNode({ id: 'j', data: { type: 'STEP', spark_transform: 'Join' } })).toBe(true);
+        expect(isDualInputNode({ id: 'm', data: { type: 'STEP', spark_transform: 'MergeCdcScd' } })).toBe(true);
+        expect(isDualInputNode({ id: 's', data: { type: 'STEP', spark_transform: 'Select' } })).toBe(false);
+        expect(getNodeInputArity({ id: 'm', data: { type: 'STEP', spark_transform: 'MergeCdcScd' } })).toBe(2);
+        expect(SPARK_NODE_CAPABILITIES.MergeCdcScd).toEqual({ inputArity: 2, errorOutput: false });
 
         expect(isConditionalSplitNode({ id: 'c', data: { type: 'STEP', spark_transform: 'ConditionalSplit' } })).toBe(true);
         expect(isConditionalSplitNode({ id: 'c', data: { type: 'SINK', spark_transform: 'ConditionalSplit' } })).toBe(false);

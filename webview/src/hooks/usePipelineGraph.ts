@@ -28,6 +28,7 @@ import {
   isConditionalSplitNode,
   isErrorCapableStep,
   isJoinNode,
+  isMergeCdcScdNode,
   type ReadMode,
 } from '../utils/sparkDagRules';
 import { buildExecutionPlan, type ExecutionPlan } from '../utils/executionPlanner';
@@ -134,7 +135,7 @@ function canConnectEdge(
     return false;
   }
 
-  if (isJoinNode(targetNode as any)) {
+  if (isJoinNode(targetNode as any) || isMergeCdcScdNode(targetNode as any)) {
     const targetHandle = connection.targetHandle;
     if (targetHandle !== 'left' && targetHandle !== 'right') {
       return false;

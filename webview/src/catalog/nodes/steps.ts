@@ -21,9 +21,12 @@ export const STEP_NODES: NodeDefinition[] = [
   { label: 'Limit & Sample', type: 'STEP', iconName: 'Hash', sparkTransform: 'LimitSample', badge: 'Subset', description: 'Cap output row count with limit or draw a deterministic random sample of rows', category: 'Column & Row', inputArity: 1, errorOutput: false },
   { label: 'Conditional Split', type: 'STEP', iconName: 'Share2', sparkTransform: 'ConditionalSplit', badge: 'Router', description: 'Route rows across dynamic boolean rule output handles plus an automatic else fallback branch', category: 'Column & Row', inputArity: 1, errorOutput: false },
   { label: 'Data Quality Assert', type: 'STEP', iconName: 'Activity', sparkTransform: 'DataQualityAssert', badge: 'Quality', description: 'Validate non-null, range, regex, set, or SQL expectations and route violations to error DLQ', category: 'Column & Row', inputArity: 1, errorOutput: true },
+  { label: 'Enforce Schema & Cast', type: 'STEP', iconName: 'Key', sparkTransform: 'EnforceSchemaAndCast', badge: 'Contract', description: 'Enforce a target DDL schema contract with drift policies, safe try_cast conversions, and error DLQ routing', category: 'Column & Row', inputArity: 1, errorOutput: true },
+  { label: 'Nested Struct & Array Ops', type: 'STEP', iconName: 'Layers', sparkTransform: 'NestedStructArrayOps', badge: 'Nested', description: 'Flatten nested structs recursively, pack struct columns, or apply Catalyst higher-order array functions', category: 'Column & Row', inputArity: 1, errorOutput: false },
 
-  // Joins & Sets (OP12-OP14)
+  // Joins & Sets (OP12-OP14 + EXT4)
   { label: 'Join', type: 'STEP', iconName: 'GitMerge', sparkTransform: 'Join', badge: '2-Input', description: 'Join left and right DataFrames with inner, outer, semi, anti, cross, or broadcast strategies', category: 'Joins & Sets', inputArity: 2, errorOutput: false },
+  { label: 'Merge CDC / SCD', type: 'STEP', iconName: 'GitMerge', sparkTransform: 'MergeCdcScd', badge: 'CDC / SCD', description: 'Stage CDC upserts, deletes, and SCD Type 1 or Type 2 changes from left CDC and right target inputs', category: 'Joins & Sets', inputArity: 2, errorOutput: false },
   { label: 'Union By Name', type: 'STEP', iconName: 'Layers', sparkTransform: 'UnionByName', badge: 'Merge', description: 'Combine two or more upstream DataFrames by column name or position with optional deduplication', category: 'Joins & Sets', inputArity: 'n', errorOutput: false },
   { label: 'Set Operation', type: 'STEP', iconName: 'Layers', sparkTransform: 'SetOperation', badge: 'Set', description: 'Compute intersect, intersectAll, exceptAll, or subtract across upstream DataFrames', category: 'Joins & Sets', inputArity: 'n', errorOutput: false },
 
@@ -48,7 +51,8 @@ export const STEP_NODES: NodeDefinition[] = [
   { label: 'Repartition / Coalesce', type: 'STEP', iconName: 'Shuffle', sparkTransform: 'RepartitionCoalesce', badge: 'Partition', description: 'Coalesce partitions without shuffle or repartition DataFrames by hash or range columns', category: 'Partitioning', inputArity: 1, errorOutput: false },
   { label: 'Cache / Persist', type: 'STEP', iconName: 'HardDrive', sparkTransform: 'CachePersist', badge: 'Storage', description: 'Materialize reused batch DataFrames in executor memory or disk with automatic unpersist', category: 'Partitioning', inputArity: 1, errorOutput: false },
 
-  // Spark ML & AI (OP28-OP29)
+  // Spark ML & AI (OP28-OP29 + EXT7)
   { label: 'Feature Prep', type: 'STEP', iconName: 'Wrench', sparkTransform: 'FeaturePrep', badge: 'MLlib', description: 'Assemble imputed, indexed, one-hot encoded, and scaled feature vectors via Spark ML Pipeline', category: 'Spark ML & AI', inputArity: 1, errorOutput: false },
   { label: 'Spark ML & Vertex AI', type: 'STEP', iconName: 'Cpu', sparkTransform: 'SparkMlAndVertexAi', badge: 'ML / AI', description: 'Run Spark MLlib PipelineModel, XGBoost, Vertex AI Endpoint, or batched Gemini inference', category: 'Spark ML & AI', inputArity: 1, errorOutput: true },
+  { label: 'Text Chunk & Embed', type: 'STEP', iconName: 'Type', sparkTransform: 'TextChunkAndEmbed', badge: 'RAG / AI', description: 'Split document text into overlapping RAG chunks and generate batched Vertex AI embeddings', category: 'Spark ML & AI', inputArity: 1, errorOutput: true },
 ];

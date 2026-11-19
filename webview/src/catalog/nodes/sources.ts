@@ -20,7 +20,7 @@ export const SOURCE_NODES: NodeDefinition[] = [
   { label: 'Socket', type: 'SOURCE', iconName: 'Terminal', sparkTransform: 'SocketSource', badge: 'Debug', description: 'Read UTF-8 text lines from a TCP socket for local streaming debugging', category: 'Streaming Sources', supportedReadModes: ['streaming'], defaultReadMode: 'streaming' },
 
   // Lakehouse Sources (SRC9-SRC12)
-  { label: 'Iceberg', type: 'SOURCE', iconName: 'Database', sparkTransform: 'IcebergSource', badge: 'Lakehouse', description: 'Read Apache Iceberg tables via BigLake REST, REST, Hive, or Hadoop catalogs', category: 'Lakehouse Sources', supportedReadModes: ['batch', 'streaming'], defaultReadMode: 'batch' },
+  { label: 'Iceberg', type: 'SOURCE', iconName: 'Database', sparkTransform: 'IcebergSource', badge: 'Lakehouse', description: 'Read Apache Iceberg tables via BigLake REST, REST, Hive, Hadoop, Glue, Nessie, or BigQuery catalogs', category: 'Lakehouse Sources', supportedReadModes: ['batch', 'streaming'], defaultReadMode: 'batch' },
   { label: 'Delta Lake', type: 'SOURCE', iconName: 'Layers', sparkTransform: 'DeltaSource', badge: 'Lakehouse', description: 'Read Delta Lake tables with time travel and Change Data Feed support', category: 'Lakehouse Sources', supportedReadModes: ['batch', 'streaming'], defaultReadMode: 'batch' },
   { label: 'Apache Hudi', type: 'SOURCE', iconName: 'Layers', sparkTransform: 'HudiSource', badge: 'Lakehouse', description: 'Read Apache Hudi tables using snapshot, incremental, or read-optimized queries', category: 'Lakehouse Sources', supportedReadModes: ['batch', 'streaming'], defaultReadMode: 'batch' },
   { label: 'Hive Table', type: 'SOURCE', iconName: 'Database', sparkTransform: 'HiveSource', badge: 'Metastore', description: 'Read managed or external tables from Dataproc Metastore or Apache Hive', category: 'Lakehouse Sources', supportedReadModes: ['batch'], defaultReadMode: 'batch' },
@@ -56,6 +56,8 @@ export const SOURCE_NODES: NodeDefinition[] = [
   { label: 'Elasticsearch', type: 'SOURCE', iconName: 'Layers', sparkTransform: 'ElasticsearchSource', badge: 'Search', description: 'Read indexed documents or DSL queries from Elasticsearch clusters', category: 'NoSQL & Graph Sources', supportedReadModes: ['batch'], defaultReadMode: 'batch' },
   { label: 'Neo4j', type: 'SOURCE', iconName: 'GitMerge', sparkTransform: 'Neo4jSource', badge: 'Graph', description: 'Read graph nodes, relationships, or Cypher queries from Neo4j', category: 'NoSQL & Graph Sources', supportedReadModes: ['batch', 'streaming'], defaultReadMode: 'batch' },
 
-  // Synthetic & API Sources (SRC38)
+  // Synthetic & API Sources (SRC38 + EXT1-EXT2)
   { label: 'Create DataFrame', type: 'SOURCE', iconName: 'Box', sparkTransform: 'CreateDataFrameSource', badge: 'Synthetic', description: 'Create an in-memory DataFrame from static JSON rows, numeric range, or synthetic generator', category: 'Synthetic & API Sources', supportedReadModes: ['batch'], defaultReadMode: 'batch' },
+  { label: 'REST API', type: 'SOURCE', iconName: 'Cloud', sparkTransform: 'RestApiSource', badge: 'REST', description: 'Read paginated JSON payloads from HTTP and REST API endpoints via Python DataSource', category: 'Synthetic & API Sources', supportedReadModes: ['batch'], defaultReadMode: 'batch' },
+  { label: 'SFTP', type: 'SOURCE', iconName: 'HardDrive', sparkTransform: 'SftpSource', badge: 'SFTP', description: 'Read CSV, JSON, Parquet, text, or XML files from remote SFTP servers via Python DataSource', category: 'Synthetic & API Sources', supportedReadModes: ['batch'], defaultReadMode: 'batch' },
 ];

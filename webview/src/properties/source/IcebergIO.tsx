@@ -7,20 +7,22 @@
  * Renders the property configuration panel for Apache Spark IcebergSource (`IcebergIO`) nodes.
  * Configures batch (`spark.read.format("iceberg")`) and streaming (`spark.readStream.format("iceberg")`)
  * reads from Apache Iceberg tables across Cloud Storage (`gs://`), Amazon S3 (`s3a://`), HDFS (`hdfs://`),
- * or local filesystems using BigLake REST, REST, Hive, or Hadoop catalogs.
+ * or local filesystems using BigLake REST, REST, Hive, Hadoop, AWS Glue, Project Nessie, or BigQuery
+ * Metastore catalogs.
  *
  * Architectural Decisions:
  * - Supports `readMode` (`'batch' | 'streaming'`, default `'batch'`).
  * - Preserves Phase 4 D3 BigLake catalog discovery (`useAssetLoader` `bigLakeCatalogs`) with
  *   `normalizeBigLakeCatalogOptions` and inline error alerting.
- * - Supports `catalogName`, `catalogType` (`'biglake' | 'rest' | 'hive' | 'hadoop'`), `namespace`,
- *   `table`, and `warehouse` (`warehouseLocation`) with Cloud Storage bucket autocomplete via `StoragePathField`.
+ * - Supports `catalogName`, `catalogType` (`'biglake' | 'rest' | 'hive' | 'hadoop' | 'glue' | 'nessie' | 'bigquery'`),
+ *   `namespace`, `table`, and `warehouse` (`warehouseLocation`) with Cloud Storage bucket autocomplete via `StoragePathField`.
  * - Enforces mutual exclusivity between historical `snapshotId` and `asOfTimestamp` in batch mode.
  * - Exposes streaming incremental options (`streamingFromTimestamp`, `streamingSkipDeleteSnapshots`,
  *   and `streamingSkipOverwriteSnapshots`) when `readMode === 'streaming'`.
  * - Integrates `SecretManagerAuthFields`, `CollapsibleSection`, and `SystemInstructionsField` on the 8pt grid.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { Sliders } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -42,7 +44,7 @@ export interface BigLakeCatalogOption {
   value?: string;
   warehouse?: string;
   catalogType?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -99,7 +101,7 @@ export const ICEBERG_CATALOG_TYPES: SelectFieldOption[] = [
 /** React Flow node shape for the IcebergIO source panel. */
 export interface IcebergIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -124,7 +126,7 @@ export interface IcebergIOSourceNode {
       configProperties?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -132,7 +134,7 @@ export interface IcebergIOSourceNode {
 /** Props for the {@link IcebergIOSourceProperties} component. */
 export interface IcebergIOSourcePropertiesProps {
   node: IcebergIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
@@ -181,7 +183,11 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
     ? 'Cannot specify both Snapshot ID and As Of Timestamp. Time travel parameters are mutually exclusive.'
     : null;
 
-  const showCatalogUri = catalogType === 'rest' || catalogType === 'hive' || catalogType === 'biglake';
+  const showCatalogUri =
+    catalogType === 'rest' ||
+    catalogType === 'hive' ||
+    catalogType === 'biglake' ||
+    catalogType === 'nessie';
 
   const systemInstructions = resolveSystemInstructions(node);
 
@@ -298,14 +304,28 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         id="icebergSourceCatalogType"
         name="catalogType"
         label="Catalog Type"
-        tooltip="Iceberg catalog implementation type (biglake, rest, hive, hadoop, glue, nessie, bigquery)."
+        tooltip="Iceberg catalog implementation type (biglake, rest, hive, hadoop, glue, nessie, or bigquery)."
         value={catalogType}
         options={ICEBERG_CATALOG_TYPES}
         onChange={handleChange}
         helperText={
-          <span>
-            Catalog implementation type configuring table metadata lookup. Defaults to <code>hadoop</code>.
-          </span>
+          catalogType === 'glue' ? (
+            <span>
+              Uses AWS Glue Data Catalog (<code>GlueCatalog</code>) with <code>S3FileIO</code> for S3 warehouses.
+            </span>
+          ) : catalogType === 'bigquery' ? (
+            <span>
+              Uses BigQuery Metastore (<code>BigQueryMetastoreCatalog</code>) with <code>GCSFileIO</code> for Cloud Storage warehouses.
+            </span>
+          ) : catalogType === 'nessie' ? (
+            <span>
+              Uses Project Nessie Catalog (<code>NessieCatalog</code>) with branch and tag version references.
+            </span>
+          ) : (
+            <span>
+              Catalog implementation type configuring table metadata lookup. Defaults to <code>hadoop</code>.
+            </span>
+          )
         }
       />
 
@@ -328,22 +348,34 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
         }
       />
 
-      {/* Conditional Catalog URI (Shown for REST, BigLake, and Hive metastore catalogs) */}
+      {/* Conditional Catalog URI (Shown for BigLake, REST, Hive, and Nessie catalogs) */}
       {showCatalogUri && (
         <PropertyField
           id="icebergSourceCatalogUri"
           name="catalogUri"
           label="Catalog URI"
-          tooltip="Endpoint URI for the Iceberg REST catalog or Hive Metastore (e.g. https://biglake.googleapis.com/iceberg/v1beta/restcatalog or thrift://metastore:9083)."
+          tooltip="Endpoint URI for BigLake REST, Iceberg REST, Hive Metastore, or Project Nessie (for example https://biglake.googleapis.com/iceberg/v1beta/restcatalog, thrift://metastore:9083, or http://nessie:19120/api/v1)."
           value={catalogUri}
           onChange={handleChange}
-          placeholder={catalogType === 'hive' ? 'thrift://metastore:9083' : 'http://rest-catalog:8181'}
+          placeholder={
+            catalogType === 'hive'
+              ? 'thrift://metastore:9083'
+              : catalogType === 'nessie'
+                ? 'http://nessie:19120/api/v1'
+                : catalogType === 'biglake'
+                  ? 'https://biglake.googleapis.com/iceberg/v1beta/restcatalog'
+                  : 'http://rest-catalog:8181'
+          }
           mono={true}
           helperText={
             <span className="text-[11px] text-[var(--vscode-text-muted)]">
               {catalogType === 'hive'
                 ? 'Thrift URI for Hive Metastore (HMS).'
-                : 'HTTP/HTTPS endpoint for Iceberg REST Catalog server.'}
+                : catalogType === 'nessie'
+                  ? 'HTTP or HTTPS endpoint for Project Nessie API server (for example http://nessie:19120/api/v1).'
+                  : catalogType === 'biglake'
+                    ? 'HTTPS endpoint for BigLake Iceberg REST Catalog.'
+                    : 'HTTP/HTTPS endpoint for Iceberg REST Catalog server.'}
             </span>
           }
         />
@@ -503,7 +535,7 @@ export const IcebergIOSourceProperties: React.FC<IcebergIOSourcePropertiesProps>
           tooltip="Key=value pairs (one per line) passed to Spark Iceberg reader and catalog configuration (e.g. io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO)."
           value={configProperties}
           onChange={handleChange}
-          placeholder="io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO&#10;s3.endpoint=https://..."
+          placeholder={'io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO\ns3.endpoint=https://...'}
           rows={3}
           mono={true}
           helperText={

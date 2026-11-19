@@ -122,6 +122,8 @@ const RedisIOSourceProperties = lazyForm(() => import('../properties/source/Redi
 const ElasticsearchIOSourceProperties = lazyForm(() => import('../properties/source/ElasticsearchIO').then((m) => m.ElasticsearchIOSourceProperties));
 const Neo4jIOSourceProperties = lazyForm(() => import('../properties/source/Neo4jIO').then((m) => m.Neo4jIOSourceProperties));
 const CreateProperties = lazyForm(() => import('../properties/source/CreateIO').then((m) => m.CreateProperties));
+const RestApiSourceProperties = lazyForm(() => import('../properties/source/RestApiSource').then((m) => m.RestApiSourceProperties));
+const SftpSourceProperties = lazyForm(() => import('../properties/source/SftpSource').then((m) => m.SftpSourceProperties));
 
 // Phase 6 — Sink Property Forms (SNK1-SNK37)
 const KafkaIOSinkProperties = lazyForm(() => import('../properties/sink/KafkaIO').then((m) => m.KafkaIOSinkProperties));
@@ -161,6 +163,7 @@ const Neo4jIOSinkProperties = lazyForm(() => import('../properties/sink/Neo4jIO'
 const ConsoleSinkProperties = lazyForm(() => import('../properties/sink/ConsoleSink').then((m) => m.ConsoleSinkProperties));
 const MemorySinkProperties = lazyForm(() => import('../properties/sink/MemorySink').then((m) => m.MemorySinkProperties));
 const ForeachBatchSinkProperties = lazyForm(() => import('../properties/sink/ForeachBatchSink').then((m) => m.ForeachBatchSinkProperties));
+const VectorStoreSinkProperties = lazyForm(() => import('../properties/sink/VectorStoreSink').then((m) => m.VectorStoreSinkProperties));
 
 // Phase 7 — Step Property Forms (OP1-OP29 + legacy Beam step aliases)
 const SelectProperties = lazyForm(() => import('../properties/step/Select').then((m) => m.SelectProperties));
@@ -174,7 +177,10 @@ const OrderByProperties = lazyForm(() => import('../properties/step/OrderBy').th
 const LimitSampleProperties = lazyForm(() => import('../properties/step/LimitSample').then((m) => m.LimitSampleProperties));
 const ConditionalSplitProperties = lazyForm(() => import('../properties/step/ConditionalSplit').then((m) => m.ConditionalSplitProperties));
 const DataQualityAssertProperties = lazyForm(() => import('../properties/step/DataQualityAssert').then((m) => m.DataQualityAssertProperties));
+const EnforceSchemaAndCastProperties = lazyForm(() => import('../properties/step/EnforceSchemaAndCast').then((m) => m.EnforceSchemaAndCastProperties));
+const NestedStructArrayOpsProperties = lazyForm(() => import('../properties/step/NestedStructArrayOps').then((m) => m.NestedStructArrayOpsProperties));
 const JoinProperties = lazyForm(() => import('../properties/step/Join').then((m) => m.JoinProperties));
+const MergeCdcScdProperties = lazyForm(() => import('../properties/step/MergeCdcScd').then((m) => m.MergeCdcScdProperties));
 const UnionByNameProperties = lazyForm(() => import('../properties/step/UnionByName').then((m) => m.UnionByNameProperties));
 const SetOperationProperties = lazyForm(() => import('../properties/step/SetOperation').then((m) => m.SetOperationProperties));
 const GroupByAggProperties = lazyForm(() => import('../properties/step/GroupByAgg').then((m) => m.GroupByAggProperties));
@@ -192,6 +198,7 @@ const RepartitionCoalesceProperties = lazyForm(() => import('../properties/step/
 const CachePersistProperties = lazyForm(() => import('../properties/step/CachePersist').then((m) => m.CachePersistProperties));
 const FeaturePrepProperties = lazyForm(() => import('../properties/step/FeaturePrep').then((m) => m.FeaturePrepProperties));
 const SparkMlAndVertexAiProperties = lazyForm(() => import('../properties/step/SparkMlAndVertexAi').then((m) => m.SparkMlAndVertexAiProperties));
+const TextChunkAndEmbedProperties = lazyForm(() => import('../properties/step/TextChunkAndEmbed').then((m) => m.TextChunkAndEmbedProperties));
 const ParseMessageProperties = lazyForm(() => import('../properties/step/ParseMessage').then((m) => m.ParseMessageProperties));
 const AggregationProperties = lazyForm(() => import('../properties/step/Aggregations').then((m) => m.AggregationProperties));
 
@@ -282,6 +289,10 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'Neo4jSource': Neo4jIOSourceProperties,
   'SOURCE:CreateDataFrameSource': CreateProperties,
   'CreateDataFrameSource': CreateProperties,
+  'SOURCE:RestApiSource': RestApiSourceProperties,
+  'RestApiSource': RestApiSourceProperties,
+  'SOURCE:SftpSource': SftpSourceProperties,
+  'SftpSource': SftpSourceProperties,
 
   // Legacy Source aliases (backwards compatibility)
   'SOURCE:PubSubIO': PubSubProperties,
@@ -396,6 +407,8 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'ElasticsearchSink': ElasticsearchIOSinkProperties,
   'SINK:Neo4jSink': Neo4jIOSinkProperties,
   'Neo4jSink': Neo4jIOSinkProperties,
+  'SINK:VectorStoreSink': VectorStoreSinkProperties,
+  'VectorStoreSink': VectorStoreSinkProperties,
   'SINK:ConsoleSink': ConsoleSinkProperties,
   'ConsoleSink': ConsoleSinkProperties,
   'SINK:MemorySink': MemorySinkProperties,
@@ -475,8 +488,14 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'ConditionalSplit': ConditionalSplitProperties,
   'STEP:DataQualityAssert': DataQualityAssertProperties,
   'DataQualityAssert': DataQualityAssertProperties,
+  'STEP:EnforceSchemaAndCast': EnforceSchemaAndCastProperties,
+  'EnforceSchemaAndCast': EnforceSchemaAndCastProperties,
+  'STEP:NestedStructArrayOps': NestedStructArrayOpsProperties,
+  'NestedStructArrayOps': NestedStructArrayOpsProperties,
   'STEP:Join': JoinProperties,
   'Join': JoinProperties,
+  'STEP:MergeCdcScd': MergeCdcScdProperties,
+  'MergeCdcScd': MergeCdcScdProperties,
   'STEP:UnionByName': UnionByNameProperties,
   'UnionByName': UnionByNameProperties,
   'STEP:SetOperation': SetOperationProperties,
@@ -516,6 +535,8 @@ export const PROPERTY_FORM_REGISTRY: Record<string, PropertyFormComponent> = {
   'SparkMlInference': SparkMlAndVertexAiProperties,
   'STEP:VertexAiInference': SparkMlAndVertexAiProperties,
   'VertexAiInference': SparkMlAndVertexAiProperties,
+  'STEP:TextChunkAndEmbed': TextChunkAndEmbedProperties,
+  'TextChunkAndEmbed': TextChunkAndEmbedProperties,
 
   // Legacy Step & Aggregation aliases (backwards compatibility)
   'STEP:ParDo': AggregationProperties,

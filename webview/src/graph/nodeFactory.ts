@@ -96,7 +96,9 @@ export function createNodesForPaletteItem(
             id: `e-${sourceNode.id}-${newNode.id}`,
             source: sourceNode.id,
             target: newNode.id,
-            ...(item.sparkTransform === 'Join' ? { targetHandle: 'left' } : {}),
+            ...(item.sparkTransform === 'Join' || item.sparkTransform === 'MergeCdcScd'
+              ? { targetHandle: 'left' }
+              : {}),
           });
         }
       }

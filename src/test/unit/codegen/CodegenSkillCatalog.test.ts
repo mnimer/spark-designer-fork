@@ -436,7 +436,7 @@ describe('getCodegenSkillCatalog', () => {
         const ioSkills = catalog.all().filter((s) => s.kind === 'io');
         expect(ioSkills.length).toBeGreaterThanOrEqual(41);
         const transformSkills = catalog.all().filter((s) => s.kind === 'transform');
-        expect(transformSkills).toHaveLength(29);
+        expect(transformSkills).toHaveLength(33);
         for (const stepTransform of [
             'Select',
             'Filter',
@@ -449,7 +449,10 @@ describe('getCodegenSkillCatalog', () => {
             'LimitSample',
             'ConditionalSplit',
             'DataQualityAssert',
+            'EnforceSchemaAndCast',
+            'NestedStructArrayOps',
             'Join',
+            'MergeCdcScd',
             'UnionByName',
             'SetOperation',
             'GroupByAgg',
@@ -469,6 +472,7 @@ describe('getCodegenSkillCatalog', () => {
             'SparkMlAndVertexAi',
             'SparkMlInference',
             'VertexAiInference',
+            'TextChunkAndEmbed',
             'ParseMessage',
         ]) {
             expect(catalog.resolveTransform(stepTransform).known, `Unresolved step transform: ${stepTransform}`).toBe(true);

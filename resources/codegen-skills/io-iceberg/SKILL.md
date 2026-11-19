@@ -1,6 +1,6 @@
 ---
 name: io-iceberg
-description: Read and write batch or streaming Apache Iceberg tables in PySpark 4.x across BigLake REST, REST, Hive, and Hadoop catalogs.
+description: Read and write batch or streaming Apache Iceberg tables in PySpark 4.x across BigLake REST, REST, Hive, Hadoop, AWS Glue, Project Nessie, and BigQuery Metastore catalogs.
 metadata:
   kind: io
   usedBy: [generator, reviewer]
@@ -13,6 +13,8 @@ metadata:
     - https://iceberg.apache.org/docs/latest/spark-queries/
     - https://iceberg.apache.org/docs/latest/spark-writes/
     - https://iceberg.apache.org/docs/latest/spark-structured-streaming/
+    - https://iceberg.apache.org/docs/latest/aws/
+    - https://projectnessie.org/iceberg/spark/
     - https://cloud.google.com/biglake/docs/apache-iceberg-in-biglake
   validated: true
 ---
@@ -27,7 +29,7 @@ Use these rules when generating PySpark {{spark_version}} code for Apache Iceber
 - **Local Spark (`run_local.sh` only)**: If running locally, pass `--packages org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1` along with the required cloud storage connector coordinate.
 - **Spark Session Extensions**: Configure `spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions` on the session so `MERGE INTO` and Iceberg DDL commands parse cleanly.
 
-## 2. Catalog Configuration (`BigLake`, `REST`, `Hive`, `Hadoop`)
+## 2. Catalog Configuration (`BigLake`, `REST`, `Hive`, `Hadoop`, `Glue`, `Nessie`, `BigQuery`)
 
 Configure the target catalog `<catalog>` (`catalogName`, default `"lakehouse"` or `"biglake"`) on the `SparkSession` according to `catalogType`:
 - **BigLake Metastore / BigLake REST Catalog (`catalogType == "biglake"`)**:
@@ -41,6 +43,13 @@ Configure the target catalog `<catalog>` (`catalogName`, default `"lakehouse"` o
   - Set `spark.sql.catalog.<catalog>=org.apache.iceberg.spark.SparkCatalog`, `spark.sql.catalog.<catalog>.type=hive`, and `spark.sql.catalog.<catalog>.uri=thrift://<metastore-host>:9083`.
 - **Hadoop File-System Catalog (`catalogType == "hadoop"`)**:
   - Set `spark.sql.catalog.<catalog>=org.apache.iceberg.spark.SparkCatalog`, `spark.sql.catalog.<catalog>.type=hadoop`, and `spark.sql.catalog.<catalog>.warehouse=<warehouse_uri>`.
+- **AWS Glue Data Catalog (`catalogType == "glue"`)**:
+  - Set `spark.sql.catalog.<catalog>=org.apache.iceberg.spark.SparkCatalog`, `spark.sql.catalog.<catalog>.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog`, `spark.sql.catalog.<catalog>.io-impl=org.apache.iceberg.aws.s3.S3FileIO`, and `spark.sql.catalog.<catalog>.warehouse=<s3_or_s3a_warehouse_uri>`.
+- **Project Nessie Catalog (`catalogType == "nessie"`)**:
+  - Set `spark.sql.catalog.<catalog>=org.apache.iceberg.spark.SparkCatalog`, `spark.sql.catalog.<catalog>.catalog-impl=org.apache.iceberg.nessie.NessieCatalog`, `spark.sql.catalog.<catalog>.uri=<nessie_uri>` (for example `http://nessie:19120/api/v1`), `spark.sql.catalog.<catalog>.ref=main`, and `spark.sql.catalog.<catalog>.warehouse=<warehouse_uri>`.
+  - If `authMode == "secretManager"` and `secretName` is set, set `spark.sql.catalog.<catalog>.authentication.type=BEARER` and resolve `spark.sql.catalog.<catalog>.authentication.token` once on the driver via Secret Manager.
+- **BigQuery Metastore Catalog (`catalogType == "bigquery"`)**:
+  - Set `spark.sql.catalog.<catalog>=org.apache.iceberg.spark.SparkCatalog`, `spark.sql.catalog.<catalog>.catalog-impl=org.apache.iceberg.gcp.bigquery.BigQueryMetastoreCatalog`, `spark.sql.catalog.<catalog>.gcp_project=<project_id>`, `spark.sql.catalog.<catalog>.gcp_location=<region>`, `spark.sql.catalog.<catalog>.io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO`, and `spark.sql.catalog.<catalog>.warehouse=gs://<bucket>/<warehouse>`.
 
 ## 3. Reading Tables (`IcebergSource`)
 
@@ -69,6 +78,32 @@ Use Spark's `DataFrameWriterV2` API (`df.writeTo(table_id).using("iceberg")`) ac
 - **`merge`**: Register the incoming DataFrame as a temporary view (`df.createOrReplaceTempView(staging_view)`) and execute an atomic Iceberg SQL upsert:
   - Build the `ON` predicate from `mergeCondition` when provided, or join each column in `mergeKeys` (`target.<col> = source.<col>`).
   - Run `spark.sql(f"MERGE INTO {table_id} AS target USING {staging_view} AS source ON {on_clause} WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")`.
+
+### CDC & SCD Type 1 / Type 2 Merges (`MergeCdcScd`)
+When an upstream `MergeCdcScd` step feeds `IcebergSink` (`writeOperation == "merge"`), the staged DataFrame includes `_scd_action` (`actionColumn`) and, for SCD Type 2, nullable `_merge_<key>` columns. Exclude internal staging columns (`_scd_action` and `_merge_*`) from target table column assignments:
+- **SCD Type 1 (`scdType == "scd1"`)**:
+  - Match target and staged source rows on `keyColumns` (`ON target.<k> = source.<k>`).
+  - Execute a single atomic `MERGE INTO` statement handling deletes, updates, and inserts while omitting `_scd_action`:
+    ```sql
+    MERGE INTO <table_id> AS target
+    USING <staging_view> AS source
+    ON target.<k> = source.<k>
+    WHEN MATCHED AND source._scd_action = 'DELETE' THEN DELETE
+    WHEN MATCHED AND source._scd_action = 'UPDATE' THEN UPDATE SET target.<col> = source.<col>, ...
+    WHEN NOT MATCHED AND source._scd_action = 'INSERT' THEN INSERT (<cols>) VALUES (source.<cols>)
+    ```
+- **SCD Type 2 (`scdType == "scd2"`)**:
+  - Match only active target rows via the nullable `_merge_<k>` columns (`ON target.<k> = source._merge_<k> AND target.is_current = true`). Staged `'INSERT'` rows carry `NULL` in `_merge_<k>`, so they bypass `WHEN MATCHED` and insert cleanly in the same atomic pass.
+  - Close expired or deleted active versions and insert new active versions while omitting `_scd_action` and `_merge_*` columns from `INSERT`:
+    ```sql
+    MERGE INTO <table_id> AS target
+    USING <staging_view> AS source
+    ON target.<k> = source._merge_<k> AND target.is_current = true
+    WHEN MATCHED AND source._scd_action IN ('EXPIRE', 'DELETE')
+      THEN UPDATE SET target.is_current = false, target.effective_to = source.effective_from
+    WHEN NOT MATCHED AND source._scd_action = 'INSERT'
+      THEN INSERT (<business_and_scd2_cols>) VALUES (source.<business_and_scd2_cols>)
+    ```
 
 ### Streaming Writes (`DataStreamWriter`)
 - **Native Append Streaming (`ExecutionPlan.streamingSinkGroups` `mode == "native"` and `writeOperation != "merge"`)**:

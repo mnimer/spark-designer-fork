@@ -847,3 +847,102 @@ describe('validateDagTopology — missing and malformed checkpoint boundaries (T
         expect(Object.keys(res.nodeErrors ?? {}).sort()).toEqual(['s1', 's2']);
     });
 });
+
+describe('validateDagTopology — MergeCdcScd two-input handle and static target rules (EXT4)', () => {
+    const cdcBatch: DagNode = { id: 'cdc', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } };
+    const cdcStream: DagNode = { id: 'cdc_stream', data: { type: 'SOURCE', spark_transform: 'KafkaSource' } };
+    const targetSnap: DagNode = { id: 'target_snap', data: { type: 'SOURCE', spark_transform: 'IcebergSource' } };
+    const targetStream: DagNode = {
+        id: 'target_stream',
+        data: { type: 'SOURCE', spark_transform: 'IcebergSource', properties: { readMode: 'streaming' } },
+    };
+    const mergeNode: DagNode = {
+        id: 'merge',
+        data: { label: 'Merge CDC', type: 'STEP', spark_transform: 'MergeCdcScd' },
+    };
+    const sink: DagNode = {
+        id: 'sink',
+        data: {
+            type: 'SINK',
+            spark_transform: 'IcebergSink',
+            properties: { checkpointLocation: 'gs://ckpt/merge' },
+        },
+    };
+
+    it('accepts valid batch-batch and stream-static MergeCdcScd graphs with explicit left and right handles', () => {
+        const batchRes = validateDagTopology(
+            [cdcBatch, targetSnap, mergeNode, sink],
+            [
+                { id: 'e1', source: 'cdc', target: 'merge', targetHandle: 'left' },
+                { id: 'e2', source: 'target_snap', target: 'merge', targetHandle: 'right' },
+                { id: 'e3', source: 'merge', target: 'sink' },
+            ]
+        );
+        expect(batchRes.isValid).toBe(true);
+        expect(batchRes.errors).toEqual([]);
+
+        const streamStaticRes = validateDagTopology(
+            [cdcStream, targetSnap, mergeNode, sink],
+            [
+                { id: 'e1', source: 'cdc_stream', target: 'merge', targetHandle: 'left' },
+                { id: 'e2', source: 'target_snap', target: 'merge', targetHandle: 'right' },
+                { id: 'e3', source: 'merge', target: 'sink' },
+            ]
+        );
+        expect(streamStaticRes.isValid).toBe(true);
+        expect(streamStaticRes.errors).toEqual([]);
+    });
+
+    it('rejects untyped, missing, or duplicate handles on MergeCdcScd', () => {
+        const missingRight = validateDagTopology(
+            [cdcBatch, mergeNode, sink],
+            [
+                { id: 'e1', source: 'cdc', target: 'merge', targetHandle: 'left' },
+                { id: 'e3', source: 'merge', target: 'sink' },
+            ]
+        );
+        expect(missingRight.isValid).toBe(false);
+        expect(missingRight.missingUpstreamNodeIds).toEqual(['merge']);
+        expect(missingRight.errors[0]).toContain('missing "right"');
+
+        const untyped = validateDagTopology(
+            [cdcBatch, targetSnap, mergeNode, sink],
+            [
+                { id: 'e1', source: 'cdc', target: 'merge' },
+                { id: 'e2', source: 'target_snap', target: 'merge', targetHandle: 'right' },
+                { id: 'e3', source: 'merge', target: 'sink' },
+            ]
+        );
+        expect(untyped.isValid).toBe(false);
+        expect(untyped.invalidUpstreamNodeIds).toEqual(['merge']);
+        expect(untyped.errors[0]).toContain('explicit "left" and "right" handles');
+
+        const extraSrc: DagNode = { id: 'extra', data: { type: 'SOURCE', spark_transform: 'CsvSource' } };
+        const duplicateLeft = validateDagTopology(
+            [cdcBatch, extraSrc, targetSnap, mergeNode, sink],
+            [
+                { id: 'e1', source: 'cdc', target: 'merge', targetHandle: 'left' },
+                { id: 'e1b', source: 'extra', target: 'merge', targetHandle: 'left' },
+                { id: 'e2', source: 'target_snap', target: 'merge', targetHandle: 'right' },
+                { id: 'e3', source: 'merge', target: 'sink' },
+            ]
+        );
+        expect(duplicateLeft.isValid).toBe(false);
+        expect(duplicateLeft.invalidUpstreamNodeIds).toEqual(['merge']);
+        expect(duplicateLeft.errors[0]).toContain('accepts at most 1 incoming edge per handle');
+    });
+
+    it('rejects MergeCdcScd when the right target table snapshot input is streaming', () => {
+        const res = validateDagTopology(
+            [cdcStream, targetStream, mergeNode, sink],
+            [
+                { id: 'e1', source: 'cdc_stream', target: 'merge', targetHandle: 'left' },
+                { id: 'e2', source: 'target_stream', target: 'merge', targetHandle: 'right' },
+                { id: 'e3', source: 'merge', target: 'sink' },
+            ]
+        );
+        expect(res.isValid).toBe(false);
+        expect(res.invalidUpstreamNodeIds).toEqual(['merge']);
+        expect(res.errors[0]).toContain('static batch target table snapshot on the "right" handle');
+    });
+});

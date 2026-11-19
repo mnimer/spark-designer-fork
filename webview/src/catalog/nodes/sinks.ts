@@ -45,13 +45,14 @@ export const SINK_NODES: NodeDefinition[] = [
   { label: 'ClickHouse', type: 'SINK', iconName: 'BarChart', sparkTransform: 'ClickHouseSink', badge: 'OLAP', description: 'Bulk-insert large row batches into ClickHouse MergeTree analytical tables', category: 'Warehouse & Database Sinks', streamingSinkMode: 'foreachBatch', inputArity: 1 },
   { label: 'SingleStore', type: 'SINK', iconName: 'Database', sparkTransform: 'SingleStoreSink', badge: 'SQL', description: 'Bulk-load or upsert DataFrame rows into distributed SingleStoreDB tables', category: 'Warehouse & Database Sinks', streamingSinkMode: 'foreachBatch', inputArity: 1 },
 
-  // NoSQL & Graph Sinks (SNK29-SNK34)
+  // NoSQL & Graph Sinks (SNK29-SNK34 + EXT3)
   { label: 'MongoDB', type: 'SINK', iconName: 'Database', sparkTransform: 'MongoDbSink', badge: 'NoSQL', description: 'Insert, replace, or upsert BSON documents into a MongoDB collection', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'native', inputArity: 1 },
   { label: 'Cloud Firestore', type: 'SINK', iconName: 'Database', sparkTransform: 'FirestoreSink', badge: 'GCP NoSQL', description: 'Commit batched document upserts, updates, or deletes to Google Cloud Firestore', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'foreachBatch', inputArity: 1 },
   { label: 'Apache Cassandra', type: 'SINK', iconName: 'Database', sparkTransform: 'CassandraSink', badge: 'NoSQL', description: 'Write wide-column rows into Apache Cassandra keyspaces with optional TTL', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'native', inputArity: 1 },
   { label: 'Redis', type: 'SINK', iconName: 'Zap', sparkTransform: 'RedisSink', badge: 'Cache', description: 'Execute pipelined writes to Redis hashes, strings, JSON keys, or streams', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'foreachBatch', inputArity: 1 },
   { label: 'Elasticsearch', type: 'SINK', iconName: 'Layers', sparkTransform: 'ElasticsearchSink', badge: 'Search', description: 'Bulk-index or upsert JSON documents into Elasticsearch indices', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'native', inputArity: 1 },
   { label: 'Neo4j', type: 'SINK', iconName: 'GitMerge', sparkTransform: 'Neo4jSink', badge: 'Graph', description: 'Merge or write graph nodes, relationships, or Cypher queries into Neo4j', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'native', inputArity: 1 },
+  { label: 'Vector Store', type: 'SINK', iconName: 'Cpu', sparkTransform: 'VectorStoreSink', badge: 'Vector / RAG', description: 'Upsert embedding vectors into AlloyDB pgvector or Vertex AI Vector Search indices', category: 'NoSQL & Graph Sinks', streamingSinkMode: 'foreachBatch', inputArity: 1 },
 
   // Debug & Custom Sinks (SNK35-SNK37)
   { label: 'Console', type: 'SINK', iconName: 'Terminal', sparkTransform: 'ConsoleSink', badge: 'Debug', description: 'Emit bounded structured logs in batch mode or console output in streaming mode', category: 'Debug & Custom Sinks', streamingSinkMode: 'native', inputArity: 1 },

@@ -187,6 +187,9 @@ export const PYTHON_DATASOURCE_TRANSFORMS: ReadonlySet<string> = new Set<string>
     'RedisSource',
     'RedisSink',
     'ForeachBatchSink',
+    'RestApiSource',
+    'SftpSource',
+    'VectorStoreSink',
 ]);
 
 /**

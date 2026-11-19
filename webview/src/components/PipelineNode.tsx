@@ -19,6 +19,7 @@ import {
   isConditionalSplitNode,
   isErrorCapableStep,
   isJoinNode,
+  isMergeCdcScdNode,
   type ReadMode,
 } from '../utils/sparkDagRules';
 
@@ -62,6 +63,8 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
   const dagNode = { id: id || '', data };
   const showTargetHandle = !isSource;
   const isJoin = isStep && isJoinNode(dagNode);
+  const isMergeCdcScd = isStep && isMergeCdcScdNode(dagNode);
+  const isDualInput = isJoin || isMergeCdcScd;
   const isConditionalSplit = isStep && isConditionalSplitNode(dagNode);
   const splitHandles = isConditionalSplit ? getConditionalSplitHandles(dagNode) : [];
   const splitMinHeight = isConditionalSplit
@@ -217,12 +220,12 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
       className={`relative bg-[var(--vscode-node-bg,#1E202A)] border ${getNodeBorderClasses()} rounded-md shadow-xl p-3 ${
         isConditionalSplit ? 'pr-16 min-w-[224px]' : 'min-w-[180px]'
       } flex items-center gap-3 ${
-        isJoin ? 'min-h-[64px]' : ''
+        isDualInput ? 'min-h-[64px]' : ''
       } text-left group/node transition-colors`}
       onDoubleClick={handleCardDoubleClick}
       data-testid={`pipeline-node-${id || 'node'}`}
     >
-      {showTargetHandle && isJoin && (
+      {showTargetHandle && isDualInput && (
         <>
           <Handle
             type="target"
@@ -272,7 +275,7 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
           </span>
         </>
       )}
-      {showTargetHandle && !isJoin && (
+      {showTargetHandle && !isDualInput && (
         <Handle
           type="target"
           position={Position.Left}

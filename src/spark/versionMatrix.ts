@@ -331,6 +331,18 @@ const PYTHON_CONNECTOR_BY_TRANSFORM: Readonly<Record<string, PythonConnectorSpec
     pipPackage: 'requests',
     notes: 'Invokes custom Python foreachBatch logic or batched HTTP webhooks with requests.',
   },
+  RestApiSource: {
+    mechanism: 'python_datasource',
+    pipPackage: 'requests',
+    pythonDataSourceClass: 'RestApiDataSource',
+    notes: 'Reads HTTP and REST API endpoints with requests through Spark 4.0 Python DataSourceReader.',
+  },
+  SftpSource: {
+    mechanism: 'python_datasource',
+    pipPackage: 'paramiko',
+    pythonDataSourceClass: 'SftpDataSource',
+    notes: 'Reads remote files over SFTP with paramiko through Spark 4.0 Python DataSourceReader.',
+  },
 };
 
 const BUILTIN_FILE_FORMAT_TRANSFORMS = new Set<string>([
@@ -699,6 +711,52 @@ function resolveJdbcFamilyConnector(
 }
 
 /**
+ * Resolves AlloyDB pgvector and Vertex AI Vector Search sink dependencies.
+ *
+ * @param cleanTransform Normalized transform name.
+ * @param properties Optional node property bag.
+ * @returns Resolved connector descriptor for VectorStoreSink nodes.
+ */
+function resolveVectorStoreConnector(
+  cleanTransform: string,
+  properties?: Record<string, unknown>
+): ConnectorResolution {
+  const backend = getNonEmptyString(properties, 'backend')?.toLowerCase();
+  if (backend === 'vertex_vector_search') {
+    return {
+      sparkTransform: cleanTransform,
+      mechanism: 'foreach_batch_sdk',
+      gcsJarUris: [],
+      mavenCoordinates: [],
+      pipPackages: ['google-cloud-aiplatform'],
+      sparkProperties: {},
+      notes: 'Upserts embedding datapoints or exports JSON Lines to Vertex AI Vector Search with google-cloud-aiplatform.',
+    };
+  }
+
+  const gcsJarUris: string[] = [];
+  const seenJars = new Set<string>();
+  for (const key of ['driverJarUri', 'socketFactoryJarUri']) {
+    const uri = getNonEmptyString(properties, key);
+    if (uri) {
+      pushUnique(gcsJarUris, seenJars, [uri]);
+    }
+  }
+
+  return {
+    sparkTransform: cleanTransform,
+    mechanism: 'foreach_batch_sdk',
+    gcsJarUris,
+    mavenCoordinates: [],
+    pipPackages: ['psycopg[binary]', 'google-cloud-alloydb-connector'],
+    sparkProperties: {
+      'dataproc.artifacts.remove': 'conscrypt',
+    },
+    notes: 'Upserts pgvector embeddings into AlloyDB with psycopg and google-cloud-alloydb-connector and removes Conscrypt.',
+  };
+}
+
+/**
  * Resolves Python ML and Vertex AI packages for SparkMlAndVertexAi step nodes.
  *
  * @param cleanTransform Normalized transform name.
@@ -1020,6 +1078,10 @@ export function resolveConnectorForRuntime(
   }
 
   // 5. Python 4.0 DataSource API and foreachBatch SDK connectors.
+  if (cleanTransform === 'VectorStoreSink') {
+    return resolveVectorStoreConnector(cleanTransform, properties);
+  }
+
   const mappedPythonTransform = mapLegacyPythonTransform(cleanTransform, prefixKind);
   const pythonSpec = PYTHON_CONNECTOR_BY_TRANSFORM[mappedPythonTransform];
   if (pythonSpec) {
@@ -1037,7 +1099,31 @@ export function resolveConnectorForRuntime(
     };
   }
 
-  // 6. Spark ML and Vertex AI step connectors.
+  // 6. Spark ML, Vertex AI, and RAG text embedding step connectors.
+  if (cleanTransform === 'TextChunkAndEmbed') {
+    const mode = getNonEmptyString(properties, 'mode')?.toLowerCase();
+    if (mode === 'chunk_only') {
+      return {
+        sparkTransform: cleanTransform,
+        mechanism: 'builtin',
+        gcsJarUris: [],
+        mavenCoordinates: [],
+        pipPackages: [],
+        sparkProperties: {},
+        notes: 'Splits text chunks with pure Python inside mapInPandas without external embedding SDK calls.',
+      };
+    }
+    return {
+      sparkTransform: cleanTransform,
+      mechanism: 'foreach_batch_sdk',
+      gcsJarUris: [],
+      mavenCoordinates: [],
+      pipPackages: ['google-genai'],
+      sparkProperties: {},
+      notes: 'Generates batched Vertex AI text embeddings with google-genai inside mapInPandas.',
+    };
+  }
+
   if (
     cleanTransform === 'SparkMlAndVertexAi' ||
     cleanTransform === 'SparkMlInference' ||

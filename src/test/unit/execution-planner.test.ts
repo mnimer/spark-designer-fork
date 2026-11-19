@@ -292,6 +292,72 @@ describe('executionPlanner core (A10)', () => {
                 },
             ]);
         });
+
+        it('emits a DLQ split point and batch dlq_split cache directive on EnforceSchemaAndCast (EXT5)', () => {
+            const nodes = [
+                makeNode('src', 'SOURCE', 'CsvSource'),
+                makeNode('contract', 'STEP', 'EnforceSchemaAndCast', {
+                    targetSchemaDDL: 'order_id BIGINT, amount DECIMAL(12,2)',
+                    castMode: 'try_cast_dlq',
+                }),
+                makeNode('valid_sink', 'SINK', 'IcebergSink'),
+                makeNode('dlq_sink', 'SINK', 'JsonSink'),
+            ];
+            const edges = [
+                makeEdge('src', 'contract'),
+                makeEdge('contract', 'valid_sink', 'valid'),
+                makeEdge('contract', 'dlq_sink', 'error'),
+            ];
+
+            const plan = buildExecutionPlan(nodes, edges);
+            expect(plan.dlqSplitPoints).toEqual([
+                {
+                    nodeId: 'contract',
+                    sparkTransform: 'EnforceSchemaAndCast',
+                    mechanism: 'try_except_error_col',
+                    validTargetIds: ['valid_sink'],
+                    errorTargetIds: ['dlq_sink'],
+                },
+            ]);
+            expect(plan.cacheDirectives).toEqual([
+                {
+                    nodeId: 'contract',
+                    reason: 'dlq_split',
+                    outDegree: 2,
+                    unpersistAfterNodeIds: ['dlq_sink'],
+                },
+            ]);
+        });
+
+        it('emits a DLQ split point and resolves google-genai pip package on TextChunkAndEmbed (EXT7)', () => {
+            const nodes = [
+                makeNode('src', 'SOURCE', 'ParquetSource'),
+                makeNode('rag', 'STEP', 'TextChunkAndEmbed', {
+                    mode: 'chunk_and_embed',
+                }),
+                makeNode('vec_sink', 'SINK', 'VectorStoreSink'),
+                makeNode('dlq_sink', 'SINK', 'JsonSink'),
+            ];
+            const edges = [
+                makeEdge('src', 'rag'),
+                makeEdge('rag', 'vec_sink', 'valid'),
+                makeEdge('rag', 'dlq_sink', 'error'),
+            ];
+
+            const plan = buildExecutionPlan(nodes, edges);
+            expect(plan.dlqSplitPoints).toEqual([
+                {
+                    nodeId: 'rag',
+                    sparkTransform: 'TextChunkAndEmbed',
+                    mechanism: 'try_except_error_col',
+                    validTargetIds: ['vec_sink'],
+                    errorTargetIds: ['dlq_sink'],
+                },
+            ]);
+            expect(plan.runtimeArtifacts.pipPackages).toContain('google-genai');
+            expect(plan.runtimeArtifacts.pipPackages).toContain('psycopg[binary]');
+            expect(plan.runtimeArtifacts.pipPackages).toContain('google-cloud-alloydb-connector');
+        });
     });
 
     describe('ConditionalSplit rule branch resolution', () => {

@@ -7,7 +7,7 @@
  * Renders the property configuration panel for Apache Spark `IcebergSink` (`IcebergIO`) nodes.
  * Configures DataFrameWriterV2 (`df.writeTo(...).using("iceberg")`), SQL `MERGE INTO`, and
  * Structured Streaming (`.writeStream.format("iceberg")`) writes across BigLake REST, REST,
- * Hive, and Hadoop catalogs.
+ * Hive, Hadoop, AWS Glue, Project Nessie, and BigQuery Metastore catalogs.
  *
  * Architectural Decisions:
  * - Supports live BigLake Iceberg catalog discovery through `useAssetLoader('bigLakeCatalogs')`.
@@ -147,7 +147,10 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
     writeOperation === 'merge' && !mergeKeys.trim() && !mergeCondition.trim();
 
   const showCatalogUri =
-    catalogType === 'biglake' || catalogType === 'rest' || catalogType === 'hive';
+    catalogType === 'biglake' ||
+    catalogType === 'rest' ||
+    catalogType === 'hive' ||
+    catalogType === 'nessie';
 
   const systemInstructions = resolveSystemInstructions(node);
 
@@ -317,9 +320,23 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
         options={ICEBERG_CATALOG_TYPES}
         onChange={handleChange}
         helperText={
-          <span>
-            Catalog implementation configuring table metadata lookup. Defaults to <code>biglake</code>.
-          </span>
+          catalogType === 'glue' ? (
+            <span>
+              Uses AWS Glue Data Catalog (<code>GlueCatalog</code>) with <code>S3FileIO</code> for S3 warehouses.
+            </span>
+          ) : catalogType === 'bigquery' ? (
+            <span>
+              Uses BigQuery Metastore (<code>BigQueryMetastoreCatalog</code>) with <code>GCSFileIO</code> for Cloud Storage warehouses.
+            </span>
+          ) : catalogType === 'nessie' ? (
+            <span>
+              Uses Project Nessie Catalog (<code>NessieCatalog</code>) with branch and tag version references.
+            </span>
+          ) : (
+            <span>
+              Catalog implementation configuring table metadata lookup. Defaults to <code>biglake</code>.
+            </span>
+          )
         }
       />
 
@@ -348,22 +365,28 @@ export const IcebergIOSinkProperties: React.FC<IcebergIOSinkPropertiesProps> = (
           id="icebergSinkCatalogUri"
           name="catalogUri"
           label="Catalog URI"
-          tooltip="Endpoint URI for the BigLake REST catalog, Iceberg REST catalog, or Hive Metastore."
+          tooltip="Endpoint URI for BigLake REST, Iceberg REST, Hive Metastore, or Project Nessie."
           value={catalogUri}
           onChange={handleChange}
           placeholder={
             catalogType === 'hive'
               ? 'thrift://metastore:9083'
-              : catalogType === 'biglake'
-                ? 'https://biglake.googleapis.com/iceberg/v1beta/restcatalog'
-                : 'http://rest-catalog:8181'
+              : catalogType === 'nessie'
+                ? 'http://nessie:19120/api/v1'
+                : catalogType === 'biglake'
+                  ? 'https://biglake.googleapis.com/iceberg/v1beta/restcatalog'
+                  : 'http://rest-catalog:8181'
           }
           mono={true}
           helperText={
             <span className="text-[11px] text-[var(--vscode-text-muted)]">
               {catalogType === 'hive'
                 ? 'Thrift URI for Hive Metastore (HMS).'
-                : 'HTTP or HTTPS endpoint for the Iceberg REST Catalog server.'}
+                : catalogType === 'nessie'
+                  ? 'HTTP or HTTPS endpoint for Project Nessie API server (for example http://nessie:19120/api/v1).'
+                  : catalogType === 'biglake'
+                    ? 'HTTPS endpoint for BigLake Iceberg REST Catalog.'
+                    : 'HTTP or HTTPS endpoint for the Iceberg REST Catalog server.'}
             </span>
           }
         />

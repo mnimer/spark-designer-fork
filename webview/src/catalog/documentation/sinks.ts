@@ -210,6 +210,12 @@ const NEO4J_SINK_DOC: NodeDocMetadata = {
   docsUrl: 'https://neo4j.com/docs/spark/current/',
 };
 
+const VECTOR_STORE_SINK_DOC: NodeDocMetadata = {
+  title: 'Vector Store Sink (AlloyDB pgvector / Vertex AI Vector Search)',
+  description: 'Upserts batched vector embeddings and metadata into AlloyDB pgvector tables or Vertex AI Vector Search indices.',
+  docsUrl: 'https://cloud.google.com/alloydb/docs/ai/work-with-embeddings',
+};
+
 const CONSOLE_SINK_DOC: NodeDocMetadata = {
   title: 'Console Sink',
   description: 'Emits bounded structured log previews in batch mode or console micro-batches in streaming mode.',
@@ -301,6 +307,8 @@ export const SINK_DOCS: Record<string, NodeDocMetadata> = {
   'ElasticsearchSink': ELASTICSEARCH_SINK_DOC,
   'SINK:Neo4jSink': NEO4J_SINK_DOC,
   'Neo4jSink': NEO4J_SINK_DOC,
+  'SINK:VectorStoreSink': VECTOR_STORE_SINK_DOC,
+  'VectorStoreSink': VECTOR_STORE_SINK_DOC,
   'SINK:ConsoleSink': CONSOLE_SINK_DOC,
   'ConsoleSink': CONSOLE_SINK_DOC,
   'SINK:MemorySink': MEMORY_SINK_DOC,

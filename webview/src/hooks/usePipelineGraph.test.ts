@@ -500,4 +500,37 @@ describe('usePipelineGraph', () => {
     const splitDisplay = result.current.displayNodes.find((n) => n.id === 'split')!;
     expect(splitDisplay.data.isCached).toBe(true);
   });
+
+  it('enforces explicit left and right single-edge target handles on MergeCdcScd nodes (EXT4)', () => {
+    const takeSnapshot = vi.fn();
+    const setPipelineConfig = vi.fn();
+
+    const { result } = renderHook(() =>
+      usePipelineGraph({ takeSnapshot, setPipelineConfig })
+    );
+
+    act(() => {
+      result.current.setNodes([
+        { id: 'cdc', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'CDC Feed', type: 'SOURCE', iconName: 'Cable', spark_transform: 'KafkaSource', properties: { readMode: 'batch' } } },
+        { id: 'snap', type: 'pipeline', position: { x: 0, y: 120 }, data: { label: 'Iceberg Target', type: 'SOURCE', iconName: 'Database', spark_transform: 'IcebergSource' } },
+        { id: 'extra', type: 'pipeline', position: { x: 0, y: 240 }, data: { label: 'Extra', type: 'SOURCE', iconName: 'FileText', spark_transform: 'ParquetSource' } },
+        { id: 'merge', type: 'pipeline', position: { x: 260, y: 60 }, data: { label: 'Merge CDC / SCD', type: 'STEP', iconName: 'GitMerge', spark_transform: 'MergeCdcScd' } },
+        { id: 'sink', type: 'pipeline', position: { x: 520, y: 60 }, data: { label: 'Iceberg Sink', type: 'SINK', iconName: 'Database', spark_transform: 'IcebergSink' } },
+      ]);
+    });
+
+    expect(result.current.isValidConnection({ source: 'cdc', target: 'merge', sourceHandle: null, targetHandle: null })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'cdc', target: 'merge', sourceHandle: null, targetHandle: 'left' })).toBe(true);
+    expect(result.current.isValidConnection({ source: 'snap', target: 'merge', sourceHandle: null, targetHandle: 'right' })).toBe(true);
+
+    act(() => {
+      result.current.onConnect({ source: 'cdc', target: 'merge', sourceHandle: null, targetHandle: 'left' });
+      result.current.onConnect({ source: 'snap', target: 'merge', sourceHandle: null, targetHandle: 'right' });
+      result.current.onConnect({ source: 'merge', sourceHandle: 'valid', target: 'sink', targetHandle: null });
+    });
+
+    expect(result.current.edges.filter((e) => e.target === 'merge')).toHaveLength(2);
+    expect(result.current.isValidConnection({ source: 'extra', target: 'merge', sourceHandle: null, targetHandle: 'left' })).toBe(false);
+    expect(result.current.isValidConnection({ source: 'extra', target: 'merge', sourceHandle: null, targetHandle: 'right' })).toBe(false);
+  });
 });

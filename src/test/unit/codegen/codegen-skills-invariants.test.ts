@@ -112,9 +112,9 @@ describe('codegen skill library invariants', () => {
         expect(bad).toEqual([]);
     });
 
-    it('resolves all 38 Phase 5 SOURCE_NODES in webview/src/catalog/nodes/sources.ts to an io-* skill', () => {
+    it('resolves all 40 Spark 4.x SOURCE_NODES in webview/src/catalog/nodes/sources.ts to an io-* skill', () => {
         const sourceEntries = CATALOG.filter((entry) => entry.type === 'SOURCE');
-        expect(sourceEntries).toHaveLength(38);
+        expect(sourceEntries).toHaveLength(40);
         const ioTransforms = new Map<string, string>();
         for (const skill of SKILLS.filter((s) => s.kind === 'io')) {
             for (const transform of skill.transforms) {
@@ -130,9 +130,9 @@ describe('codegen skill library invariants', () => {
         expect(missing).toEqual([]);
     });
 
-    it('resolves all 37 Phase 6 SINK_NODES in webview/src/catalog/nodes/sinks.ts to an io-* skill', () => {
+    it('resolves all 38 Spark 4.x SINK_NODES in webview/src/catalog/nodes/sinks.ts to an io-* skill', () => {
         const sinkEntries = CATALOG.filter((entry) => entry.type === 'SINK');
-        expect(sinkEntries).toHaveLength(37);
+        expect(sinkEntries).toHaveLength(38);
         const ioTransforms = new Map<string, string>();
         for (const skill of SKILLS.filter((s) => s.kind === 'io')) {
             for (const transform of skill.transforms) {
@@ -148,9 +148,9 @@ describe('codegen skill library invariants', () => {
         expect(missing).toEqual([]);
     });
 
-    it('resolves all 29 Phase 7 STEP_NODES in webview/src/catalog/nodes/steps.ts to a transform-* skill', () => {
+    it('resolves all 33 Spark 4.x STEP_NODES in webview/src/catalog/nodes/steps.ts to a transform-* skill', () => {
         const stepEntries = CATALOG.filter((entry) => entry.type === 'STEP');
-        expect(stepEntries).toHaveLength(29);
+        expect(stepEntries).toHaveLength(33);
         const stepTransforms = new Map<string, string>();
         for (const skill of SKILLS.filter((s) => s.kind === 'transform')) {
             for (const transform of skill.transforms) {
@@ -169,9 +169,9 @@ describe('codegen skill library invariants', () => {
     it('parses every sparkTransform entry in each catalog file, so the regex never skips a node', () => {
         const dir = path.join(REPO_ROOT, 'webview', 'src', 'catalog', 'nodes');
         const expected: Record<string, { type: string; count: number }> = {
-            'sources.ts': { type: 'SOURCE', count: 38 },
-            'sinks.ts': { type: 'SINK', count: 37 },
-            'steps.ts': { type: 'STEP', count: 29 },
+            'sources.ts': { type: 'SOURCE', count: 40 },
+            'sinks.ts': { type: 'SINK', count: 38 },
+            'steps.ts': { type: 'STEP', count: 33 },
         };
         for (const [file, { type, count }] of Object.entries(expected)) {
             const text = fs.readFileSync(path.join(dir, file), 'utf-8');
@@ -179,7 +179,7 @@ describe('codegen skill library invariants', () => {
             expect(declared, `${file} sparkTransform declarations`).toBe(count);
             expect(CATALOG.filter((entry) => entry.type === type), `${file} parsed entries`).toHaveLength(count);
         }
-        expect(CATALOG).toHaveLength(38 + 37 + 29);
+        expect(CATALOG).toHaveLength(40 + 38 + 33);
     });
 
     it('declares every catalog sparkTransform once across all node types', () => {

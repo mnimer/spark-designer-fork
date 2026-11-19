@@ -7,34 +7,51 @@
  * Unit tests validating IcebergIOSourceProperties (`IcebergSourceProperties`) component functionality,
  * readMode switching (batch vs streaming incremental options), form change callbacks, validation states
  * for required fields (table and warehouseLocation), mutually exclusive time-travel validation,
- * conditional catalogUri rendering, BigLake catalog discovery (D3), Secret Manager authentication,
- * and code generation instructions.
+ * conditional catalogUri rendering across all seven catalog types (`biglake`, `rest`, `hive`, `hadoop`,
+ * `glue`, `nessie`, `bigquery`), exact option parity with `IcebergSink`, BigLake catalog discovery (D3),
+ * Secret Manager authentication, and code generation instructions.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { IcebergIOSourceProperties, IcebergSourceProperties, ICEBERG_CATALOG_TYPES } from './IcebergIO';
+import {
+  IcebergIOSourceProperties,
+  IcebergSourceProperties,
+  ICEBERG_CATALOG_TYPES,
+  type IcebergIOSourceNode,
+} from './IcebergIO';
+import { ICEBERG_CATALOG_TYPES as SINK_ICEBERG_CATALOG_TYPES } from '../sink/IcebergIO';
 
 describe('IcebergIOSourceProperties', () => {
-  let originalVscode: any;
+  let originalVscode: unknown;
   const mockOnChange = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
+    originalVscode = (window as unknown as Record<string, unknown>).vscode;
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    (window as unknown as Record<string, unknown>).vscode = originalVscode;
   });
 
-  it('exports IcebergSourceProperties as an alias for IcebergIOSourceProperties', () => {
+  it('exports IcebergSourceProperties as an alias and maintains exact catalog option parity with IcebergSink', () => {
     expect(IcebergSourceProperties).toBe(IcebergIOSourceProperties);
+    expect(ICEBERG_CATALOG_TYPES.map((opt) => opt.value)).toEqual([
+      'biglake',
+      'rest',
+      'hive',
+      'hadoop',
+      'glue',
+      'nessie',
+      'bigquery',
+    ]);
+    expect(ICEBERG_CATALOG_TYPES).toEqual(SINK_ICEBERG_CATALOG_TYPES);
   });
 
   it('renders with empty properties and flags validation error for missing table and warehouseLocation', () => {
-    const mockNode: any = {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         label: 'IcebergIO',
         spark_transform: 'IcebergIO',
@@ -60,7 +77,7 @@ describe('IcebergIOSourceProperties', () => {
   });
 
   it('renders with populated properties and no validation error', () => {
-    const mockNode: any = {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         label: 'IcebergIO',
         spark_transform: 'IcebergIO',
@@ -112,7 +129,7 @@ describe('IcebergIOSourceProperties', () => {
   });
 
   it('renders streaming incremental scan options when readMode is streaming', () => {
-    const mockNode: any = {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         properties: {
           readMode: 'streaming',
@@ -140,7 +157,7 @@ describe('IcebergIOSourceProperties', () => {
   });
 
   it('validates on/off for table and warehouseLocation independently', () => {
-    const mockNodeWithTable: any = {
+    const mockNodeWithTable: IcebergIOSourceNode = {
       data: {
         properties: {
           table: 'lakehouse.events',
@@ -151,7 +168,7 @@ describe('IcebergIOSourceProperties', () => {
     expect(screen.queryByText('Table is required.')).not.toBeInTheDocument();
     expect(screen.getByText('Warehouse Location is required.')).toBeInTheDocument();
 
-    const mockNodeWithWarehouse: any = {
+    const mockNodeWithWarehouse: IcebergIOSourceNode = {
       data: {
         properties: {
           warehouseLocation: 'gs://lakehouse/iceberg/warehouse',
@@ -163,8 +180,24 @@ describe('IcebergIOSourceProperties', () => {
     expect(screen.queryByText('Warehouse Location is required.')).not.toBeInTheDocument();
   });
 
-  it('conditionally renders catalogUri when catalogType is rest or hive, and hides it for hadoop', () => {
-    const mockNodeRest: any = {
+  it('conditionally renders catalogUri for biglake, rest, hive, and nessie, and hides it with hints for hadoop, glue, and bigquery', () => {
+    const mockNodeBigLake: IcebergIOSourceNode = {
+      data: {
+        properties: {
+          catalogType: 'biglake',
+        },
+      },
+    };
+    const { container, rerender } = render(
+      <IcebergIOSourceProperties node={mockNodeBigLake} onChange={mockOnChange} />
+    );
+    const bigLakeUriInput = container.querySelector('#icebergSourceCatalogUri') as HTMLInputElement;
+    expect(bigLakeUriInput).toBeInTheDocument();
+    expect(bigLakeUriInput.placeholder).toBe(
+      'https://biglake.googleapis.com/iceberg/v1beta/restcatalog'
+    );
+
+    const mockNodeRest: IcebergIOSourceNode = {
       data: {
         properties: {
           catalogType: 'rest',
@@ -172,10 +205,10 @@ describe('IcebergIOSourceProperties', () => {
         },
       },
     };
-    const { container, rerender } = render(<IcebergIOSourceProperties node={mockNodeRest} onChange={mockOnChange} />);
+    rerender(<IcebergIOSourceProperties node={mockNodeRest} onChange={mockOnChange} />);
     expect(container.querySelector('#icebergSourceCatalogUri')).toBeInTheDocument();
 
-    const mockNodeHive: any = {
+    const mockNodeHive: IcebergIOSourceNode = {
       data: {
         properties: {
           catalogType: 'hive',
@@ -184,9 +217,25 @@ describe('IcebergIOSourceProperties', () => {
       },
     };
     rerender(<IcebergIOSourceProperties node={mockNodeHive} onChange={mockOnChange} />);
-    expect(container.querySelector('#icebergSourceCatalogUri')).toBeInTheDocument();
+    const hiveUriInput = container.querySelector('#icebergSourceCatalogUri') as HTMLInputElement;
+    expect(hiveUriInput).toBeInTheDocument();
+    expect(hiveUriInput.placeholder).toBe('thrift://metastore:9083');
 
-    const mockNodeHadoop: any = {
+    const mockNodeNessie: IcebergIOSourceNode = {
+      data: {
+        properties: {
+          catalogType: 'nessie',
+        },
+      },
+    };
+    rerender(<IcebergIOSourceProperties node={mockNodeNessie} onChange={mockOnChange} />);
+    const nessieUriInput = container.querySelector('#icebergSourceCatalogUri') as HTMLInputElement;
+    expect(nessieUriInput).toBeInTheDocument();
+    expect(nessieUriInput.placeholder).toBe('http://nessie:19120/api/v1');
+    expect(screen.getByText('NessieCatalog')).toBeInTheDocument();
+    expect(screen.getByText(/Project Nessie API server/i)).toBeInTheDocument();
+
+    const mockNodeHadoop: IcebergIOSourceNode = {
       data: {
         properties: {
           catalogType: 'hadoop',
@@ -195,10 +244,34 @@ describe('IcebergIOSourceProperties', () => {
     };
     rerender(<IcebergIOSourceProperties node={mockNodeHadoop} onChange={mockOnChange} />);
     expect(container.querySelector('#icebergSourceCatalogUri')).not.toBeInTheDocument();
+
+    const mockNodeGlue: IcebergIOSourceNode = {
+      data: {
+        properties: {
+          catalogType: 'glue',
+        },
+      },
+    };
+    rerender(<IcebergIOSourceProperties node={mockNodeGlue} onChange={mockOnChange} />);
+    expect(container.querySelector('#icebergSourceCatalogUri')).not.toBeInTheDocument();
+    expect(screen.getByText('GlueCatalog')).toBeInTheDocument();
+    expect(screen.getByText('S3FileIO')).toBeInTheDocument();
+
+    const mockNodeBigQuery: IcebergIOSourceNode = {
+      data: {
+        properties: {
+          catalogType: 'bigquery',
+        },
+      },
+    };
+    rerender(<IcebergIOSourceProperties node={mockNodeBigQuery} onChange={mockOnChange} />);
+    expect(container.querySelector('#icebergSourceCatalogUri')).not.toBeInTheDocument();
+    expect(screen.getByText('BigQueryMetastoreCatalog')).toBeInTheDocument();
+    expect(screen.getByText('GCSFileIO')).toBeInTheDocument();
   });
 
   it('validates mutually exclusive time-travel: neither, snapshot only, timestamp only, and both', () => {
-    const baseNode: any = {
+    const baseNode: IcebergIOSourceNode = {
       data: {
         properties: {},
       },
@@ -209,7 +282,7 @@ describe('IcebergIOSourceProperties', () => {
     expect(container.querySelector('#icebergSourceSnapshotId')).toHaveAttribute('aria-invalid', 'false');
     expect(container.querySelector('#icebergSourceAsOfTimestamp')).toHaveAttribute('aria-invalid', 'false');
 
-    const nodeWithSnapshot: any = {
+    const nodeWithSnapshot: IcebergIOSourceNode = {
       data: {
         properties: {
           snapshotId: '1234567890',
@@ -219,7 +292,7 @@ describe('IcebergIOSourceProperties', () => {
     rerender(<IcebergIOSourceProperties node={nodeWithSnapshot} onChange={mockOnChange} />);
     expect(screen.queryByText(/Time travel parameters are mutually exclusive/i)).not.toBeInTheDocument();
 
-    const nodeWithTimestamp: any = {
+    const nodeWithTimestamp: IcebergIOSourceNode = {
       data: {
         properties: {
           asOfTimestamp: '2024-01-01T00:00:00Z',
@@ -229,7 +302,7 @@ describe('IcebergIOSourceProperties', () => {
     rerender(<IcebergIOSourceProperties node={nodeWithTimestamp} onChange={mockOnChange} />);
     expect(screen.queryByText(/Time travel parameters are mutually exclusive/i)).not.toBeInTheDocument();
 
-    const nodeWithBoth: any = {
+    const nodeWithBoth: IcebergIOSourceNode = {
       data: {
         properties: {
           snapshotId: '1234567890',
@@ -245,8 +318,8 @@ describe('IcebergIOSourceProperties', () => {
     expect(container.querySelector('#icebergSourceAsOfTimestamp')).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('handles field changes for table, catalogName, catalogType, catalogUri, snapshotId, asOfTimestamp, filterExpression, and columnProjection', () => {
-    const mockNode: any = {
+  it('handles field changes for table, catalogName, catalogType (glue, nessie, bigquery), catalogUri, snapshotId, and asOfTimestamp', () => {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         properties: {
           catalogType: 'rest',
@@ -266,10 +339,13 @@ describe('IcebergIOSourceProperties', () => {
     });
     expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ catalogName: 'prod_iceberg' }));
 
-    fireEvent.change(container.querySelector('#icebergSourceCatalogType') as HTMLSelectElement, {
-      target: { name: 'catalogType', value: 'hive' },
-    });
-    expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ catalogType: 'hive' }));
+    const catalogSelect = container.querySelector('#icebergSourceCatalogType') as HTMLSelectElement;
+    for (const nextType of ['hive', 'glue', 'nessie', 'bigquery']) {
+      fireEvent.change(catalogSelect, {
+        target: { name: 'catalogType', value: nextType },
+      });
+      expect(mockOnChange).toHaveBeenCalledWith(expect.objectContaining({ catalogType: nextType }));
+    }
 
     fireEvent.change(container.querySelector('#icebergSourceCatalogUri') as HTMLInputElement, {
       target: { name: 'catalogUri', value: 'http://rest-server:8181' },
@@ -288,7 +364,7 @@ describe('IcebergIOSourceProperties', () => {
   });
 
   it('handles accordion toggling and configProperties input in advanced configuration', () => {
-    const mockNode: any = {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         properties: {},
       },
@@ -312,7 +388,7 @@ describe('IcebergIOSourceProperties', () => {
   });
 
   it('handles SecretManagerAuthFields interaction and system_instructions updates', () => {
-    const mockNode: any = {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         properties: {
           authMode: 'secretManager',
@@ -350,9 +426,9 @@ describe('IcebergIOSourceProperties', () => {
     expect(ICEBERG_CATALOG_TYPES.some((opt) => opt.value === 'biglake')).toBe(true);
 
     const mockPostMessage = vi.fn();
-    (window as any).vscode = { postMessage: mockPostMessage };
+    (window as unknown as Record<string, unknown>).vscode = { postMessage: mockPostMessage };
 
-    const mockNode: any = {
+    const mockNode: IcebergIOSourceNode = {
       data: {
         properties: {
           table: 'analytics.events',

@@ -63,6 +63,8 @@ const ALL_PHASE_5_SOURCES = [
   'ElasticsearchSource',
   'Neo4jSource',
   'CreateDataFrameSource',
+  'RestApiSource',
+  'SftpSource',
 ] as const;
 
 const ALL_PHASE_6_SINKS = [
@@ -103,6 +105,7 @@ const ALL_PHASE_6_SINKS = [
   'ConsoleSink',
   'MemorySink',
   'ForeachBatchSink',
+  'VectorStoreSink',
 ] as const;
 
 describe('versionMatrix module purity and webview shim', () => {
@@ -594,6 +597,8 @@ describe('Python 4.0 DataSource API and foreachBatch SDK fallbacks', () => {
       ['FirestoreSource', 'google-cloud-firestore', 'FirestoreDataSource'],
       ['CassandraSource', 'cassandra-driver', 'CassandraDataSource'],
       ['RedisSource', 'redis', 'RedisDataSource'],
+      ['RestApiSource', 'requests', 'RestApiDataSource'],
+      ['SftpSource', 'paramiko', 'SftpDataSource'],
     ];
 
     for (const [transform, pkg, cls] of sourceExpectations) {
@@ -622,6 +627,46 @@ describe('Python 4.0 DataSource API and foreachBatch SDK fallbacks', () => {
       expect(res.mavenCoordinates).toEqual([]);
       expect(res.gcsJarUris).toEqual([]);
     }
+  });
+
+  it('resolves VectorStoreSink for both AlloyDB pgvector and Vertex AI Vector Search backends', () => {
+    const defaultAlloyDb = resolveConnectorForRuntime('VectorStoreSink', 'serverless_4.0');
+    expect(defaultAlloyDb).toMatchObject({
+      sparkTransform: 'VectorStoreSink',
+      mechanism: 'foreach_batch_sdk',
+      gcsJarUris: [],
+      mavenCoordinates: [],
+      pipPackages: ['psycopg[binary]', 'google-cloud-alloydb-connector'],
+      sparkProperties: { 'dataproc.artifacts.remove': 'conscrypt' },
+    });
+
+    const alloyDbWithJars = resolveConnectorForRuntime('SINK:VectorStoreSink', 'cluster_3.0', {
+      backend: 'alloydb_pgvector',
+      driverJarUri: 'gs://jars/postgresql-42.7.4.jar',
+      socketFactoryJarUri: 'gs://jars/alloydb-jdbc-connector-1.2.0.jar',
+    });
+    expect(alloyDbWithJars.mechanism).toBe('foreach_batch_sdk');
+    expect(alloyDbWithJars.pipPackages).toEqual(['psycopg[binary]', 'google-cloud-alloydb-connector']);
+    expect(alloyDbWithJars.gcsJarUris).toEqual([
+      'gs://jars/postgresql-42.7.4.jar',
+      'gs://jars/alloydb-jdbc-connector-1.2.0.jar',
+    ]);
+    expect(alloyDbWithJars.sparkProperties).toEqual({
+      'dataproc.artifacts.remove': 'conscrypt',
+    });
+
+    const vertexVector = resolveConnectorForRuntime('VectorStoreSink', 'serverless_4.0', {
+      backend: 'vertex_vector_search',
+      driverJarUri: 'gs://jars/ignored.jar',
+    });
+    expect(vertexVector).toMatchObject({
+      sparkTransform: 'VectorStoreSink',
+      mechanism: 'foreach_batch_sdk',
+      gcsJarUris: [],
+      mavenCoordinates: [],
+      pipPackages: ['google-cloud-aiplatform'],
+      sparkProperties: {},
+    });
   });
 
   it('resolves SparkMlAndVertexAi packages based on configuration', () => {
@@ -659,6 +704,36 @@ describe('Python 4.0 DataSource API and foreachBatch SDK fallbacks', () => {
         mode: 'pipeline_model',
       })
     ).toMatchObject({
+      mechanism: 'builtin',
+      pipPackages: [],
+    });
+
+    expect(
+      resolveConnectorForRuntime('TextChunkAndEmbed', 'serverless_4.0')
+    ).toMatchObject({
+      sparkTransform: 'TextChunkAndEmbed',
+      mechanism: 'foreach_batch_sdk',
+      pipPackages: ['google-genai'],
+      gcsJarUris: [],
+      mavenCoordinates: [],
+    });
+
+    expect(
+      resolveConnectorForRuntime('STEP:TextChunkAndEmbed', 'cluster_3.0', {
+        mode: 'embed_only',
+      })
+    ).toMatchObject({
+      sparkTransform: 'TextChunkAndEmbed',
+      mechanism: 'foreach_batch_sdk',
+      pipPackages: ['google-genai'],
+    });
+
+    expect(
+      resolveConnectorForRuntime('TextChunkAndEmbed', 'local', {
+        mode: 'chunk_only',
+      })
+    ).toMatchObject({
+      sparkTransform: 'TextChunkAndEmbed',
       mechanism: 'builtin',
       pipPackages: [],
     });
@@ -819,9 +894,9 @@ describe('resolvePipelineRuntimeArtifacts and catalog sweep', () => {
     ]);
   });
 
-  it('resolves all 38 Phase 5 sources and 37 Phase 6 sinks without Scala 2.12 artifacts', () => {
-    expect(ALL_PHASE_5_SOURCES).toHaveLength(38);
-    expect(ALL_PHASE_6_SINKS).toHaveLength(37);
+  it('resolves all 40 Spark 4.x sources and 38 Spark 4.x sinks without Scala 2.12 artifacts', () => {
+    expect(ALL_PHASE_5_SOURCES).toHaveLength(40);
+    expect(ALL_PHASE_6_SINKS).toHaveLength(38);
 
     const targets: SparkRuntimeTarget[] = [
       'serverless_4.0',

@@ -128,6 +128,30 @@ export function isJoinNode(node: DagNode): boolean {
 }
 
 /**
+ * Returns true if the node is a Spark `MergeCdcScd` two-input CDC and SCD transformation step.
+ *
+ * @param node Pipeline DAG node.
+ * @returns True when the node represents a `MergeCdcScd` step.
+ */
+export function isMergeCdcScdNode(node: DagNode): boolean {
+    const category = getNodeCategory(node);
+    if (category === 'SOURCE' || category === 'SINK') {
+        return false;
+    }
+    return getNodeSparkTransform(node) === 'MergeCdcScd';
+}
+
+/**
+ * Returns true if the node requires explicit `left` and `right` target handles (`Join` or `MergeCdcScd`).
+ *
+ * @param node Pipeline DAG node.
+ * @returns True when the node is a dual-input `Join` or `MergeCdcScd` step.
+ */
+export function isDualInputNode(node: DagNode): boolean {
+    return isJoinNode(node) || isMergeCdcScdNode(node);
+}
+
+/**
  * Returns true if the node is a Spark `ConditionalSplit` multi-output step.
  *
  * @param node Pipeline DAG node.

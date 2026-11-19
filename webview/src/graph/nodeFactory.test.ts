@@ -200,6 +200,37 @@ describe('nodeFactory', () => {
         });
       });
 
+      it('auto-connects MergeCdcScd step to existing SOURCE on the left targetHandle (EXT4)', () => {
+        const sourceNode: PipelineNode = {
+          id: 'src-cdc',
+          type: 'pipeline',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'CDC Events',
+            type: 'SOURCE',
+            iconName: 'Cable',
+            spark_transform: 'KafkaSource',
+          },
+        };
+
+        const item: PaletteItem = {
+          label: 'Merge CDC / SCD',
+          type: 'STEP',
+          iconName: 'GitMerge',
+          sparkTransform: 'MergeCdcScd',
+        };
+
+        const result = createNodesForPaletteItem(item, { x: 240, y: 0 }, [sourceNode]);
+
+        expect(result.edges).toHaveLength(1);
+        expect(result.edges[0]).toEqual({
+          id: `e-src-cdc-${result.nodes[0].id}`,
+          source: 'src-cdc',
+          target: result.nodes[0].id,
+          targetHandle: 'left',
+        });
+      });
+
       it('does NOT auto-connect STEP if a STEP already exists in the graph', () => {
         const sourceNode: PipelineNode = {
           id: 'src-1',

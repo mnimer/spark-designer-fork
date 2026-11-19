@@ -21,8 +21,8 @@ describe('PROPERTY_FORM_REGISTRY', () => {
     expect(new Set(registryKeys)).toEqual(new Set(documentedKeys));
   });
 
-  it('registers all 38 Phase 5 Spark 4.x SOURCE_NODES under both SOURCE:<transform> and direct <transform> keys', () => {
-    expect(SOURCE_NODES).toHaveLength(38);
+  it('registers all 40 Spark 4.x SOURCE_NODES under both SOURCE:<transform> and direct <transform> keys', () => {
+    expect(SOURCE_NODES).toHaveLength(40);
     for (const node of SOURCE_NODES) {
       const qualifiedKey = `SOURCE:${node.sparkTransform}`;
       expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
@@ -33,8 +33,8 @@ describe('PROPERTY_FORM_REGISTRY', () => {
     }
   });
 
-  it('registers all 37 Phase 6 Spark 4.x SINK_NODES under both SINK:<transform> and direct <transform> keys', () => {
-    expect(SINK_NODES).toHaveLength(37);
+  it('registers all 38 Spark 4.x SINK_NODES under both SINK:<transform> and direct <transform> keys', () => {
+    expect(SINK_NODES).toHaveLength(38);
     for (const node of SINK_NODES) {
       const qualifiedKey = `SINK:${node.sparkTransform}`;
       expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
@@ -45,8 +45,8 @@ describe('PROPERTY_FORM_REGISTRY', () => {
     }
   });
 
-  it('registers all 29 Phase 7 Spark 4.x STEP_NODES under both STEP:<transform> and direct <transform> keys with capability parity', () => {
-    expect(STEP_NODES).toHaveLength(29);
+  it('registers all 33 Spark 4.x STEP_NODES under both STEP:<transform> and direct <transform> keys with capability parity', () => {
+    expect(STEP_NODES).toHaveLength(33);
     for (const node of STEP_NODES) {
       const qualifiedKey = `STEP:${node.sparkTransform}`;
       expect(PROPERTY_FORM_REGISTRY[qualifiedKey], `Missing form for ${qualifiedKey}`).toBeDefined();
@@ -113,8 +113,9 @@ describe('PROPERTY_FORM_REGISTRY', () => {
   });
 });
 
-/** Expected node counts per palette type. The catalog defines SRC1-SRC38, SNK1-SNK37, and OP1-OP29. */
-const EXPECTED_COUNTS = { SOURCE: 38, SINK: 37, STEP: 29 } as const;
+/** Expected node counts per palette type. */
+const EXPECTED_COUNTS = { SOURCE: 40, SINK: 38, STEP: 33 } as const;
+const EXPECTED_TOTAL = EXPECTED_COUNTS.SOURCE + EXPECTED_COUNTS.SINK + EXPECTED_COUNTS.STEP;
 
 /** Catalog node lists keyed by palette type. */
 const CATALOG_BY_TYPE = { SOURCE: SOURCE_NODES, SINK: SINK_NODES, STEP: STEP_NODES } as const;
@@ -128,7 +129,7 @@ describe('PROPERTY_FORM_REGISTRY catalog coverage (T4)', () => {
       expect(CATALOG_BY_TYPE[type], `${type} node count`).toHaveLength(EXPECTED_COUNTS[type]);
     }
     const total = SOURCE_NODES.length + SINK_NODES.length + STEP_NODES.length;
-    expect(total).toBe(38 + 37 + 29);
+    expect(total).toBe(EXPECTED_TOTAL);
   });
 
   it('declares the matching type, a non-empty sparkTransform, and a unique transform for every catalog node', () => {
@@ -143,7 +144,7 @@ describe('PROPERTY_FORM_REGISTRY catalog coverage (T4)', () => {
         seen.set(node.sparkTransform, type);
       }
     }
-    expect(seen.size).toBe(38 + 37 + 29);
+    expect(seen.size).toBe(EXPECTED_TOTAL);
   });
 
   it('has exactly one qualified canonical registry key per catalog node and type', () => {
@@ -180,7 +181,7 @@ describe('PROPERTY_FORM_REGISTRY catalog coverage (T4)', () => {
     }
     const shared = [...owners.values()].filter((keys) => keys.length > 1);
     expect(shared).toEqual([]);
-    expect(owners.size).toBe(38 + 37 + 29);
+    expect(owners.size).toBe(EXPECTED_TOTAL);
   });
 
   it('returns undefined for unknown, empty, and prefix-only keys', () => {

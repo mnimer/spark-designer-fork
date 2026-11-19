@@ -64,6 +64,49 @@ Inspect `writeMode` (`"append"`, `"overwrite"`, or `"merge"`, default `"append"`
   - If `mergeSchema` is true, set `spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")` before executing the merge.
   - Execute `delta_table.alias("target").merge(df.alias("source"), merge_condition).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()`.
 
+### CDC & SCD Type 1 / Type 2 Merges (`MergeCdcScd`)
+When an upstream `MergeCdcScd` step feeds `DeltaSink` (`writeMode == "merge"`), compute `business_cols = [c for c in df.columns if c != action_col and not c.startswith("_merge_")]` so internal `_scd_action` and `_merge_*` staging columns never enter the target Delta table:
+- **SCD Type 1 (`scdType == "scd1"`)**:
+  - Join on `target.<k> = source.<k>` and chain conditional `DeltaMergeBuilder` clauses:
+    ```python
+    on_cond = " AND ".join(f"target.{k} = source.{k}" for k in keys)
+    update_map = {c: f"source.{c}" for c in business_cols if c not in set(keys)}
+    insert_map = {c: f"source.{c}" for c in business_cols}
+    (
+        delta_table.alias("target")
+        .merge(df.alias("source"), on_cond)
+        .whenMatchedDelete(condition=f"source.{action_col} = 'DELETE'")
+        .whenMatchedUpdate(condition=f"source.{action_col} = 'UPDATE'", set=update_map)
+        .whenNotMatchedInsert(condition=f"source.{action_col} = 'INSERT'", values=insert_map)
+        .execute()
+    )
+    ```
+- **SCD Type 2 (`scdType == "scd2"`)**:
+  - Match active target rows against nullable `source._merge_<k>` columns so `'EXPIRE'` and `'DELETE'` rows close the active target version while `'INSERT'` rows (`_merge_<k> IS NULL`) insert new active versions in a single atomic pass:
+    ```python
+    on_cond = (
+        " AND ".join(f"target.{k} = source._merge_{k}" for k in keys)
+        + f" AND target.{is_current_col} = true"
+    )
+    insert_map = {c: f"source.{c}" for c in business_cols}
+    (
+        delta_table.alias("target")
+        .merge(df.alias("source"), on_cond)
+        .whenMatchedUpdate(
+            condition=f"source.{action_col} IN ('EXPIRE', 'DELETE')",
+            set={
+                is_current_col: "false",
+                eff_to_col: f"source.{eff_from_col}",
+            },
+        )
+        .whenNotMatchedInsert(
+            condition=f"source.{action_col} = 'INSERT'",
+            values=insert_map,
+        )
+        .execute()
+    )
+    ```
+
 ### Streaming Writes (`native` and Idempotent `foreachBatch`)
 - **Native Single-Sink Streaming (`ExecutionPlan.streamingSinkGroups` `mode == "native"` and `writeMode != "merge"`)**:
   - Build `writer = df.writeStream.format("delta").outputMode(output_mode).option("checkpointLocation", checkpoint_dir)`.

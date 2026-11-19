@@ -19,6 +19,7 @@ import {
   ICEBERG_CATALOG_TYPES,
   ICEBERG_WRITE_OPERATION_OPTIONS,
 } from './IcebergIO';
+import { ICEBERG_CATALOG_TYPES as SOURCE_ICEBERG_CATALOG_TYPES } from '../source/IcebergIO';
 
 describe('IcebergIOSinkProperties', () => {
   let originalVscode: unknown;
@@ -35,9 +36,16 @@ describe('IcebergIOSinkProperties', () => {
 
   it('exports IcebergSinkProperties alias and all required catalog and write operation options', () => {
     expect(IcebergSinkProperties).toBe(IcebergIOSinkProperties);
-    expect(ICEBERG_CATALOG_TYPES.map((o) => o.value)).toEqual(
-      expect.arrayContaining(['biglake', 'rest', 'hive', 'hadoop'])
-    );
+    expect(ICEBERG_CATALOG_TYPES.map((o) => o.value)).toEqual([
+      'biglake',
+      'rest',
+      'hive',
+      'hadoop',
+      'glue',
+      'nessie',
+      'bigquery',
+    ]);
+    expect(ICEBERG_CATALOG_TYPES).toEqual(SOURCE_ICEBERG_CATALOG_TYPES);
     expect(ICEBERG_WRITE_OPERATION_OPTIONS.map((o) => o.value)).toEqual([
       'append',
       'createOrReplace',
@@ -119,7 +127,7 @@ describe('IcebergIOSinkProperties', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('conditionally renders catalogUri for biglake, rest, and hive, and hides it for hadoop', () => {
+  it('conditionally renders catalogUri for biglake, rest, hive, and nessie, and hides it for hadoop, glue, and bigquery', () => {
     const { container, rerender } = render(
       <IcebergIOSinkProperties
         node={{ data: { properties: { catalogType: 'biglake' } } }}
@@ -146,11 +154,39 @@ describe('IcebergIOSinkProperties', () => {
 
     rerender(
       <IcebergIOSinkProperties
+        node={{ data: { properties: { catalogType: 'nessie' } } }}
+        onChange={mockOnChange}
+      />
+    );
+    const nessieUriInput = container.querySelector('#icebergSinkCatalogUri') as HTMLInputElement;
+    expect(nessieUriInput).toBeInTheDocument();
+    expect(nessieUriInput.placeholder).toBe('http://nessie:19120/api/v1');
+
+    rerender(
+      <IcebergIOSinkProperties
         node={{ data: { properties: { catalogType: 'hadoop' } } }}
         onChange={mockOnChange}
       />
     );
     expect(container.querySelector('#icebergSinkCatalogUri')).not.toBeInTheDocument();
+
+    rerender(
+      <IcebergIOSinkProperties
+        node={{ data: { properties: { catalogType: 'glue' } } }}
+        onChange={mockOnChange}
+      />
+    );
+    expect(container.querySelector('#icebergSinkCatalogUri')).not.toBeInTheDocument();
+    expect(screen.getByText('S3FileIO')).toBeInTheDocument();
+
+    rerender(
+      <IcebergIOSinkProperties
+        node={{ data: { properties: { catalogType: 'bigquery' } } }}
+        onChange={mockOnChange}
+      />
+    );
+    expect(container.querySelector('#icebergSinkCatalogUri')).not.toBeInTheDocument();
+    expect(screen.getByText('GCSFileIO')).toBeInTheDocument();
   });
 
   it('dispatches updates for writeOperation, namespace, partitionFields, fanoutEnabled, tableProperties, and system_instructions', () => {

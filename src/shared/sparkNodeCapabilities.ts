@@ -130,8 +130,10 @@ export const SPARK_NODE_CAPABILITIES: Record<string, NodeCapabilityFlags> = {
     ElasticsearchSource: BATCH_ONLY_SOURCE,
     Neo4jSource: DUAL_MODE_BATCH_DEFAULT_SOURCE,
 
-    // Synthetic / API Category (SRC38)
+    // Synthetic / API Category (SRC38 + Phase 11 EXT1–EXT2)
     CreateDataFrameSource: BATCH_ONLY_SOURCE,
+    RestApiSource: BATCH_ONLY_SOURCE,
+    SftpSource: BATCH_ONLY_SOURCE,
 
     // -------------------------------------------------------------------------
     // Phase 6 — Spark Sinks (SNK1–SNK37)
@@ -172,13 +174,14 @@ export const SPARK_NODE_CAPABILITIES: Record<string, NodeCapabilityFlags> = {
     ClickHouseSink: FOREACH_BATCH_SINK,
     SingleStoreSink: FOREACH_BATCH_SINK,
 
-    // NoSQL & Graph Category (SNK29–SNK34)
+    // NoSQL & Graph Category (SNK29–SNK34 + Phase 11 EXT3)
     MongoDbSink: NATIVE_STREAMING_SINK,
     FirestoreSink: FOREACH_BATCH_SINK,
     CassandraSink: NATIVE_STREAMING_SINK,
     RedisSink: FOREACH_BATCH_SINK,
     ElasticsearchSink: NATIVE_STREAMING_SINK,
     Neo4jSink: NATIVE_STREAMING_SINK,
+    VectorStoreSink: FOREACH_BATCH_SINK,
 
     // Debug & Custom Category (SNK35–SNK37)
     ConsoleSink: NATIVE_STREAMING_SINK,
@@ -199,7 +202,10 @@ export const SPARK_NODE_CAPABILITIES: Record<string, NodeCapabilityFlags> = {
     LimitSample: SINGLE_INPUT_STEP,
     ConditionalSplit: SINGLE_INPUT_STEP,
     DataQualityAssert: ERROR_CAPABLE_SINGLE_INPUT_STEP,
+    EnforceSchemaAndCast: ERROR_CAPABLE_SINGLE_INPUT_STEP,
+    NestedStructArrayOps: SINGLE_INPUT_STEP,
     Join: { inputArity: 2, errorOutput: false },
+    MergeCdcScd: { inputArity: 2, errorOutput: false },
     UnionByName: { inputArity: 'n', errorOutput: false },
     SetOperation: { inputArity: 'n', errorOutput: false },
     GroupByAgg: SINGLE_INPUT_STEP,
@@ -219,6 +225,7 @@ export const SPARK_NODE_CAPABILITIES: Record<string, NodeCapabilityFlags> = {
     SparkMlAndVertexAi: ERROR_CAPABLE_SINGLE_INPUT_STEP,
     SparkMlInference: ERROR_CAPABLE_SINGLE_INPUT_STEP,
     VertexAiInference: ERROR_CAPABLE_SINGLE_INPUT_STEP,
+    TextChunkAndEmbed: ERROR_CAPABLE_SINGLE_INPUT_STEP,
 
     // -------------------------------------------------------------------------
     // Legacy & Transitional Transform Fallbacks (Raw + SOURCE: / SINK: Scoped)

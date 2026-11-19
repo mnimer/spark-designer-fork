@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { NodesCard, DEFAULT_SAMPLES } from './NodesCard';
+import { NodesCard, DEFAULT_SAMPLES, SOURCE_NODES, STEP_NODES, SINK_NODES } from './NodesCard';
 
 describe('NodesCard', () => {
   const mockOnDragStart = vi.fn();
@@ -159,7 +159,7 @@ describe('NodesCard', () => {
       />
     );
 
-    expect(screen.getByText(/SOURCES \(38\)/i)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`SOURCES \\(${SOURCE_NODES.length}\\)`, 'i'))).toBeInTheDocument();
     expect(screen.getByText('Streaming Sources')).toBeInTheDocument();
     expect(screen.getByText('Lakehouse Sources')).toBeInTheDocument();
     expect(screen.getByText('File Format Sources')).toBeInTheDocument();
@@ -191,7 +191,7 @@ describe('NodesCard', () => {
       />
     );
 
-    expect(screen.getByText(/STEPS & TRANSFORMS \(29\)/i)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`STEPS & TRANSFORMS \\(${STEP_NODES.length}\\)`, 'i'))).toBeInTheDocument();
     expect(screen.getByText('Column & Row')).toBeInTheDocument();
     expect(screen.getByText('Joins & Sets')).toBeInTheDocument();
     expect(screen.getByText('Aggregations')).toBeInTheDocument();
@@ -227,7 +227,7 @@ describe('NodesCard', () => {
       />
     );
 
-    expect(screen.getByText(/SINKS \(37\)/i)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`SINKS \\(${SINK_NODES.length}\\)`, 'i'))).toBeInTheDocument();
     expect(screen.getByText('Streaming Sinks')).toBeInTheDocument();
     expect(screen.getByText('Lakehouse Sinks')).toBeInTheDocument();
     expect(screen.getByText('File Format Sinks')).toBeInTheDocument();

@@ -21,6 +21,7 @@ import {
     getNodeInputArity,
     getNodeSparkTransform,
     isJoinNode,
+    isMergeCdcScdNode,
 } from './sparkDagRules';
 
 /**
@@ -716,6 +717,60 @@ export function validateDagTopology(
                                 `Stream-stream "${joinType}" Join node ${ref} requires an upstream Watermark step on streaming inputs (missing on ${missingSides.join(' and ')}).`
                             );
                         }
+                    }
+                }
+            }
+            continue;
+        }
+
+        // 6b2. MergeCdcScd two-input handle arity and static target snapshot validation
+        if (isMergeCdcScdNode(node)) {
+            if (!isOrphan && !inCycle) {
+                const leftEdges = inbound.filter((e) => e.targetHandle === 'left');
+                const rightEdges = inbound.filter((e) => e.targetHandle === 'right');
+                const untypedEdges = inbound.filter(
+                    (e) => e.targetHandle !== 'left' && e.targetHandle !== 'right'
+                );
+
+                if (untypedEdges.length > 0) {
+                    pushUnique(invalidUpstreamNodeIds, id);
+                    addFatalNodeError(
+                        id,
+                        `MergeCdcScd node ${ref} requires incoming edges to connect to explicit "left" and "right" handles.`
+                    );
+                }
+
+                if (leftEdges.length === 0 || rightEdges.length === 0) {
+                    const missingHandles: string[] = [];
+                    if (leftEdges.length === 0) {
+                        missingHandles.push('"left"');
+                    }
+                    if (rightEdges.length === 0) {
+                        missingHandles.push('"right"');
+                    }
+                    pushUnique(missingUpstreamNodeIds, id);
+                    addFatalNodeError(
+                        id,
+                        `MergeCdcScd node ${ref} requires 1 "left" input and 1 "right" input (missing ${missingHandles.join(' and ')}).`
+                    );
+                }
+
+                if (leftEdges.length > 1 || rightEdges.length > 1) {
+                    pushUnique(invalidUpstreamNodeIds, id);
+                    addFatalNodeError(
+                        id,
+                        `MergeCdcScd node ${ref} accepts at most 1 incoming edge per handle ("left": ${leftEdges.length}, "right": ${rightEdges.length}).`
+                    );
+                }
+
+                if (leftEdges.length === 1 && rightEdges.length === 1 && untypedEdges.length === 0) {
+                    const rightSourceId = rightEdges[0].source;
+                    if (streaming.streamingNodeIds.has(rightSourceId)) {
+                        pushUnique(invalidUpstreamNodeIds, id);
+                        addFatalNodeError(
+                            id,
+                            `MergeCdcScd node ${ref} requires a static batch target table snapshot on the "right" handle, not a streaming input.`
+                        );
                     }
                 }
             }

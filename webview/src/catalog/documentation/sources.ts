@@ -56,7 +56,7 @@ const SOCKET_SOURCE_DOC: NodeDocMetadata = {
 
 const ICEBERG_SOURCE_DOC: NodeDocMetadata = {
   title: 'Apache Iceberg Source',
-  description: 'Reads table snapshots, time-travel queries, or incremental appends from Apache Iceberg lakehouse catalogs.',
+  description: 'Reads table snapshots, time-travel queries, or incremental appends across BigLake REST, REST, Hive, Hadoop, Glue, Nessie, and BigQuery Iceberg catalogs.',
   docsUrl: 'https://iceberg.apache.org/docs/latest/spark-queries/',
 };
 
@@ -234,6 +234,18 @@ const CREATE_DATAFRAME_SOURCE_DOC: NodeDocMetadata = {
   docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.SparkSession.createDataFrame.html',
 };
 
+const REST_API_SOURCE_DOC: NodeDocMetadata = {
+  title: 'REST API Source',
+  description: 'Reads paginated JSON records from HTTP and REST API endpoints using Spark 4.0 Python DataSourceReader.',
+  docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/datasource.html',
+};
+
+const SFTP_SOURCE_DOC: NodeDocMetadata = {
+  title: 'SFTP Source',
+  description: 'Reads CSV, JSON, Parquet, text, or XML files from remote SFTP servers using Paramiko and Spark 4.0 Python DataSourceReader.',
+  docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/datasource.html',
+};
+
 /**
  * Documentation metadata for registered source nodes across streaming, lakehouse, file, database, NoSQL, and synthetic connectors.
  */
@@ -315,6 +327,10 @@ export const SOURCE_DOCS: Record<string, NodeDocMetadata> = {
   'Neo4jSource': NEO4J_SOURCE_DOC,
   'SOURCE:CreateDataFrameSource': CREATE_DATAFRAME_SOURCE_DOC,
   'CreateDataFrameSource': CREATE_DATAFRAME_SOURCE_DOC,
+  'SOURCE:RestApiSource': REST_API_SOURCE_DOC,
+  'RestApiSource': REST_API_SOURCE_DOC,
+  'SOURCE:SftpSource': SFTP_SOURCE_DOC,
+  'SftpSource': SFTP_SOURCE_DOC,
 
   // Legacy Source aliases (backwards compatibility)
   'SOURCE:PubSubIO': PUBSUB_SOURCE_DOC,

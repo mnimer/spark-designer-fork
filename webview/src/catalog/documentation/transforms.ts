@@ -123,6 +123,26 @@ export const TRANSFORM_DOCS: Record<string, NodeDocMetadata> = {
     description: 'Evaluates non-null, range, regex, set, uniqueness, or SQL expectations and routes violations to error DLQ or fails the job.',
     docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.assert_true.html',
   },
+  'STEP:EnforceSchemaAndCast': {
+    title: 'Enforce Schema & Cast (StructType.fromDDL / F.try_cast)',
+    description: 'Enforces a target Catalyst DDL contract with schema drift policies, ANSI-safe try_cast conversions, non-nullable checks, and error DLQ routing.',
+    docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.try_cast.html',
+  },
+  'EnforceSchemaAndCast': {
+    title: 'Enforce Schema & Cast (StructType.fromDDL / F.try_cast)',
+    description: 'Enforces a target Catalyst DDL contract with schema drift policies, ANSI-safe try_cast conversions, non-nullable checks, and error DLQ routing.',
+    docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.try_cast.html',
+  },
+  'STEP:NestedStructArrayOps': {
+    title: 'Nested Struct & Array Ops (struct / transform / filter / aggregate)',
+    description: 'Flattens nested StructType fields, packs flat columns into structs, and evaluates Catalyst higher-order array functions without shuffling.',
+    docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.transform.html',
+  },
+  'NestedStructArrayOps': {
+    title: 'Nested Struct & Array Ops (struct / transform / filter / aggregate)',
+    description: 'Flattens nested StructType fields, packs flat columns into structs, and evaluates Catalyst higher-order array functions without shuffling.',
+    docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.transform.html',
+  },
   'STEP:Join': {
     title: 'Join DataFrames (df.join / F.broadcast)',
     description: 'Combines left and right DataFrames using inner, outer, semi, anti, or cross joins with optional right-side broadcast.',
@@ -132,6 +152,16 @@ export const TRANSFORM_DOCS: Record<string, NodeDocMetadata> = {
     title: 'Join DataFrames (df.join / F.broadcast)',
     description: 'Combines left and right DataFrames using inner, outer, semi, anti, or cross joins with optional right-side broadcast.',
     docsUrl: 'https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.join.html',
+  },
+  'STEP:MergeCdcScd': {
+    title: 'Merge CDC / SCD (Type 1 & Type 2)',
+    description: 'Deduplicates incoming left CDC change events against a right target snapshot using null-safe xxhash64 comparisons to stage SCD Type 1 and Type 2 lakehouse merges.',
+    docsUrl: 'https://iceberg.apache.org/docs/latest/spark-writes/#merge-into',
+  },
+  'MergeCdcScd': {
+    title: 'Merge CDC / SCD (Type 1 & Type 2)',
+    description: 'Deduplicates incoming left CDC change events against a right target snapshot using null-safe xxhash64 comparisons to stage SCD Type 1 and Type 2 lakehouse merges.',
+    docsUrl: 'https://iceberg.apache.org/docs/latest/spark-writes/#merge-into',
   },
   'STEP:UnionByName': {
     title: 'Union By Name (df.unionByName / df.union)',
@@ -327,6 +357,16 @@ export const TRANSFORM_DOCS: Record<string, NodeDocMetadata> = {
     title: 'Vertex AI Inference (Endpoint / Gemini)',
     description: 'Executes partition-batched predictions against Vertex AI Endpoints or Vertex AI Gemini models via mapInPandas.',
     docsUrl: 'https://docs.cloud.google.com/vertex-ai/docs/predictions/get-predictions',
+  },
+  'STEP:TextChunkAndEmbed': {
+    title: 'Text Chunk & Embed (RAG Document Preparation)',
+    description: 'Splits document text into overlapping chunks and computes batched Vertex AI embeddings via google-genai with optional error DLQ routing.',
+    docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/embeddings/get-text-embeddings',
+  },
+  'TextChunkAndEmbed': {
+    title: 'Text Chunk & Embed (RAG Document Preparation)',
+    description: 'Splits document text into overlapping chunks and computes batched Vertex AI embeddings via google-genai with optional error DLQ routing.',
+    docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/embeddings/get-text-embeddings',
   },
 
   // =========================================================================
