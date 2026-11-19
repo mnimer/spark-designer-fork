@@ -8,8 +8,11 @@
  * title formatting, and fallback handling.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import type * as vscode from 'vscode';
 import { formatSampleTitle, getSamplePipelines, computePipelineFlow } from '../../extension';
 
 // Mock vscode module
@@ -85,66 +88,90 @@ describe('formatSampleTitle', () => {
 });
 
 describe('getSamplePipelines', () => {
-    const mockContext: any = {
-        extensionPath: path.resolve(__dirname, '../../../')
+    let extensionRoot: string;
+
+    beforeEach(() => {
+        extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-samples-'));
+    });
+
+    afterEach(() => {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    });
+
+    /**
+     * Writes a file under the temporary extension root and creates parent folders.
+     *
+     * @param relativePath Path relative to the extension root.
+     * @param content File content to write.
+     */
+    const writeFixture = (relativePath: string, content: string): void => {
+        const fullPath = path.join(extensionRoot, relativePath);
+        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+        fs.writeFileSync(fullPath, content, 'utf-8');
     };
 
-    it('discovers and parses the generate-mock-data.beam and pubsub-to-bigquery.beam samples from disk', async () => {
-        const samples = await getSamplePipelines(mockContext);
-        expect(Array.isArray(samples)).toBe(true);
-        expect(samples.length).toBeGreaterThanOrEqual(2);
+    it('discovers and parses .spark samples with companion and synthesized READMEs', async () => {
+        writeFixture(
+            'resources/samples/kafka-to-iceberg.spark',
+            [
+                'pipelineConfig: { language: PySpark }',
+                'jobConfig: { runner: ServerlessSpark }',
+                'nodes:',
+                '  - { id: "1", data: { label: Kafka Source, type: SOURCE, spark_transform: KafkaSource }, position: { x: 0, y: 0 } }',
+                '  - { id: "2", data: { label: Parse Payload, type: STEP, spark_transform: ParsePayload }, position: { x: 200, y: 0 } }',
+                '  - { id: "3", data: { label: Iceberg Sink, type: SINK, spark_transform: IcebergSink }, position: { x: 400, y: 0 } }',
+                'edges:',
+                '  - { source: "1", target: "2" }',
+                '  - { source: "2", target: "3" }',
+                '',
+            ].join('\n')
+        );
+        writeFixture('resources/samples/kafka-to-iceberg.md', '# Kafka to Apache Iceberg Lakehouse Pipeline\n');
+        writeFixture(
+            'resources/samples/generate-mock-data.spark',
+            [
+                'nodes:',
+                '  - { id: a, data: { label: Rate Source, type: SOURCE, spark_transform: RateSource }, position: { x: 0, y: 0 } }',
+                '  - { id: b, data: { label: Console Sink, type: SINK, spark_transform: ConsoleSink }, position: { x: 200, y: 0 } }',
+                'edges:',
+                '  - { source: a, target: b }',
+                '',
+            ].join('\n')
+        );
+        writeFixture('resources/samples/legacy-pipeline.beam', 'nodes: []\n');
+        writeFixture('resources/samples/notes.txt', 'ignored\n');
 
-        const mockSample = samples.find(s => s.filename === 'generate-mock-data.beam');
-        expect(mockSample).toBeDefined();
-        if (mockSample) {
-            expect(mockSample.id).toBe('generate-mock-data');
-            expect(mockSample.title).toBe('Generate Mock Data');
-            expect(mockSample.language).toBe('Java');
-            expect(mockSample.runner).toBe('DirectRunner');
-            expect(mockSample.nodesCount).toBe(3);
-            expect(mockSample.readmeContent).toContain('# Generate Mock Data Pipeline');
-            expect(mockSample.readmeContent).toContain('## Overview');
-            expect(mockSample.readmeContent).toContain('## Pipeline Architecture & Data Flow');
-            expect(mockSample.readmeContent).not.toContain('## Pipeline Nodes & Transforms');
-            expect(mockSample.description).toBe('Pipeline flow: trigger ➔ generate mock data ➔ Log Message');
-        }
+        const samples = await getSamplePipelines({ extensionPath: extensionRoot } as unknown as vscode.ExtensionContext);
+        expect(samples.map((s) => s.filename).sort()).toEqual(['generate-mock-data.spark', 'kafka-to-iceberg.spark']);
 
-        const pubsubSample = samples.find(s => s.filename === 'pubsub-to-bigquery.beam');
-        expect(pubsubSample).toBeDefined();
-        if (pubsubSample) {
-            expect(pubsubSample.id).toBe('pubsub-to-bigquery');
-            expect(pubsubSample.title).toBe('Pubsub To Bigquery');
-            expect(pubsubSample.language).toBe('Java');
-            expect(pubsubSample.runner).toBe('DirectRunner');
-            expect(pubsubSample.nodesCount).toBe(4);
-            expect(pubsubSample.readmeContent).toContain('# Pub/Sub to BigQuery Streaming Pipeline');
-            expect(pubsubSample.readmeContent).toContain('## Pipeline Architecture & Data Flow');
-            expect(pubsubSample.readmeContent).not.toContain('## Pipeline Nodes & Transforms');
-            expect(pubsubSample.description).toBe('Pipeline flow: PubSub Connector ➔ Parse Message ➔ [BigQuery, Log Message]');
-        }
+        const kafka = samples.find((s) => s.filename === 'kafka-to-iceberg.spark');
+        expect(kafka).toMatchObject({
+            id: 'kafka-to-iceberg',
+            title: 'Kafka To Iceberg',
+            language: 'PySpark',
+            runner: 'ServerlessSpark',
+            nodesCount: 3,
+            description: 'Pipeline flow: Kafka Source ➔ Parse Payload ➔ Iceberg Sink',
+        });
+        expect(kafka?.readmeContent).toBe('# Kafka to Apache Iceberg Lakehouse Pipeline\n');
 
-        const wordcountSample = samples.find(s => s.filename === 'textio-wordcount.beam');
-        expect(wordcountSample).toBeDefined();
-        if (wordcountSample) {
-            expect(wordcountSample.id).toBe('textio-wordcount');
-            expect(wordcountSample.runner).toBe('DirectRunner');
-            expect(wordcountSample.nodesCount).toBe(5);
-            expect(wordcountSample.readmeContent).toContain('# TextIO WordCount Batch Pipeline');
-            expect(wordcountSample.readmeContent).toContain('## Pipeline Architecture & Data Flow');
-            expect(wordcountSample.readmeContent).not.toContain('## Pipeline Nodes & Transforms');
-        }
+        const mock = samples.find((s) => s.filename === 'generate-mock-data.spark');
+        expect(mock).toMatchObject({
+            id: 'generate-mock-data',
+            title: 'Generate Mock Data',
+            language: 'PySpark',
+            runner: 'Local',
+            nodesCount: 2,
+            description: 'Pipeline flow: Rate Source ➔ Console Sink',
+        });
+        expect(mock?.readmeContent).toContain('# Generate Mock Data');
+        expect(mock?.readmeContent).toContain('## Overview');
+        expect(mock?.readmeContent).toContain('## Pipeline Architecture & Data Flow');
+        expect(mock?.readmeContent).not.toContain('## Pipeline Nodes & Transforms');
+    });
 
-        const kafkaIcebergSample = samples.find(s => s.filename === 'kafka-to-iceberg.beam');
-        expect(kafkaIcebergSample).toBeDefined();
-        if (kafkaIcebergSample) {
-            expect(kafkaIcebergSample.id).toBe('kafka-to-iceberg');
-            expect(kafkaIcebergSample.title).toBe('Kafka To Iceberg');
-            expect(kafkaIcebergSample.runner).toBe('DirectRunner');
-            expect(kafkaIcebergSample.nodesCount).toBe(4);
-            expect(kafkaIcebergSample.readmeContent).toContain('# Kafka to Apache Iceberg Lakehouse Pipeline');
-            expect(kafkaIcebergSample.readmeContent).toContain('## Pipeline Architecture & Data Flow');
-            expect(kafkaIcebergSample.readmeContent).not.toContain('## Pipeline Nodes & Transforms');
-        }
+    it('returns an empty list when no samples directory exists', async () => {
+        const samples = await getSamplePipelines({ extensionPath: extensionRoot } as unknown as vscode.ExtensionContext);
+        expect(samples).toEqual([]);
     });
 });
-

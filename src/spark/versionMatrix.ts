@@ -160,7 +160,7 @@ const DEFAULT_BIGTABLE_GCS_JAR = 'gs://spark-lib/bigtable/spark-bigtable_2.13-0.
 const LOCAL_BIGQUERY_MAVEN =
   'com.google.cloud.spark:spark-bigquery-with-dependencies_2.13:0.42.1';
 const LOCAL_ICEBERG_MAVEN =
-  'org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.9.0';
+  'org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1';
 const LOCAL_GCS_CONNECTOR_MAVEN =
   'com.google.cloud.bigdataoss:gcs-connector:hadoop3-2.2.25';
 const LOCAL_HADOOP_AWS_MAVEN = 'org.apache.hadoop:hadoop-aws:3.4.1';
@@ -206,7 +206,9 @@ export const RUNTIME_PROFILES: Readonly<Record<SparkRuntimeTarget, RuntimeProfil
     id: 'local',
     runner: 'Local',
     runtimeVersion: 'local',
-    sparkVersion: '4.2.0',
+    // NOTE: Keep this at Spark 4.0 to match the local Maven coordinates and the
+    // generated pyspark pin. No Iceberg runtime exists for Spark 4.2 yet.
+    sparkVersion: '4.0.1',
     pythonVersion: '3.13',
     javaVersion: '21',
     scalaVersion: '2.13',

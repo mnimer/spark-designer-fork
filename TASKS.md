@@ -238,16 +238,16 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
-| [T1](#t1) | 🧪 Testing | Unit tests for `src/spark/versionMatrix.ts` and `src/shared/sparkDagRules.ts` (streaming propagation, Stream–Static Join detection, Join handle arity). | ⬜ Not Started |
-| [T2](#t2) | 🧪 Testing | Unit tests for `src/shared/executionPlanner.ts` (auto-cache on batch fan-out, multi-sink `foreachBatch` grouping, DLQ splits, and connector JAR resolution). | ⬜ Not Started |
-| [T3](#t3) | 🧪 Testing | Unit tests for `src/shared/dagValidator.ts` covering cycles, orphan nodes, missing watermarks on stream–stream outer joins, and missing checkpoints. | ⬜ Not Started |
-| [T4](#t4) | 🧪 Testing | Unit tests for `propertyFormRegistry.test.ts` verifying 100% form registration coverage across all 38 Sources, 37 Sinks, and 29 Steps, plus skill invariant tests verifying every `sparkTransform` resolves to a skill in `resources/codegen-skills/`. | ⬜ Not Started |
-| [T5](#t5) | 🧪 Testing | Unit tests for `SparkTreeProvider` (`sparkTree.ts`), `PipelineRunner.ts`, `jobIdDetector.ts`, `consoleUrl.ts`, and `envSanitizer.ts` Spark denylist keys. | ⬜ Not Started |
-| [T6](#t6) | 🧪 Testing | Replace `beam-architecture-evaluator.ts` with `spark-architecture-evaluator.ts` (`SparkArchitectureAgent`) auditing Catalyst optimization rules, `transform(dfs)` separation, `.cache()`/`.unpersist()` pairing, `foreachBatch` idempotency, watermark placement, and Managed Spark classpath rules. | ⬜ Not Started |
-| [T7](#t7) | 🧪 Testing | Update `deterministic-gate.ts` to run `python3 -m py_compile`, verify `transform(dfs)` signature presence, and scan for banned patterns (`SparkSession.builder.master("local")` in cluster/serverless scripts, `spark._jsc`, hardcoded credentials). | ⬜ Not Started |
-| [T8](#t8) | 🧪 Testing | Update `pipeline-spec-evaluator.ts` and `packaging-evaluator.ts` to audit `spark_transform` properties, `ExecutionPlan` compliance, `requirements.txt`, and `run_*.sh` flags. | ⬜ Not Started |
-| [T9](#t9) | 🧪 Testing | Update `arbiter-evaluator.ts` to emit actionable **Skill Remediation Directives** targeting `resources/codegen-skills/<skill>/SKILL.md`. | ⬜ Not Started |
-| [T10](#t10) | 🧪 Testing | Create automated offline `pytest` runner for generated `tests/test_pipeline.py` using a local PySpark 4.x test session. | ⬜ Not Started |
+| [T1](#t1) | 🧪 Testing | Unit tests for `src/spark/versionMatrix.ts` and `src/shared/sparkDagRules.ts` (streaming propagation, Stream–Static Join detection, Join handle arity). | ✅ Done |
+| [T2](#t2) | 🧪 Testing | Unit tests for `src/shared/executionPlanner.ts` (auto-cache on batch fan-out, multi-sink `foreachBatch` grouping, DLQ splits, and connector JAR resolution). | ✅ Done |
+| [T3](#t3) | 🧪 Testing | Unit tests for `src/shared/dagValidator.ts` covering cycles, orphan nodes, missing watermarks on stream–stream outer joins, and missing checkpoints. | ✅ Done |
+| [T4](#t4) | 🧪 Testing | Unit tests for `propertyFormRegistry.test.ts` verifying 100% form registration coverage across all 38 Sources, 37 Sinks, and 29 Steps, plus skill invariant tests verifying every `sparkTransform` resolves to a skill in `resources/codegen-skills/`. | ✅ Done |
+| [T5](#t5) | 🧪 Testing | Unit tests for `SparkTreeProvider` (`sparkTree.ts`), `PipelineRunner.ts`, `jobIdDetector.ts`, `consoleUrl.ts`, and `envSanitizer.ts` Spark denylist keys. | ✅ Done |
+| [T6](#t6) | 🧪 Testing | Replace `beam-architecture-evaluator.ts` with `spark-architecture-evaluator.ts` (`SparkArchitectureAgent`) auditing Catalyst optimization rules, `transform(dfs)` separation, `.cache()`/`.unpersist()` pairing, `foreachBatch` idempotency, watermark placement, and Managed Spark classpath rules. | ✅ Done |
+| [T7](#t7) | 🧪 Testing | Update `deterministic-gate.ts` to run `python3 -m py_compile`, verify `transform(dfs)` signature presence, and scan for banned patterns (`SparkSession.builder.master("local")` in cluster/serverless scripts, `spark._jsc`, hardcoded credentials). | ✅ Done |
+| [T8](#t8) | 🧪 Testing | Update `pipeline-spec-evaluator.ts` and `packaging-evaluator.ts` to audit `spark_transform` properties, `ExecutionPlan` compliance, `requirements.txt`, and `run_*.sh` flags. | ✅ Done |
+| [T9](#t9) | 🧪 Testing | Update `arbiter-evaluator.ts` to emit actionable **Skill Remediation Directives** targeting `resources/codegen-skills/<skill>/SKILL.md`. | ✅ Done |
+| [T10](#t10) | 🧪 Testing | Create automated offline `pytest` runner for generated `tests/test_pipeline.py` using a local PySpark 4.x test session. | ✅ Done |
 
 ### Phase 9 — Starter Samples & End-to-End Integration Pipelines (`I1`–`I10`)
 

@@ -828,7 +828,7 @@ export class SparkTreeProvider implements vscode.TreeDataProvider<DataItem> {
                 vscode.TreeItemCollapsibleState.Collapsed,
                 'category-serverless-batches'
             );
-            serverlessBatchesCategory.iconPath = new vscode.ThemeIcon('Flame');
+            serverlessBatchesCategory.iconPath = new vscode.ThemeIcon('flame');
 
             const clusterJobsCategory = new DataItem(
                 'Dataproc Cluster Jobs',

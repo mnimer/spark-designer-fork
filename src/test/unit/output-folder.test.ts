@@ -1,5 +1,5 @@
 /**
- * @fileoverview Unit tests for output folder resolution and next available beam filename helpers.
+ * @fileoverview Unit tests for output folder resolution and next available spark filename helpers.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
@@ -14,45 +14,45 @@ import {
 describe('resolveOutputFolder', () => {
     const ws = path.resolve('/workspace/project');
 
-    it('returns empty string when no beam path and no override are provided', () => {
+    it('returns empty string when no spark path and no override are provided', () => {
         const result = resolveOutputFolder(undefined, undefined, ws);
         expect(result).toBe('');
     });
 
-    it('derives default folder from beam file path', () => {
-        const beamPath = path.join('/a', 'b', 'my.beam');
+    it('derives default folder from spark file path', () => {
+        const sparkPath = path.join('/a', 'b', 'my.spark');
         const expected = path.join('/a', 'b', 'my');
-        const result = resolveOutputFolder(beamPath, undefined, ws);
+        const result = resolveOutputFolder(sparkPath, undefined, ws);
         expect(result).toBe(expected);
     });
 
     it('returns absolute override directly', () => {
-        const beamPath = path.join('/a', 'b', 'my.beam');
+        const sparkPath = path.join('/a', 'b', 'my.spark');
         const absoluteOverride = path.resolve('/custom/output/folder');
-        const result = resolveOutputFolder(beamPath, absoluteOverride, ws);
+        const result = resolveOutputFolder(sparkPath, absoluteOverride, ws);
         expect(result).toBe(absoluteOverride);
     });
 
     it('resolves relative override with workspace folder', () => {
-        const beamPath = path.join('/a', 'b', 'my.beam');
+        const sparkPath = path.join('/a', 'b', 'my.spark');
         const relativeOverride = path.join('build', 'output');
         const expected = path.join(ws, relativeOverride);
-        const result = resolveOutputFolder(beamPath, relativeOverride, ws);
+        const result = resolveOutputFolder(sparkPath, relativeOverride, ws);
         expect(result).toBe(expected);
     });
 
     it('falls back to default for relative override when workspace folder is undefined', () => {
-        const beamPath = path.join('/a', 'b', 'my.beam');
+        const sparkPath = path.join('/a', 'b', 'my.spark');
         const relativeOverride = path.join('build', 'output');
         const expected = path.join('/a', 'b', 'my');
-        const result = resolveOutputFolder(beamPath, relativeOverride, undefined);
+        const result = resolveOutputFolder(sparkPath, relativeOverride, undefined);
         expect(result).toBe(expected);
     });
 
     it('falls back to default when override contains only whitespace', () => {
-        const beamPath = path.join('/a', 'b', 'my.beam');
+        const sparkPath = path.join('/a', 'b', 'my.spark');
         const expected = path.join('/a', 'b', 'my');
-        const result = resolveOutputFolder(beamPath, '   ', ws);
+        const result = resolveOutputFolder(sparkPath, '   ', ws);
         expect(result).toBe(expected);
     });
 });

@@ -29,12 +29,12 @@ Return ONLY a valid JSON object matching the response schema:
 Generate all of the following files in every response:
 1. `src/pipeline.py` — Primary PySpark 4.x pipeline module implementing the mandatory 3-phase testable architecture (`read_sources`, `transform`, `write_sinks`, and `main`).
 2. `tests/test_pipeline.py` — Offline `pytest` unit test suite that tests `transform(dfs, config)` using in-memory PySpark DataFrames (`spark.createDataFrame(...)`) without external cloud or network I/O.
-3. `requirements.txt` — Python dependencies required by the pipeline and test suite (including `pyspark>={{spark_version}}`, `pytest>=8.0.0`, and any connector packages listed in `ExecutionPlan.runtimeArtifacts.pipPackages`).
+3. `requirements.txt` — Python dependencies required by the pipeline and test suite (including `pyspark=={{spark_version}}.*`, `pytest>=8.0.0`, and any connector packages listed in `ExecutionPlan.runtimeArtifacts.pipPackages`). Pin `pyspark` to the `{{spark_version}}` minor line with `=={{spark_version}}.*`. Never use an open range such as `pyspark>={{spark_version}}`. If pip installs a newer Spark minor, the local Maven connector coordinates no longer match and `run_local.sh` fails.
 4. `Dockerfile` — Hardened non-root custom container image for GCP Serverless Spark (`runner-serverless-spark`).
 5. `run_local.sh` — Local `spark-submit` / `pytest` / Spark Connect runner script (`runner-local`).
 6. `run_dataproc_cluster.sh` — `gcloud dataproc jobs submit pyspark` runner script (`runner-dataproc-cluster`).
 7. `run_serverless_spark.sh` — `gcloud dataproc batches submit pyspark` runner script (`runner-serverless-spark`).
-8. `README.md` — Concise architecture, configuration, testing, and deployment guide for the generated pipeline.
+8. `README.md` — Concise architecture, configuration, testing, and deployment guide for the generated pipeline. In the local run section, state that `./run_local.sh` needs no manual setup. It creates `.venv` from `requirements.txt`, selects or downloads a JDK 21, and resolves `--packages` from Maven Central. List the opt-outs: `PYTHON_BIN`, `SKIP_VENV_BOOTSTRAP=true`, `AUTO_INSTALL_JDK=false`, and `SPARK_IVY_SETTINGS`.
 
 ### 3. Mandatory 3-Phase Testable Separation in `src/pipeline.py`
 

@@ -895,3 +895,464 @@ describe('streaming foreachBatch multi-sink and batch-sink grouping (A12)', () =
         expect(plan.foreachBatchSinkIds).toEqual(['s_spanner']);
     });
 });
+
+describe('batch fan-out auto-cache boundary and failure conditions (T2)', () => {
+    it('does not cache a linear batch chain where every node has out-degree one', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('flt', 'STEP', 'Filter'),
+            makeNode('sink', 'SINK', 'ParquetSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [makeEdge('src', 'flt'), makeEdge('flt', 'sink')]);
+        expect(plan.cacheDirectives).toEqual([]);
+        expect(plan.cachedNodeIds).toEqual([]);
+        expect(plan.unpersistPoints).toEqual({});
+    });
+
+    it('caches a batch source that fans out directly to two sinks and unpersists after the last sink', () => {
+        const nodes = [
+            makeNode('bq', 'SOURCE', 'BigQuerySource'),
+            makeNode('s1', 'SINK', 'ParquetSink'),
+            makeNode('s2', 'SINK', 'JsonSink'),
+            makeNode('s3', 'SINK', 'CsvSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('bq', 's1'),
+            makeEdge('bq', 's2'),
+            makeEdge('bq', 's3'),
+        ]);
+        expect(plan.cacheDirectives).toEqual([
+            { nodeId: 'bq', reason: 'batch_fanout', outDegree: 3, unpersistAfterNodeIds: ['s3'] },
+        ]);
+        expect(plan.unpersistPoints).toEqual({ s3: ['bq'] });
+    });
+
+    it('caches the static lookup branch of a Stream-Static Join but never the streaming branch', () => {
+        const nodes = [
+            makeNode('kafka', 'SOURCE', 'KafkaSource'),
+            makeNode('dim', 'SOURCE', 'BigQuerySource'),
+            makeNode('join', 'STEP', 'Join'),
+            makeNode('dim_snapshot', 'SINK', 'ParquetSink'),
+            makeNode('out', 'SINK', 'DeltaSink'),
+        ];
+        const edges = [
+            makeEdge('kafka', 'join', undefined, 'left'),
+            makeEdge('dim', 'join', undefined, 'right'),
+            makeEdge('dim', 'dim_snapshot'),
+            makeEdge('join', 'out'),
+        ];
+        const plan = buildExecutionPlan(nodes, edges);
+        expect(plan.nodes.join.joinMode).toBe('stream_static');
+        expect(plan.cachedNodeIds).toEqual(['dim']);
+        expect(plan.cacheDirectives[0]).toMatchObject({ nodeId: 'dim', reason: 'batch_fanout', outDegree: 2 });
+        expect(plan.nodes.dim_snapshot.executionMode).toBe('batch');
+        expect(plan.nodes.kafka.isCached).toBe(false);
+    });
+
+    it('never caches SINK nodes even when a non-terminal sink fans out', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('mid_sink', 'SINK', 'DeltaSink'),
+            makeNode('a', 'STEP', 'Filter'),
+            makeNode('b', 'STEP', 'Select'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('src', 'mid_sink'),
+            makeEdge('mid_sink', 'a'),
+            makeEdge('mid_sink', 'b'),
+        ]);
+        expect(plan.cachedNodeIds).toEqual([]);
+        // A sink with outgoing edges is not terminal, so it keeps its topological slot.
+        expect(plan.sortedNodeIds.indexOf('mid_sink')).toBeLessThan(plan.sortedNodeIds.indexOf('a'));
+    });
+
+    it('lets CachePersist win over a suppress override and treats unknown cacheOutput values as auto', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('persist', 'STEP', 'CachePersist', { cacheOutput: 'never' }),
+            makeNode('maybe', 'STEP', 'Select', { cacheOutput: 'maybe' }),
+            makeNode('s1', 'SINK', 'ParquetSink'),
+            makeNode('s2', 'SINK', 'JsonSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('src', 'persist'),
+            makeEdge('persist', 'maybe'),
+            makeEdge('maybe', 's1'),
+            makeEdge('maybe', 's2'),
+        ]);
+        const reasons = Object.fromEntries(plan.cacheDirectives.map((d) => [d.nodeId, d.reason]));
+        expect(reasons).toEqual({ persist: 'cache_persist_step', maybe: 'batch_fanout' });
+    });
+
+    it('schedules no unpersist point for a forced cache on a node without descendants', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('leaf', 'STEP', 'Select', { cacheOutput: true }),
+        ];
+        const plan = buildExecutionPlan(nodes, [makeEdge('src', 'leaf')]);
+        expect(plan.cacheDirectives).toEqual([
+            { nodeId: 'leaf', reason: 'manual_override', outDegree: 0, unpersistAfterNodeIds: [] },
+        ]);
+        expect(plan.unpersistPoints).toEqual({});
+    });
+
+    it('emits cache directives without unpersist points when the graph is cyclic', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('a', 'STEP', 'Filter'),
+            makeNode('b', 'STEP', 'Select'),
+            makeNode('sink', 'SINK', 'ParquetSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('src', 'a'),
+            makeEdge('a', 'b'),
+            makeEdge('b', 'a'),
+            makeEdge('a', 'sink'),
+        ]);
+        expect(plan.sortedNodeIds).toEqual([]);
+        expect(plan.cacheDirectives).toEqual([
+            { nodeId: 'a', reason: 'batch_fanout', outDegree: 2, unpersistAfterNodeIds: [] },
+        ]);
+        expect(plan.unpersistPoints).toEqual({});
+    });
+});
+
+describe('DLQ split boundary and failure conditions (T2)', () => {
+    it('emits a split with no valid targets when only the error handle is wired', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('udf', 'STEP', 'PythonUdf'),
+            makeNode('dlq', 'SINK', 'JsonSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [makeEdge('src', 'udf'), makeEdge('udf', 'dlq', 'error')]);
+        expect(plan.dlqSplitPoints).toEqual([
+            {
+                nodeId: 'udf',
+                sparkTransform: 'PythonUdf',
+                mechanism: 'try_except_error_col',
+                validTargetIds: [],
+                errorTargetIds: ['dlq'],
+            },
+        ]);
+        // A single error edge gives out-degree one, so no DLQ cache applies.
+        expect(plan.cachedNodeIds).toEqual([]);
+    });
+
+    it('emits no split when an error-capable step has no error edge wired', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('parse', 'STEP', 'ParsePayload'),
+            makeNode('a', 'SINK', 'ParquetSink'),
+            makeNode('b', 'SINK', 'JsonSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('src', 'parse'),
+            makeEdge('parse', 'a', 'valid'),
+            makeEdge('parse', 'b'),
+        ]);
+        expect(plan.dlqSplitPoints).toEqual([]);
+        expect(plan.cacheDirectives[0].reason).toBe('batch_fanout');
+    });
+
+    it('deduplicates repeated error and valid targets and keeps target order', () => {
+        const nodes = [
+            makeNode('src', 'SOURCE', 'ParquetSource'),
+            makeNode('flt', 'STEP', 'Filter'),
+            makeNode('good', 'SINK', 'ParquetSink'),
+            makeNode('bad1', 'SINK', 'JsonSink'),
+            makeNode('bad2', 'SINK', 'CsvSink'),
+        ];
+        const edges: DagEdge[] = [
+            makeEdge('src', 'flt'),
+            makeEdge('flt', 'good', 'valid'),
+            { id: 'dup_valid', source: 'flt', target: 'good' },
+            makeEdge('flt', 'bad1', 'error'),
+            { id: 'dup_error', source: 'flt', target: 'bad1', sourceHandle: 'error' },
+            makeEdge('flt', 'bad2', 'error'),
+        ];
+        const plan = buildExecutionPlan(nodes, edges);
+        expect(plan.dlqSplitPoints).toEqual([
+            {
+                nodeId: 'flt',
+                sparkTransform: 'Filter',
+                mechanism: 'negated_predicate',
+                validTargetIds: ['good'],
+                errorTargetIds: ['bad1', 'bad2'],
+            },
+        ]);
+        expect(plan.cacheDirectives[0]).toMatchObject({ nodeId: 'flt', reason: 'dlq_split', outDegree: 5 });
+    });
+
+    it('maps corrupt-record sources and ParseMessage steps to the _corrupt_record mechanism', () => {
+        const nodes = [
+            makeNode('json', 'SOURCE', 'JsonSource'),
+            makeNode('msg', 'STEP', 'ParseMessage'),
+            makeNode('ok', 'SINK', 'ParquetSink'),
+            makeNode('src_dlq', 'SINK', 'TextSink'),
+            makeNode('msg_dlq', 'SINK', 'TextSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('json', 'msg', 'valid'),
+            makeEdge('json', 'src_dlq', 'error'),
+            makeEdge('msg', 'ok', 'valid'),
+            makeEdge('msg', 'msg_dlq', 'error'),
+        ]);
+        expect(plan.dlqSplitPoints.map((s) => [s.nodeId, s.mechanism])).toEqual([
+            ['json', '_corrupt_record'],
+            ['msg', '_corrupt_record'],
+        ]);
+    });
+
+    it('records streaming DLQ splits without caching the streaming parse step', () => {
+        const nodes = [
+            makeNode('kafka', 'SOURCE', 'KafkaSource'),
+            makeNode('dq', 'STEP', 'DataQualityAssert'),
+            makeNode('ok', 'SINK', 'DeltaSink'),
+            makeNode('bad', 'SINK', 'ConsoleSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [
+            makeEdge('kafka', 'dq'),
+            makeEdge('dq', 'ok', 'valid'),
+            makeEdge('dq', 'bad', 'error'),
+        ]);
+        expect(plan.dlqSplitPoints).toEqual([
+            {
+                nodeId: 'dq',
+                sparkTransform: 'DataQualityAssert',
+                mechanism: 'expectation_violation',
+                validTargetIds: ['ok'],
+                errorTargetIds: ['bad'],
+            },
+        ]);
+        expect(plan.cachedNodeIds).toEqual([]);
+    });
+});
+
+describe('streaming foreachBatch grouping boundary conditions (T2)', () => {
+    it('honors explicit data.streamingSinkMode overrides in both directions', () => {
+        const spannerNative = makeNode('spanner', 'SINK', 'SpannerSink');
+        spannerNative.data = { ...spannerNative.data, streamingSinkMode: 'native' };
+        const deltaForeach = makeNode('delta', 'SINK', 'DeltaSink');
+        deltaForeach.data = { ...deltaForeach.data, streamingSinkMode: 'foreachBatch' };
+
+        const nativePlan = buildExecutionPlan(
+            [makeNode('rate', 'SOURCE', 'RateSource'), spannerNative],
+            [makeEdge('rate', 'spanner')]
+        );
+        expect(nativePlan.streamingSinkGroups[0]).toMatchObject({ id: 'native_stream_1', mode: 'native' });
+        expect(nativePlan.foreachBatchSinkIds).toEqual([]);
+
+        const foreachPlan = buildExecutionPlan(
+            [makeNode('rate', 'SOURCE', 'RateSource'), deltaForeach],
+            [makeEdge('rate', 'delta')]
+        );
+        expect(foreachPlan.streamingSinkGroups[0]).toMatchObject({
+            id: 'foreach_batch_1',
+            mode: 'foreachBatch',
+            requiresBatchCache: false,
+        });
+        expect(foreachPlan.nodes.delta.isForeachBatchSink).toBe(true);
+    });
+
+    it('merges multi-sink group settings from the first non-append mode, trigger override, and checkpoint', () => {
+        const nodes = [
+            makeNode('kafka', 'SOURCE', 'KafkaSource'),
+            makeNode('a', 'SINK', 'DeltaSink', { outputMode: 'bogus' }),
+            makeNode('b', 'SINK', 'DeltaSink', {
+                outputMode: 'update',
+                triggerType: 'availableNow',
+                checkpointLocation: 'gs://ckpt/explicit_b',
+            }),
+            makeNode('c', 'SINK', 'DeltaSink', {
+                outputMode: 'complete',
+                triggerType: 'continuous',
+                triggerInterval: '1 second',
+                checkpointLocation: 'gs://ckpt/explicit_c',
+            }),
+        ];
+        const plan = buildExecutionPlan(
+            nodes,
+            [makeEdge('kafka', 'a'), makeEdge('kafka', 'b'), makeEdge('kafka', 'c')],
+            { checkpointRoot: 'gs://ckpt/root', defaultTriggerInterval: '30 seconds' }
+        );
+        expect(plan.streamingSinkGroups).toHaveLength(1);
+        const group = plan.streamingSinkGroups[0];
+        expect(group.sourceSubqueryNodeId).toBe('kafka');
+        expect(group.sinkIds).toEqual(['a', 'b', 'c']);
+        expect(group.settings).toEqual({
+            outputMode: 'update',
+            triggerType: 'availableNow',
+            checkpointLocation: 'gs://ckpt/explicit_b',
+        });
+        expect(group.sinkSettingsById.a).toEqual({
+            outputMode: 'append',
+            triggerType: 'processingTime',
+            triggerInterval: '30 seconds',
+            checkpointLocation: 'gs://ckpt/root/a',
+        });
+    });
+
+    it('sanitizes the txnAppId from jobName, pipelineName, or appName fallbacks', () => {
+        const nodes = [makeNode('rate src!', 'SOURCE', 'RateSource'), makeNode('sink', 'SINK', 'SpannerSink')];
+        const edges = [makeEdge('rate src!', 'sink')];
+
+        expect(buildExecutionPlan(nodes, edges, { jobName: '  My Job / v2 ' }).streamingSinkGroups[0].txnAppId).toBe(
+            'My_Job_v2_rate_src'
+        );
+        expect(buildExecutionPlan(nodes, edges, { jobName: '   ', pipelineName: 'orders' }).streamingSinkGroups[0].txnAppId).toBe(
+            'orders_rate_src'
+        );
+        expect(buildExecutionPlan(nodes, edges, { appName: 'app' }).streamingSinkGroups[0].txnAppId).toBe('app_rate_src');
+        expect(buildExecutionPlan(nodes, edges, { jobName: '!!!' }).streamingSinkGroups[0].txnAppId).toBe(
+            'spark_app_rate_src'
+        );
+        expect(buildExecutionPlan(nodes, edges).streamingSinkGroups[0].txnAppId).toBe('spark_pipeline_rate_src');
+    });
+
+    it('splits sinks before and after a Stream-Stream Join into separate queries', () => {
+        const nodes = [
+            makeNode('clicks', 'SOURCE', 'KafkaSource'),
+            makeNode('views', 'SOURCE', 'KinesisSource'),
+            makeNode('raw_clicks', 'SINK', 'DeltaSink'),
+            makeNode('join', 'STEP', 'Join'),
+            makeNode('joined_a', 'SINK', 'DeltaSink'),
+            makeNode('joined_b', 'SINK', 'IcebergSink'),
+        ];
+        const edges = [
+            makeEdge('clicks', 'raw_clicks'),
+            makeEdge('clicks', 'join', undefined, 'left'),
+            makeEdge('views', 'join', undefined, 'right'),
+            makeEdge('join', 'joined_a'),
+            makeEdge('join', 'joined_b'),
+        ];
+        const plan = buildExecutionPlan(nodes, edges);
+        expect(plan.nodes.join.joinMode).toBe('stream_stream');
+        expect(plan.streamingSinkGroups.map((g) => [g.sourceSubqueryNodeId, g.sinkIds, g.mode])).toEqual([
+            ['clicks', ['raw_clicks'], 'native'],
+            ['join', ['joined_a', 'joined_b'], 'foreachBatch'],
+        ]);
+        expect(plan.foreachBatchSinkIds).toEqual(['joined_a', 'joined_b']);
+    });
+
+    it('excludes batch sinks of a streaming pipeline from every streaming group', () => {
+        const nodes = [
+            makeNode('kafka', 'SOURCE', 'KafkaSource'),
+            makeNode('stream_out', 'SINK', 'DeltaSink'),
+            makeNode('bq', 'SOURCE', 'BigQuerySource'),
+            makeNode('batch_out', 'SINK', 'ParquetSink'),
+        ];
+        const plan = buildExecutionPlan(nodes, [makeEdge('kafka', 'stream_out'), makeEdge('bq', 'batch_out')]);
+        expect(plan.pipelineMode).toBe('streaming');
+        expect(plan.streamingSinkGroups.flatMap((g) => g.sinkIds)).toEqual(['stream_out']);
+        expect(plan.nodes.batch_out.streamingSinkSettings).toBeUndefined();
+        expect(plan.nodes.batch_out.isForeachBatchSink).toBe(false);
+    });
+
+    it('returns no streaming groups for a pure batch pipeline', () => {
+        const plan = buildExecutionPlan(
+            [makeNode('src', 'SOURCE', 'ParquetSource'), makeNode('sink', 'SINK', 'SpannerSink')],
+            [makeEdge('src', 'sink')]
+        );
+        expect(plan.streamingSinkGroups).toEqual([]);
+        expect(plan.foreachBatchSinkIds).toEqual([]);
+        expect(plan.nodes.sink.isForeachBatchSink).toBe(false);
+    });
+});
+
+describe('resolveStreamingSinkSettings boundary conditions (T2)', () => {
+    it('falls back to append and processingTime for invalid modes and invalid pipeline defaults', () => {
+        const sink = makeNode('s', 'SINK', 'DeltaSink', { outputMode: 'upsert', triggerType: 'hourly' });
+        expect(resolveStreamingSinkSettings(sink, { defaultTriggerType: 'sometimes' })).toEqual({
+            outputMode: 'append',
+            triggerType: 'processingTime',
+            triggerInterval: '10 seconds',
+            checkpointLocation: '',
+        });
+    });
+
+    it('omits triggerInterval for availableNow and once triggers and keeps it for continuous', () => {
+        expect(
+            resolveStreamingSinkSettings(makeNode('s', 'SINK', 'DeltaSink', { triggerType: 'once', triggerInterval: '5 s' }))
+        ).toEqual({ outputMode: 'append', triggerType: 'once', checkpointLocation: '' });
+        expect(
+            resolveStreamingSinkSettings(makeNode('s', 'SINK', 'DeltaSink'), { defaultTriggerType: 'availableNow' })
+        ).toEqual({ outputMode: 'append', triggerType: 'availableNow', checkpointLocation: '' });
+        expect(
+            resolveStreamingSinkSettings(makeNode('s', 'SINK', 'DeltaSink', { triggerType: 'continuous' }))
+        ).toMatchObject({ triggerType: 'continuous', triggerInterval: '10 seconds' });
+    });
+
+    it('trims trailing slashes from checkpointRoot and reads top-level node properties', () => {
+        const yamlSink = { id: 'yaml_sink', type: 'SINK', properties: { outputMode: 'complete' } } as DagNode;
+        expect(resolveStreamingSinkSettings(yamlSink, { checkpointRoot: ' gs://ckpt/root/// ' })).toEqual({
+            outputMode: 'complete',
+            triggerType: 'processingTime',
+            triggerInterval: '10 seconds',
+            checkpointLocation: 'gs://ckpt/root/yaml_sink',
+        });
+    });
+});
+
+describe('connector JAR and package resolution through the plan (T2)', () => {
+    it('emits local Maven coordinates for Kafka, BigQuery, and cloud storage on the Local runner', () => {
+        const nodes = [
+            makeNode('kafka', 'SOURCE', 'KafkaSource'),
+            makeNode('bq', 'SINK', 'BigQuerySink'),
+            makeNode('pq', 'SINK', 'ParquetSink', { path: 's3a://lake/out' }),
+        ];
+        const plan = buildExecutionPlan(nodes, [makeEdge('kafka', 'bq'), makeEdge('kafka', 'pq')], {
+            runner: 'Local',
+            useSparkConnect: true,
+        });
+        const sparkVersion = plan.runtimeArtifacts.profile.sparkVersion;
+        expect(plan.runtimeArtifacts.profile.id).toBe('local');
+        expect(plan.runtimeArtifacts.mavenPackages).toEqual(
+            expect.arrayContaining([
+                `org.apache.spark:spark-sql-kafka-0-10_2.13:${sparkVersion}`,
+                'com.google.cloud.spark:spark-bigquery-with-dependencies_2.13:0.42.1',
+                'org.apache.hadoop:hadoop-aws:3.4.1',
+            ])
+        );
+        expect(plan.runtimeArtifacts.preinstalledConnectors).toEqual([]);
+        expect(plan.runtimeArtifacts.pipPackages).toContain('google-cloud-spark-connect');
+    });
+
+    it('deduplicates repeated connector JARs and merges jobConfig custom JARs on Dataproc', () => {
+        const nodes = [
+            makeNode('sp1', 'SOURCE', 'SpannerSource'),
+            makeNode('sp2', 'SINK', 'SpannerSink'),
+            makeNode('jdbc', 'SINK', 'JdbcSink', { driverJarUri: 'gs://jars/pg.jar', engine: 'mssql' }),
+        ];
+        const plan = buildExecutionPlan(nodes, [makeEdge('sp1', 'sp2'), makeEdge('sp1', 'jdbc')], {
+            runner: 'DataprocCluster',
+            customJarUris: ['gs://jars/pg.jar', 'gs://jars/udf.jar'],
+        });
+        expect(plan.runtimeArtifacts.profile.id).toBe('cluster_3.0');
+        expect(plan.runtimeArtifacts.gcsJars).toEqual([
+            'gs://spark-lib/spanner/spark-4.0-spanner-1.5.0.jar',
+            'gs://jars/pg.jar',
+            'gs://jars/udf.jar',
+        ]);
+        expect(plan.runtimeArtifacts.sparkProperties).toEqual({ 'dataproc.artifacts.remove': 'conscrypt' });
+    });
+
+    it('still resolves runtime artifacts when the graph is cyclic or nodes lack a transform', () => {
+        const blank: DagNode = { id: 'blank', data: { type: 'STEP' } };
+        const nodes = [
+            makeNode('bq', 'SOURCE', 'BigQuerySource'),
+            makeNode('a', 'STEP', 'Filter'),
+            makeNode('b', 'STEP', 'Select'),
+            blank,
+        ];
+        const plan = buildExecutionPlan(
+            nodes,
+            [makeEdge('bq', 'a'), makeEdge('a', 'b'), makeEdge('b', 'a')],
+            { runner: 'ServerlessSpark', runtimeVersion: '3.0', tier: 'premium' }
+        );
+        expect(plan.sortedNodeIds).toEqual([]);
+        expect(plan.runtimeArtifacts.profile.id).toBe('serverless_3.0');
+        expect(plan.runtimeArtifacts.tier).toBe('premium');
+        expect(plan.runtimeArtifacts.preinstalledConnectors).toEqual(['spark-bigquery']);
+        expect(plan.nodes.blank.sparkTransform).toBe('');
+    });
+});

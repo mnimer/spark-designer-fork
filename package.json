@@ -209,6 +209,7 @@
     "package": "vsce package",
     "pretest": "npm run compile && npm run typecheck:webview && npm run lint",
     "typecheck:webview": "npm --prefix webview run typecheck",
+    "typecheck:integration": "tsc -p tsconfig.integration.json",
     "lint": "eslint src",
     "test": "npm run test:unit",
     "test:unit": "vitest run",
@@ -226,6 +227,7 @@
     "test:integration:sinks:python": "vitest run --config vitest.integration.config.mts src/test/integration/sinks/python",
     "test:integration:steps:java": "vitest run --config vitest.integration.config.mts src/test/integration/steps/java",
     "test:integration:steps:python": "vitest run --config vitest.integration.config.mts src/test/integration/steps/python",
+    "test:integration:pytest": "vitest run --config vitest.integration.config.mts src/test/integration/pytest-runner.smoke.test.ts",
     "test:webview": "npm --prefix webview test",
     "test:all": "npm run test:unit && npm run test:webview",
     "test:changed": "vitest run --changed --passWithNoTests && npm --prefix webview run test:changed"

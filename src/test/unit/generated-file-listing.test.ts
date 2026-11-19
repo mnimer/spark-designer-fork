@@ -128,6 +128,10 @@ describe('Source Code tab file listing — dependency directories are excluded',
         expect(DEFAULT_IGNORE_PATTERNS).toContain('.venv');
     });
 
+    it('DEFAULT_IGNORE_PATTERNS covers the Ivy package cache that run_local.sh creates', () => {
+        expect(DEFAULT_IGNORE_PATTERNS).toContain('.spark-ivy');
+    });
+
     it('the exclude list covers every venv spelling run_directrunner.sh probes for', () => {
         // The generated script checks `venv` first, then `.venv`; both must be excluded.
         expect(GENERATED_FILE_LIST_EXCLUDE_DIRS).toContain('venv');

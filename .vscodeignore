@@ -5,6 +5,7 @@
 .gemini/**
 src/**
 tsconfig.json
+tsconfig.integration.json
 **/*.map
 .gitignore
 .eslintignore

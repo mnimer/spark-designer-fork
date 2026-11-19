@@ -231,7 +231,7 @@ describe('resolveRuntimeProfile', () => {
         id: 'local',
         runner: 'Local',
         runtimeVersion: 'local',
-        sparkVersion: '4.2.0',
+        sparkVersion: '4.0.1',
         pythonVersion: '3.13',
         javaVersion: '21',
         scalaVersion: '2.13',
@@ -299,6 +299,12 @@ describe('Managed Spark pre-installed connectors vs local Maven inclusion', () =
         }
       }
     }
+
+    const localMinor = RUNTIME_PROFILES.local.sparkVersion.split('.').slice(0, 2).join('.');
+    expect(localMinor).toBe('4.0');
+    expect(
+      resolveConnectorForRuntime('IcebergSink', 'local').mavenCoordinates[0]
+    ).toBe(`org.apache.iceberg:iceberg-spark-runtime-${localMinor}_2.13:1.10.1`);
 
     const localIceberg = resolveConnectorForRuntime('IcebergSource', 'local', {
       warehouse: 'gs://my-lakehouse/warehouse',
@@ -490,7 +496,7 @@ describe('Scala 2.13 Maven coordinates', () => {
         path: 's3a://my-bucket/events.avro',
       }).mavenCoordinates
     ).toEqual([
-      'org.apache.spark:spark-avro_2.13:4.2.0',
+      'org.apache.spark:spark-avro_2.13:4.0.1',
       'org.apache.hadoop:hadoop-aws:3.4.1',
     ]);
 
@@ -779,7 +785,7 @@ describe('resolvePipelineRuntimeArtifacts and catalog sweep', () => {
     expect(plan.preinstalledConnectors).toEqual([]);
     expect(plan.mavenPackages).toEqual([
       'com.google.cloud.spark:spark-bigquery-with-dependencies_2.13:0.42.1',
-      'org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.9.0',
+      'org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1',
     ]);
     expect(plan.pipPackages).toEqual(['google-cloud-spark-connect']);
     expect(plan.gcsJars).toEqual(['gs://jars/one.jar', 'gs://jars/two.jar']);
@@ -834,5 +840,166 @@ describe('resolvePipelineRuntimeArtifacts and catalog sweep', () => {
         }
       }
     }
+  });
+});
+
+describe('versionMatrix boundary and failure conditions (T1)', () => {
+  it('normalizes padded, mixed-case, and non-premium tier values to the documented tiers', () => {
+    expect(resolveServerlessTier('  Premium  ')).toBe('premium');
+    expect(resolveServerlessTier('standard')).toBe('standard');
+    expect(resolveServerlessTier('')).toBe('standard');
+    expect(resolveServerlessTier('   ')).toBe('standard');
+    expect(resolveServerlessTier('premium-plus')).toBe('standard');
+    expect(resolveServerlessTier(undefined)).toBe('standard');
+    expect(resolveServerlessTier(42 as unknown as string)).toBe('standard');
+  });
+
+  it('resolves runner aliases case-insensitively with surrounding whitespace', () => {
+    expect(resolveRuntimeProfile('  SERVERLESS_4.0 ').id).toBe('serverless_4.0');
+    expect(resolveRuntimeProfile('Cluster_3.0').id).toBe('cluster_3.0');
+    expect(resolveRuntimeProfile('serverless_spark').id).toBe('serverless_4.0');
+    expect(resolveRuntimeProfile('Serverless').id).toBe('serverless_4.0');
+    expect(resolveRuntimeProfile('dataproc_cluster').id).toBe('cluster_3.0');
+    expect(resolveRuntimeProfile('cluster').id).toBe('cluster_3.0');
+    expect(resolveRuntimeProfile('   ').id).toBe('local');
+    expect(resolveRuntimeProfile('DirectRunner').id).toBe('local');
+    expect(resolveRuntimeProfile('FlinkRunner').id).toBe('local');
+    expect(resolveRuntimeProfile(7 as unknown as string).id).toBe('local');
+  });
+
+  it('matches Serverless 3.0 version labels only on the exact 3.0 prefix forms', () => {
+    expect(resolveRuntimeProfile('ServerlessSpark', ' 3.0 ').id).toBe('serverless_3.0');
+    expect(resolveRuntimeProfile('ServerlessSpark', '3.0 (Spark 4.1)').id).toBe('serverless_3.0');
+    expect(resolveRuntimeProfile('ServerlessSpark', '3.0(spark 4.1)').id).toBe('serverless_3.0');
+    expect(resolveRuntimeProfile('ServerlessSpark', 'SERVERLESS_3.0').id).toBe('serverless_3.0');
+    expect(resolveRuntimeProfile('ServerlessSpark', '3.01').id).toBe('serverless_4.0');
+    expect(resolveRuntimeProfile('ServerlessSpark', '2.2').id).toBe('serverless_4.0');
+    expect(resolveRuntimeProfile('ServerlessSpark', '').id).toBe('serverless_4.0');
+    // Cluster and local profiles ignore the runtime version argument.
+    expect(resolveRuntimeProfile('DataprocCluster', '3.0').id).toBe('cluster_3.0');
+    expect(resolveRuntimeProfile('Local', '3.0').id).toBe('local');
+  });
+
+  it('isolates each resolved profile so caller mutation never leaks into RUNTIME_PROFILES', () => {
+    const first = resolveRuntimeProfile('ServerlessSpark');
+    first.preinstalledConnectors.push('mutated-connector');
+    first.sparkVersion = '0.0.0';
+    const second = resolveRuntimeProfile('ServerlessSpark');
+    expect(second.preinstalledConnectors).not.toContain('mutated-connector');
+    expect(second.sparkVersion).toBe(RUNTIME_PROFILES['serverless_4.0'].sparkVersion);
+  });
+
+  it('classifies only Serverless and Dataproc targets as Managed Spark', () => {
+    const managed = (Object.keys(RUNTIME_PROFILES) as SparkRuntimeTarget[]).filter((target) =>
+      isManagedSparkRuntime(target)
+    );
+    expect(managed.sort()).toEqual(['cluster_3.0', 'serverless_3.0', 'serverless_4.0']);
+    expect(isManagedSparkRuntime('local')).toBe(false);
+  });
+
+  it('falls back to the local profile for an unknown target and to builtin for an unknown transform', () => {
+    const unknownTarget = resolveConnectorForRuntime(
+      'BigQuerySource',
+      'serverless_9.9' as SparkRuntimeTarget
+    );
+    expect(unknownTarget.mechanism).toBe('maven_package');
+    expect(unknownTarget.preinstalledArtifact).toBeUndefined();
+
+    const unknownTransform = resolveConnectorForRuntime('  STEP:MyCustomStep  ', 'serverless_4.0');
+    expect(unknownTransform).toMatchObject({
+      sparkTransform: 'MyCustomStep',
+      mechanism: 'builtin',
+      gcsJarUris: [],
+      mavenCoordinates: [],
+      pipPackages: [],
+      sparkProperties: {},
+    });
+  });
+
+  it('attaches spark-avro to ParsePayload only when the payload format is Avro', () => {
+    const avro = resolveConnectorForRuntime('ParsePayload', 'local', { format: ' AVRO ' });
+    expect(avro.mechanism).toBe('maven_package');
+    expect(avro.mavenCoordinates).toEqual([
+      `org.apache.spark:spark-avro_2.13:${RUNTIME_PROFILES.local.sparkVersion}`,
+    ]);
+
+    const json = resolveConnectorForRuntime('ParsePayload', 'local', { format: 'json' });
+    expect(json.mechanism).toBe('builtin');
+    expect(json.mavenCoordinates).toEqual([]);
+
+    const missingFormat = resolveConnectorForRuntime('ParsePayload', 'local');
+    expect(missingFormat.mechanism).toBe('builtin');
+  });
+
+  it('returns an empty artifact plan for empty pipelines and nodes without a transform', () => {
+    const empty = resolvePipelineRuntimeArtifacts([]);
+    expect(empty.profile.id).toBe('local');
+    expect(empty.tier).toBe('standard');
+    expect(empty.gcsJars).toEqual([]);
+    expect(empty.mavenPackages).toEqual([]);
+    expect(empty.pipPackages).toEqual([]);
+    expect(empty.sparkProperties).toEqual({});
+    expect(empty.pythonDataSources).toEqual([]);
+    expect(empty.preinstalledConnectors).toEqual([]);
+
+    const blank = resolvePipelineRuntimeArtifacts(
+      [{ sparkTransform: '   ' }, { properties: { path: 'gs://bucket/x' } }],
+      { runner: 'ServerlessSpark' }
+    );
+    expect(blank.profile.id).toBe('serverless_4.0');
+    expect(blank.preinstalledConnectors).toEqual([]);
+    expect(blank.mavenPackages).toEqual([]);
+  });
+
+  it('reads transforms and properties from snake_case and React Flow data wrappers', () => {
+    const plan = resolvePipelineRuntimeArtifacts(
+      [
+        { spark_transform: 'BigQuerySource' },
+        { data: { spark_transform: 'IcebergSink' } },
+        { data: { sparkTransform: 'ParquetSource', properties: { path: 's3a://lake/raw' } } },
+      ] as unknown as Array<{ sparkTransform?: string; properties?: Record<string, unknown> }>,
+      { runner: 'DataprocCluster' }
+    );
+    expect(plan.profile.id).toBe('cluster_3.0');
+    expect(plan.preinstalledConnectors).toEqual([
+      'spark-bigquery',
+      'iceberg-spark-runtime',
+      'hadoop-aws',
+    ]);
+    expect(plan.mavenPackages).toEqual([]);
+  });
+
+  it('ignores malformed jobConfig JAR entries and Spark Connect on Managed Spark', () => {
+    const plan = resolvePipelineRuntimeArtifacts([], {
+      runner: 'ServerlessSpark',
+      useSparkConnect: true,
+      customJarUris: ['  gs://jars/a.jar  ', '', 42, null, 'gs://jars/a.jar'],
+      jars: ' , gs://jars/b.jar ,, gs://jars/a.jar ',
+    });
+    expect(plan.gcsJars).toEqual(['gs://jars/a.jar', 'gs://jars/b.jar']);
+    expect(plan.pipPackages).not.toContain('google-cloud-spark-connect');
+
+    const truthyButNotTrue = resolvePipelineRuntimeArtifacts([], {
+      runner: 'Local',
+      useSparkConnect: 'true',
+    });
+    expect(truthyButNotTrue.pipPackages).toEqual([]);
+  });
+
+  it('prefers runtimeVersion over version and imageVersion, and tier over serverlessTier', () => {
+    const plan = resolvePipelineRuntimeArtifacts([], {
+      runner: 'ServerlessSpark',
+      runtimeVersion: '4.0',
+      version: '3.0',
+      imageVersion: '3.0',
+      tier: 'standard',
+      serverlessTier: 'premium',
+    });
+    expect(plan.profile.id).toBe('serverless_4.0');
+    expect(plan.tier).toBe('standard');
+
+    const nonStringRunner = resolvePipelineRuntimeArtifacts([], { runner: 5, tier: true });
+    expect(nonStringRunner.profile.id).toBe('local');
+    expect(nonStringRunner.tier).toBe('standard');
   });
 });

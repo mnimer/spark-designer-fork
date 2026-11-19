@@ -1,21 +1,23 @@
 /**
- * Integration Test Runner and Multi-Agent Evaluation Harness for Apache Beam Codegen.
+ * Integration Test Runner and Multi-Agent Evaluation Harness for Apache Spark Codegen.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Coordinates live end-to-end integration tests by generating complete Apache Beam
- * pipelines using Gemini 3.7 Flash and evaluating the output using a multi-agent
- * evaluation harness (Deterministic Gate, BeamArchitectureAgent, SecurityAndHardeningAgent,
+ * Coordinates live end-to-end integration tests. The runner generates complete PySpark 4.x
+ * repositories with Gemini and evaluates the output with a multi-agent evaluation harness
+ * (Deterministic Gate, SparkArchitectureAgent, SecurityAndHardeningAgent,
  * PackagingAndDeployabilityAgent, PipelineSpecificationAgent, and Lead Arbiter).
+ * It then writes the repository to a temporary directory and runs the generated
+ * tests offline with the pytest runner. Failed, error, or timeout runs fail the test.
+ * If local tooling is missing, the pytest step is skipped.
  *
  * Architectural decisions:
  * - Dynamically synchronizes pipelineConfig.language in the YAML specification to match
  *   the target generation language, eliminating language-mismatch cross-talk between tests.
  * - Replaces monolithic evaluation prompt with multi-agent specialist hierarchy.
  * - Builds the prompt with the SAME builder as the extension (`buildPromptFromPipelineYaml`).
- *   The old private copy (`buildCodeGenPrompt`) drifted: it sent no Spark template and
- *   resolved `{{beam_version}}` after inserting the YAML (re-opening fix F7).
+ *   A private copy drifted in the past and re-opened fix F7 (version placeholder resolution).
  * - Emits actionable Prompt Remediation Directives that target a skill file under
  *   `resources/codegen-skills/` when tests fail, rather than patching generated test code.
  */
@@ -28,12 +30,17 @@ import * as yaml from 'yaml';
 import { GoogleGenAI } from '@google/genai';
 import { DEFAULT_GEMINI_MODEL } from '../../constants';
 import { DEFAULT_SPARK_VERSION } from '../../shared/types';
+import { PIPELINE_FILE_EXT } from '../../core/constants';
 import { buildPromptFromPipelineYaml, PipelinePrompt } from '../../codegen/CodegenPromptBuilder';
 import { CODEGEN_RESOURCE_PATHS, buildCodegenModelConfig } from '../../codegen/codegenConfig';
 import { runMultiAgentEvaluation, formatEvaluationReport } from './evaluators/multi-agent-evaluator';
-import { checkJavaStructure, checkPythonSyntax } from './evaluators/deterministic-gate';
+import { checkPythonSyntax } from './evaluators/deterministic-gate';
 import { MultiAgentEvaluationResult, generateContentWithRetry } from './evaluators/types';
 import { recordAndSaveTestReport } from './test-reporter';
+import { runGeneratedRepoTests, formatPytestReport, PytestRunResult, PytestRunStatus } from './pytest-runner';
+
+/** Wall-clock limit for the offline pytest run of one generated repository. */
+export const OFFLINE_PYTEST_TIMEOUT_MS = 170_000;
 
 export interface GeneratedFile {
     filename: string;
@@ -71,7 +78,8 @@ export interface EvaluationResult {
 
 export interface PipelineTestConfig {
     testName: string;
-    beamContent?: string;
+    /** Raw `.spark` pipeline file content. */
+    sparkContent?: string;
     yamlContent?: string;
     languages?: ('Java' | 'Python')[];
 }
@@ -103,17 +111,20 @@ function findFileRecursive(dir: string, filename: string): string | null {
 }
 
 /**
- * Loads a .beam pipeline definition file from disk given a relative or absolute path.
+ * Loads a `.spark` pipeline definition file from disk given a relative or absolute path.
+ *
+ * @param filePath Relative or absolute path, with or without the `.spark` extension.
+ * @returns Raw pipeline YAML content.
+ * @throws Error when no candidate path holds the file.
  */
-export function loadBeamPipeline(filePath: string): string {
+export function loadSparkPipeline(filePath: string): string {
+    const withExt = filePath.endsWith(PIPELINE_FILE_EXT) ? filePath : `${filePath}${PIPELINE_FILE_EXT}`;
     const candidatePaths = [
         filePath,
         path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath),
-        path.join(__dirname, filePath.endsWith('.beam') ? filePath : `${filePath}.beam`),
-        path.join(process.cwd(), 'src', 'integration', filePath),
-        path.join(process.cwd(), 'src', 'integration', filePath.endsWith('.beam') ? filePath : `${filePath}.beam`),
+        path.join(__dirname, withExt),
         path.join(process.cwd(), 'src', 'test', 'integration', filePath),
-        path.join(process.cwd(), 'src', 'test', 'integration', filePath.endsWith('.beam') ? filePath : `${filePath}.beam`)
+        path.join(process.cwd(), 'src', 'test', 'integration', withExt)
     ];
 
     for (const p of candidatePaths) {
@@ -122,15 +133,12 @@ export function loadBeamPipeline(filePath: string): string {
         }
     }
 
-    const filename = path.basename(filePath).endsWith('.beam') ? path.basename(filePath) : `${path.basename(filePath)}.beam`;
-    for (const searchRoot of [path.join(process.cwd(), 'src', 'integration'), path.join(process.cwd(), 'src', 'test', 'integration')]) {
-        const found = findFileRecursive(searchRoot, filename);
-        if (found) {
-            return fs.readFileSync(found, 'utf-8');
-        }
+    const found = findFileRecursive(path.join(process.cwd(), 'src', 'test', 'integration'), path.basename(withExt));
+    if (found) {
+        return fs.readFileSync(found, 'utf-8');
     }
 
-    throw new Error(`Could not locate .beam pipeline file: ${filePath}`);
+    throw new Error(`Could not locate ${PIPELINE_FILE_EXT} pipeline file: ${filePath}`);
 }
 
 let cachedGcloudProject: string | undefined;
@@ -272,15 +280,15 @@ export function synchronizePipelineLanguage(yamlContent: string, targetLanguage:
  *
  * @param language Target language.
  * @param yamlData Raw pipeline YAML.
- * @param beamVersion Resolved Beam version.
+ * @param sparkVersion Resolved Apache Spark version.
  * @returns The built prompt and the selected skill names.
  */
-export function buildRunnerPrompt(_language: string, yamlData: string, beamVersion?: string): PipelinePrompt {
+export function buildRunnerPrompt(_language: string, yamlData: string, sparkVersion?: string): PipelinePrompt {
     return buildPromptFromPipelineYaml({
         skillsRoot: path.join(getResourcesRoot(), CODEGEN_RESOURCE_PATHS.skillsDir),
         yamlText: yamlData,
         language: 'PySpark',
-        beamVersion,
+        sparkVersion,
     });
 }
 
@@ -337,25 +345,17 @@ export async function createGeminiClient(): Promise<GoogleGenAI> {
 }
 
 /**
- * Checks whether generated source files suffer from premature string closure / truncation.
+ * Checks whether generated Python files suffer from premature string closure or truncation.
+ *
+ * @param files Generated files.
+ * @returns The first syntax error, or null when every Python file compiles.
  */
-async function hasTruncatedSourceFile(files: GeneratedFile[], language: 'Java' | 'Python'): Promise<string | null> {
-    if (language === 'Java') {
-        for (const f of files) {
-            if (f.filename.endsWith('.java')) {
-                const structErr = checkJavaStructure(f.filename, f.content);
-                if (structErr) {
-                    return structErr;
-                }
-            }
-        }
-    } else {
-        for (const f of files) {
-            if (f.filename.endsWith('.py') && !f.filename.endsWith('__init__.py')) {
-                const pyErr = await checkPythonSyntax(f.filename, f.content);
-                if (pyErr) {
-                    return pyErr;
-                }
+async function hasTruncatedSourceFile(files: GeneratedFile[]): Promise<string | null> {
+    for (const f of files) {
+        if (f.filename.endsWith('.py') && !f.filename.endsWith('__init__.py')) {
+            const pyErr = await checkPythonSyntax(f.filename, f.content);
+            if (pyErr) {
+                return pyErr;
             }
         }
     }
@@ -363,17 +363,81 @@ async function hasTruncatedSourceFile(files: GeneratedFile[], language: 'Java' |
 }
 
 /**
+ * Writes generated files below a repository root.
+ *
+ * @param files Generated files.
+ * @param rootDir Existing repository root directory.
+ * @returns Relative paths of the written files.
+ * @throws Error if a filename is empty, absolute, or resolves outside `rootDir`.
+ */
+export function writeGeneratedRepo(files: GeneratedFile[], rootDir: string): string[] {
+    const root = path.resolve(rootDir);
+    const written: string[] = [];
+    for (const file of files) {
+        const name = (file.filename || '').trim();
+        if (!name || path.isAbsolute(name)) {
+            throw new Error(`Refusing to write generated file with an unsafe name: '${file.filename}'.`);
+        }
+        const target = path.resolve(root, name);
+        const relative = path.relative(root, target);
+        if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+            throw new Error(`Refusing to write generated file outside the repository: '${file.filename}'.`);
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file.content, 'utf8');
+        if (file.executable) {
+            fs.chmodSync(target, 0o755);
+        }
+        written.push(relative);
+    }
+    return written;
+}
+
+/**
+ * Tells if an offline pytest status must fail the integration test.
+ *
+ * @param status Status from the pytest runner.
+ * @returns True for `failed`, `error`, and `timeout`. False for `passed` and `skipped`.
+ */
+export function isBlockingPytestStatus(status: PytestRunStatus): boolean {
+    return status === 'failed' || status === 'error' || status === 'timeout';
+}
+
+/**
+ * Writes the generated repository to a temporary directory and runs its tests offline.
+ *
+ * If PySpark, pytest, or a compatible JDK is missing, the runner returns `skipped`.
+ * The temporary directory is always removed.
+ *
+ * @param files Generated files.
+ * @param python Python interpreter. Defaults to `SPARK_PYTEST_PYTHON` or `python3`.
+ * @returns Typed pytest run result.
+ */
+export async function runOfflinePytest(
+    files: GeneratedFile[],
+    python: string = process.env.SPARK_PYTEST_PYTHON || 'python3'
+): Promise<PytestRunResult> {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-gen-repo-'));
+    try {
+        writeGeneratedRepo(files, repoDir);
+        return await runGeneratedRepoTests(repoDir, { python, timeoutMs: OFFLINE_PYTEST_TIMEOUT_MS });
+    } finally {
+        fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+}
+
+/**
  * Executes an end-to-end code generation and validation test for a pipeline YAML across specified languages.
  */
 export async function runPipelineIntegrationTest(config: PipelineTestConfig): Promise<{ [key: string]: boolean }> {
-    const languages = config.languages || ['Java', 'Python'];
+    const languages = config.languages || ['Python'];
     const ai = await createGeminiClient();
-    const beamVersion = DEFAULT_SPARK_VERSION;
+    const sparkVersion = DEFAULT_SPARK_VERSION;
     const results: { [key: string]: boolean } = {};
 
     console.log(`\n======================================================`);
     console.log(`🧪 Running Pipeline Integration Test: ${config.testName}`);
-    console.log(`🤖 Using Gemini Model: ${DEFAULT_GEMINI_MODEL} (Beam SDK: ${beamVersion})`);
+    console.log(`🤖 Using Gemini Model: ${DEFAULT_GEMINI_MODEL} (Apache Spark: ${sparkVersion})`);
     console.log(`======================================================`);
 
     await Promise.all(languages.map(async (language) => {
@@ -382,15 +446,15 @@ export async function runPipelineIntegrationTest(config: PipelineTestConfig): Pr
         console.log(`------------------------------------------------------`);
 
         try {
-            const rawContent = config.beamContent || config.yamlContent;
+            const rawContent = config.sparkContent || config.yamlContent;
             if (!rawContent) {
-                throw new Error(`Pipeline content is required (provide beamContent or yamlContent) for ${config.testName}`);
+                throw new Error(`Pipeline content is required (provide sparkContent or yamlContent) for ${config.testName}`);
             }
 
             // Synchronize pipeline language with current target language
             const pipelineContent = synchronizePipelineLanguage(rawContent, language);
             // Same prompt builder as the extension (redaction + skill selection + assembly).
-            const built = buildRunnerPrompt(language, pipelineContent, beamVersion);
+            const built = buildRunnerPrompt(language, pipelineContent, sparkVersion);
             const prompt = built.prompt;
             console.log(`   Selected skills (${built.selectedSkills.length}): ${built.selectedSkills.join(', ')}`);
             const responseSchema = JSON.parse(readResource(CODEGEN_RESOURCE_PATHS.responseSchema));
@@ -419,7 +483,7 @@ export async function runPipelineIntegrationTest(config: PipelineTestConfig): Pr
                 const parsed = JSON.parse(response.text);
                 files = deduplicateGeneratedFiles(parsed.files || []);
 
-                const truncationErr = await hasTruncatedSourceFile(files, language);
+                const truncationErr = await hasTruncatedSourceFile(files);
                 if ((finishReason === 'MAX_TOKENS' || truncationErr) && genAttempt < 2) {
                     console.warn(`   [CodeGen] ⚠️ Structural/truncation issue detected (${truncationErr || finishReason}). Retrying generation once...`);
                     continue;
@@ -429,8 +493,7 @@ export async function runPipelineIntegrationTest(config: PipelineTestConfig): Pr
 
             console.log(`   Generated ${files.length} files:`, files.map(f => f.filename).join(', '));
 
-            const fileExt = language.toLowerCase() === 'python' ? '.py' : '.java';
-            const mainFile = files.find(f => f.filename.endsWith(fileExt) && !f.filename.includes('test') && !f.filename.endsWith('__init__.py'));
+            const mainFile = files.find(f => f.filename.endsWith('.py') && !f.filename.includes('test') && !f.filename.endsWith('__init__.py'));
 
             if (mainFile) {
                 console.log(`\n📄 Generated Main File (${mainFile.filename}):\n`);
@@ -447,17 +510,27 @@ export async function runPipelineIntegrationTest(config: PipelineTestConfig): Pr
                 evalResult.issues.forEach((issue, idx) => console.log(`     ${idx + 1}. ${issue}`));
             }
 
+            console.log(`\n3. Running generated tests offline with local PySpark...`);
+            const pytestResult = await runOfflinePytest(files);
+            const pytestReport = formatPytestReport(pytestResult);
+            console.log(pytestReport);
+            const pytestBlocks = isBlockingPytestStatus(pytestResult.status);
+            const passed = evalResult.isGood && !pytestBlocks;
+            const explanation = pytestBlocks
+                ? `${evalResult.explanation}\n\n${pytestReport}`
+                : evalResult.explanation;
+
             // Persist evaluation findings, scorecards, and prompt directives to test-report.md
             const reportPath = recordAndSaveTestReport({
                 testName: config.testName,
                 language: language,
                 timestamp: new Date().toISOString(),
-                passed: evalResult.isGood,
+                passed,
                 durationMs: Date.now() - startTime,
                 scorecard: evalResult.multiAgentResult?.scorecard,
                 hardVetoTriggered: evalResult.multiAgentResult?.hardVetoTriggered,
                 hardVetoReasons: evalResult.multiAgentResult?.hardVetoReasons,
-                explanation: evalResult.explanation,
+                explanation,
                 findings: evalResult.multiAgentResult?.confirmedFindings || evalResult.multiAgentResult?.allFindings || [],
                 promptRemediationDirectives: evalResult.multiAgentResult?.promptRemediationDirectives || [],
                 generatedFiles: files.map(f => ({
@@ -467,7 +540,7 @@ export async function runPipelineIntegrationTest(config: PipelineTestConfig): Pr
             });
             console.log(`\n📄 Test report updated: ${reportPath}`);
 
-            results[language] = evalResult.isGood;
+            results[language] = passed;
         } catch (err: any) {
             console.error(`❌ Error during ${language} test:`, err.message || err);
             const reportPath = recordAndSaveTestReport({

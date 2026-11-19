@@ -12,7 +12,7 @@ describe('computePipelineLocation', () => {
     const ws = path.resolve('/workspace/project');
 
     it('handles file at workspace root', () => {
-        const file = path.resolve('/workspace/project/my-pipeline.beam');
+        const file = path.resolve('/workspace/project/my-pipeline.spark');
         const result = computePipelineLocation(file, ws);
         expect(result).toEqual({
             relativeFolder: '',
@@ -21,7 +21,7 @@ describe('computePipelineLocation', () => {
     });
 
     it('handles nested file inside workspace', () => {
-        const file = path.resolve('/workspace/project/pipelines/subfolder/my-pipeline.beam');
+        const file = path.resolve('/workspace/project/pipelines/subfolder/my-pipeline.spark');
         const result = computePipelineLocation(file, ws);
         expect(result).toEqual({
             relativeFolder: path.join('pipelines', 'subfolder'),
@@ -30,7 +30,7 @@ describe('computePipelineLocation', () => {
     });
 
     it('handles file outside workspace', () => {
-        const file = path.resolve('/other/location/my-pipeline.beam');
+        const file = path.resolve('/other/location/my-pipeline.spark');
         const result = computePipelineLocation(file, ws);
         expect(result).toEqual({
             relativeFolder: '',
@@ -39,7 +39,7 @@ describe('computePipelineLocation', () => {
     });
 
     it('handles undefined workspace folder', () => {
-        const file = path.resolve('/workspace/project/my-pipeline.beam');
+        const file = path.resolve('/workspace/project/my-pipeline.spark');
         const result = computePipelineLocation(file, undefined);
         expect(result).toEqual({
             relativeFolder: '',
@@ -49,7 +49,7 @@ describe('computePipelineLocation', () => {
 
     it('does not treat sibling-prefix directory as inside workspace', () => {
         const siblingWs = path.resolve('/ws');
-        const fileInSiblingDir = path.resolve('/ws2/x.beam');
+        const fileInSiblingDir = path.resolve('/ws2/x.spark');
         const result = computePipelineLocation(fileInSiblingDir, siblingWs);
         expect(result).toEqual({
             relativeFolder: '',

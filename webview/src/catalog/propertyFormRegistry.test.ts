@@ -112,3 +112,83 @@ describe('PROPERTY_FORM_REGISTRY', () => {
     expect(await loadPropertyForm(Eager)).toBe(Eager);
   });
 });
+
+/** Expected node counts per palette type. The catalog defines SRC1-SRC38, SNK1-SNK37, and OP1-OP29. */
+const EXPECTED_COUNTS = { SOURCE: 38, SINK: 37, STEP: 29 } as const;
+
+/** Catalog node lists keyed by palette type. */
+const CATALOG_BY_TYPE = { SOURCE: SOURCE_NODES, SINK: SINK_NODES, STEP: STEP_NODES } as const;
+
+/** Palette types in display order. */
+const NODE_TYPES = ['SOURCE', 'SINK', 'STEP'] as const;
+
+describe('PROPERTY_FORM_REGISTRY catalog coverage (T4)', () => {
+  it('derives exact per-type and total node counts from the catalog', () => {
+    for (const type of NODE_TYPES) {
+      expect(CATALOG_BY_TYPE[type], `${type} node count`).toHaveLength(EXPECTED_COUNTS[type]);
+    }
+    const total = SOURCE_NODES.length + SINK_NODES.length + STEP_NODES.length;
+    expect(total).toBe(38 + 37 + 29);
+  });
+
+  it('declares the matching type, a non-empty sparkTransform, and a unique transform for every catalog node', () => {
+    const seen = new Map<string, string>();
+    for (const type of NODE_TYPES) {
+      for (const node of CATALOG_BY_TYPE[type]) {
+        expect(node.type, `${node.label} is listed under ${type}`).toBe(type);
+        expect(node.sparkTransform.trim(), `${node.label} has a sparkTransform`).not.toBe('');
+        expect(node.sparkTransform).toBe(node.sparkTransform.trim());
+        // A direct key must map to exactly one catalog node, so transforms never repeat across types.
+        expect(seen.get(node.sparkTransform), `Duplicate sparkTransform ${node.sparkTransform}`).toBeUndefined();
+        seen.set(node.sparkTransform, type);
+      }
+    }
+    expect(seen.size).toBe(38 + 37 + 29);
+  });
+
+  it('has exactly one qualified canonical registry key per catalog node and type', () => {
+    for (const type of NODE_TYPES) {
+      const transforms = new Set(CATALOG_BY_TYPE[type].map((node) => node.sparkTransform));
+      const canonicalKeys = Object.keys(PROPERTY_FORM_REGISTRY).filter(
+        (key) => key.startsWith(`${type}:`) && transforms.has(key.slice(type.length + 1))
+      );
+      expect(canonicalKeys, `${type} canonical keys`).toHaveLength(EXPECTED_COUNTS[type]);
+    }
+  });
+
+  it('never registers a catalog transform under the qualified key of another type', () => {
+    const misfiled: string[] = [];
+    for (const type of NODE_TYPES) {
+      for (const otherType of NODE_TYPES.filter((t) => t !== type)) {
+        for (const node of CATALOG_BY_TYPE[type]) {
+          if (PROPERTY_FORM_REGISTRY[`${otherType}:${node.sparkTransform}`] !== undefined) {
+            misfiled.push(`${otherType}:${node.sparkTransform}`);
+          }
+        }
+      }
+    }
+    expect(misfiled).toEqual([]);
+  });
+
+  it('gives every catalog node a dedicated panel that no other catalog node shares', () => {
+    const owners = new Map<unknown, string[]>();
+    for (const type of NODE_TYPES) {
+      for (const node of CATALOG_BY_TYPE[type]) {
+        const form = PROPERTY_FORM_REGISTRY[`${type}:${node.sparkTransform}`];
+        owners.set(form, [...(owners.get(form) ?? []), `${type}:${node.sparkTransform}`]);
+      }
+    }
+    const shared = [...owners.values()].filter((keys) => keys.length > 1);
+    expect(shared).toEqual([]);
+    expect(owners.size).toBe(38 + 37 + 29);
+  });
+
+  it('returns undefined for unknown, empty, and prefix-only keys', () => {
+    expect(PROPERTY_FORM_REGISTRY['SOURCE:DoesNotExist']).toBeUndefined();
+    expect(PROPERTY_FORM_REGISTRY['DoesNotExist']).toBeUndefined();
+    expect(PROPERTY_FORM_REGISTRY['']).toBeUndefined();
+    for (const type of NODE_TYPES) {
+      expect(PROPERTY_FORM_REGISTRY[`${type}:`]).toBeUndefined();
+    }
+  });
+});

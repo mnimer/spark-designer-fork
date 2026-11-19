@@ -54,6 +54,27 @@ export function appendLog(
 }
 
 /**
+ * Converts a raw runner identifier into the label shown in the execution log.
+ *
+ * Logic flow:
+ * - If the runner is empty or the legacy Apache Beam `DirectRunner`, return `Local`.
+ * - If the runner is the legacy `Spark` value, return `ServerlessSpark`.
+ * - Otherwise, return the runner unchanged.
+ *
+ * @param runner Raw runner value from the extension host message.
+ * @returns Display label for the runner.
+ */
+export function formatRunnerLabel(runner: unknown): string {
+  if (typeof runner !== 'string' || runner === '' || runner === 'DirectRunner') {
+    return 'Local';
+  }
+  if (runner === 'Spark') {
+    return 'ServerlessSpark';
+  }
+  return runner;
+}
+
+/**
  * Options for stopping a running pipeline.
  */
 export interface StopPipelineOptions {
@@ -195,7 +216,7 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
         }
         const startEntry: LogEntry = {
           id: `start-${Date.now()}`,
-          text: `[${new Date().toLocaleTimeString()}] Pipeline execution initiated (${message.runner || 'Local'})...\n`,
+          text: `[${new Date().toLocaleTimeString()}] Pipeline execution initiated (${formatRunnerLabel(message.runner)})...\n`,
           stream: 'stdout',
           timestamp: new Date().toLocaleTimeString(),
         };

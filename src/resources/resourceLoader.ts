@@ -22,6 +22,8 @@ export const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
     // Without these, a ~4000-file virtualenv is uploaded to Cloud Build and Docker.
     'venv',
     'env',
+    // NOTE: `run_local.sh` caches resolved `--packages` JARs in `.spark-ivy`.
+    '.spark-ivy',
     'node_modules',
     '__pycache__',
     'target/',

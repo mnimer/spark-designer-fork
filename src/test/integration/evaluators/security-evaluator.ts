@@ -11,7 +11,7 @@
  * Architectural decisions:
  * - Dynamically resolves the security model: attempts 'gemini-3.8-flash-cyber'
  *   (via Google's Fairwind Program) and transparently falls back to 'gemini-3.8-flash'
- *   or DEFAULT_GEMINI_MODEL ('gemini-3.7-flash') for non-allowlisted developer environments.
+ *   (DEFAULT_GEMINI_MODEL) for non-allowlisted developer environments.
  * - Injects 1-indexed line numbers into generated code to ensure finding citations
  *   have verifiable, ground-truth line references and verbatim evidence.
  * - Audits CWE-798 (hardcoded credentials), CWE-78 (shell injection), CWE-250 (root containers),
@@ -36,7 +36,7 @@ export function resetResolvedSecurityModelForTesting(): void {
 /**
  * Resolves the optimal Gemini model for security code evaluation.
  * Probes 'gemini-3.8-flash-cyber' first; falls back gracefully to
- * 'gemini-3.8-flash' and then DEFAULT_GEMINI_MODEL ('gemini-3.7-flash').
+ * DEFAULT_GEMINI_MODEL ('gemini-3.8-flash').
  *
  * @param ai - Initialized GoogleGenAI client.
  * @returns Resolved model identifier string.
@@ -94,7 +94,7 @@ export async function evaluateSecurityAndHardening(
         : (cachedSecurityModel ?? DEFAULT_GEMINI_MODEL);
 
     const prompt = `You are the Principal Security & Container Hardening Evaluator Agent.
-Your responsibility is auditing generated Apache Beam code, runner scripts, build descriptors, parameter manifests, and Dockerfiles for security compliance and hardening.
+Your responsibility is auditing generated Apache Spark (PySpark 4.x) code, runner scripts, \`requirements.txt\`, and Dockerfiles for security compliance and hardening.
 
 === TARGET LANGUAGE ===
 ${language}
@@ -106,23 +106,22 @@ ${formatFilesWithLineNumbers(files)}
 
 Audit the code against the following Security Checklist:
 1. **Secret & Credential Management (CWE-798, CWE-312):**
-   - Are database passwords, connection strings, auth tokens, and broker secrets retrieved from GCP Secret Manager (or dynamically resolved via PipelineOptions without default values)?
-   - Verify there are NO hardcoded credentials, cleartext passwords, or unredacted bearer tokens in code, Dockerfiles, \`metadata.json\`, or shell script defaults.
-   - For \`metadata.json\`, ensure sensitive parameters specify \`"isSecret": true\` and do NOT have default plaintext values.
+   - Are database passwords, connection strings, auth tokens, and broker secrets retrieved from GCP Secret Manager (or resolved at runtime from the pipeline \`config\` without default values)?
+   - Verify there are NO hardcoded credentials, cleartext passwords, or unredacted bearer tokens in code, Dockerfiles, Spark \`--conf\` / \`--properties\` flags, or shell script defaults.
 2. **Container & Dockerfile Hardening (CWE-250):**
-   - Does the Dockerfile run under an explicit non-root user (e.g. \`USER beam\` or non-root UID) or provide clear commented instructions for non-root execution in hardened environments?
+   - Does the Dockerfile run under an explicit non-root user (e.g. \`USER spark\` or non-root UID) or provide clear commented instructions for non-root execution in hardened environments?
    - Does the Dockerfile avoid copying unwanted build contexts, logs (\`*.log\`), or credential files?
 3. **Shell Script Quoting & Command Safety (CWE-78):**
-   - In \`run_directrunner.sh\` and \`run_dataflowrunner.sh\`, are all shell variables quoted properly (e.g. \`"\${TEMPLATE_IMAGE}"\`, \`"\${PROJECT_ID}"\`) to prevent shell injection or word-splitting?
+   - In \`run_local.sh\`, \`run_dataproc_cluster.sh\`, and \`run_serverless_spark.sh\`, are all shell variables quoted properly (e.g. \`"\${PROJECT_ID}"\`, \`"\${REGION}"\`) to prevent shell injection or word-splitting?
    - Do scripts use \`set -euo pipefail\` to prevent running with unbound variables?
-4. **Dataflow Query & Injection Safety (CWE-89):**
-   - In \`JdbcIO\` or database queries, are queries parameterized rather than formatted using raw string concatenation with external variables?
+4. **Spark SQL & JDBC Injection Safety (CWE-89):**
+   - In \`spark.sql(...)\`, JDBC \`query\` / \`dbtable\` options, or database queries, are queries parameterized rather than formatted using raw string concatenation with external variables?
 5. **Private Networking & VPC Security:**
-   - If custom network or subnetwork parameters are defined, are they passed cleanly without disabling security flags like \`--no_use_public_ips\`?
+   - If custom network or subnetwork parameters are defined, are they passed cleanly without disabling private IP or internal-only network settings on Dataproc or Serverless Spark?
 
 Severity Guidelines:
 - CRITICAL: Plaintext credentials committed in code or scripts, shell command injection vectors, root user execution without dropping privileges.
-- MAJOR: Unquoted shell variables in execution scripts, missing .dockerignore / build context filters, plaintext defaults in metadata.json.
+- MAJOR: Unquoted shell variables in execution scripts, missing .dockerignore / build context filters, plaintext secret defaults in runner scripts.
 - MINOR: Non-pinned base image tags in Dockerfile (e.g. using :latest instead of specific tag/digest).`;
 
     const schema = {

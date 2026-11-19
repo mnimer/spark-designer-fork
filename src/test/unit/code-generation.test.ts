@@ -209,14 +209,14 @@ describe('Spark Version Baseline & File Deduplication', () => {
 
     it('replaces {{spark_version}} in skill text when a version is supplied', () => {
         const { prompt } = buildExtensionPrompt(REPO_CONTEXT, 'nodes: []\n', 'PySpark', '4.2.0');
-        expect(prompt).toContain('pyspark>=4.2.0');
+        expect(prompt).toContain('pyspark==4.2.0.*');
         expect(prompt).not.toContain('{{spark_version}}');
     });
 
     it('does not rewrite version strings inside the user pipeline YAML (F7)', () => {
         const yaml = 'note: "keep 4.0 and {{spark_version}} and {{beam_version}} literally"\n';
         const { prompt } = buildExtensionPrompt(REPO_CONTEXT, yaml, 'PySpark', '4.2.0');
-        expect(prompt).toContain('pyspark>=4.2.0');
+        expect(prompt).toContain('pyspark==4.2.0.*');
         expect(prompt).toContain('note: "keep 4.0 and {{spark_version}} and {{beam_version}} literally"');
     });
 

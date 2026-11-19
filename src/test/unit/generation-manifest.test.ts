@@ -10,7 +10,7 @@
  *
  * Security Rationale:
  * This module authorizes irreversible deletion of user files from the output folder.
- * The previous implementation removed everything non-hidden except *.beam before calling
+ * The previous implementation removed everything non-hidden except *.spark before calling
  * Gemini, resulting in catastrophic loss of hand-written files (README, Terraform, scripts)
  * upon generation or API failure. These unit tests serve as the formal specification for
  * the allowlist model and blast-radius bounds.
@@ -66,9 +66,9 @@ describe('sha256', () => {
 
 describe('generatePipelineId', () => {
     // Simple case: correct prefix format
-    it('generates pipeline identifiers with the bp_ prefix and valid hex characters', () => {
+    it('generates pipeline identifiers with the sp_ prefix and valid hex characters', () => {
         const id = generatePipelineId();
-        expect(id).toMatch(/^bp_[0-9a-f]{24}$/);
+        expect(id).toMatch(/^sp_[0-9a-f]{24}$/);
     });
 
     // Extreme case: two consecutive calls never collide across high volume
@@ -96,7 +96,7 @@ describe('parseManifest', () => {
     it('successfully parses and normalizes a valid manifest object', () => {
         const validRaw = {
             schemaVersion: 1,
-            pipelineId: 'bp_abcdef1234567890abcdef12',
+            pipelineId: 'sp_abcdef1234567890abcdef12',
             language: 'python',
             generatedAt: '2026-09-12T12:00:00.000Z',
             files: [
@@ -108,7 +108,7 @@ describe('parseManifest', () => {
         const parsed = parseManifest(validRaw);
         expect(parsed).not.toBeNull();
         expect(parsed?.schemaVersion).toBe(1);
-        expect(parsed?.pipelineId).toBe('bp_abcdef1234567890abcdef12');
+        expect(parsed?.pipelineId).toBe('sp_abcdef1234567890abcdef12');
         expect(parsed?.language).toBe('python');
         expect(parsed?.generatedAt).toBe('2026-09-12T12:00:00.000Z');
         expect(parsed?.files).toEqual([
@@ -137,18 +137,18 @@ describe('parseManifest', () => {
 
     // Failure cases: missing or empty language
     it('returns null when language is missing, empty, or non-string', () => {
-        expect(parseManifest({ pipelineId: 'bp_123', schemaVersion: 1, files: [] })).toBeNull();
-        expect(parseManifest({ pipelineId: 'bp_123', language: '', schemaVersion: 1 })).toBeNull();
-        expect(parseManifest({ pipelineId: 'bp_123', language: null, schemaVersion: 1 })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', schemaVersion: 1, files: [] })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: '', schemaVersion: 1 })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: null, schemaVersion: 1 })).toBeNull();
     });
 
     // Failure cases: non-numeric schemaVersion or missing schemaVersion
     it('returns null when schemaVersion is non-numeric or missing', () => {
-        expect(parseManifest({ pipelineId: 'bp_123', language: 'python' })).toBeNull();
-        expect(parseManifest({ pipelineId: 'bp_123', language: 'python', schemaVersion: '1' })).toBeNull();
-        expect(parseManifest({ pipelineId: 'bp_123', language: 'python', schemaVersion: null })).toBeNull();
-        expect(parseManifest({ pipelineId: 'bp_123', language: 'python', schemaVersion: true })).toBeNull();
-        expect(parseManifest({ pipelineId: 'bp_123', language: 'python', schemaVersion: {} })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: 'python' })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: 'python', schemaVersion: '1' })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: 'python', schemaVersion: null })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: 'python', schemaVersion: true })).toBeNull();
+        expect(parseManifest({ pipelineId: 'sp_123', language: 'python', schemaVersion: {} })).toBeNull();
     });
 
     // Failure case: schemaVersion greater than MANIFEST_SCHEMA_VERSION
@@ -156,7 +156,7 @@ describe('parseManifest', () => {
         // A newer extension version wrote this marker; reading it with stale rules risks deletion bugs
         const futureRaw = {
             schemaVersion: MANIFEST_SCHEMA_VERSION + 1,
-            pipelineId: 'bp_future',
+            pipelineId: 'sp_future',
             language: 'python',
             files: []
         };
@@ -167,7 +167,7 @@ describe('parseManifest', () => {
     it('filters out malformed entries in files while preserving valid entries', () => {
         const mixedRaw = {
             schemaVersion: 1,
-            pipelineId: 'bp_test123',
+            pipelineId: 'sp_test123',
             language: 'python',
             files: [
                 { path: 'main.py', sha256: 'hash1' },
@@ -193,14 +193,14 @@ describe('parseManifest', () => {
     it('defaults a missing or non-array files property to an empty array', () => {
         const noFiles = {
             schemaVersion: 1,
-            pipelineId: 'bp_nofiles',
+            pipelineId: 'sp_nofiles',
             language: 'python'
         };
         expect(parseManifest(noFiles)?.files).toEqual([]);
 
         const nonArrayFiles = {
             schemaVersion: 1,
-            pipelineId: 'bp_nonarray',
+            pipelineId: 'sp_nonarray',
             language: 'python',
             files: 'not-an-array'
         };
@@ -211,7 +211,7 @@ describe('parseManifest', () => {
     it('defaults non-string generatedAt to an empty string', () => {
         const noTimestamp = {
             schemaVersion: 1,
-            pipelineId: 'bp_timestamp',
+            pipelineId: 'sp_timestamp',
             language: 'python',
             files: []
         };
@@ -222,7 +222,7 @@ describe('parseManifest', () => {
 describe('classifyFolder', () => {
     const mockManifest: GenerationManifest = {
         schemaVersion: 1,
-        pipelineId: 'bp_owner_123',
+        pipelineId: 'sp_owner_123',
         language: 'python',
         generatedAt: '2026-09-12T00:00:00.000Z',
         files: [{ path: 'main.py', sha256: 'sha' }]
@@ -239,28 +239,28 @@ describe('classifyFolder', () => {
      */
 
     it('classifies null manifest with empty folder as fresh', () => {
-        expect(classifyFolder(null, true, 'bp_any')).toBe('fresh');
+        expect(classifyFolder(null, true, 'sp_any')).toBe('fresh');
         expect(classifyFolder(null, true, '')).toBe('fresh');
     });
 
     /**
      * CRITICAL SECURITY PROPERTY:
      * The unowned-nonempty case prevents wiping a user's existing project when retargeting
-     * output to an existing folder that has no .beamgen.json marker. It must never auto-delete.
+     * output to an existing folder that has no .sparkgen.json marker. It must never auto-delete.
      */
     it('classifies null manifest with non-empty folder as unowned-nonempty regardless of pipelineId', () => {
-        expect(classifyFolder(null, false, 'bp_any')).toBe('unowned-nonempty');
+        expect(classifyFolder(null, false, 'sp_any')).toBe('unowned-nonempty');
         expect(classifyFolder(null, false, '')).toBe('unowned-nonempty');
     });
 
     it('classifies present manifest with different pipelineId as foreign (empty or non-empty)', () => {
-        expect(classifyFolder(mockManifest, false, 'bp_different_456')).toBe('foreign');
-        expect(classifyFolder(mockManifest, true, 'bp_different_456')).toBe('foreign');
+        expect(classifyFolder(mockManifest, false, 'sp_different_456')).toBe('foreign');
+        expect(classifyFolder(mockManifest, true, 'sp_different_456')).toBe('foreign');
     });
 
     it('classifies present manifest with matching pipelineId as owned (empty or non-empty)', () => {
-        expect(classifyFolder(mockManifest, false, 'bp_owner_123')).toBe('owned');
-        expect(classifyFolder(mockManifest, true, 'bp_owner_123')).toBe('owned');
+        expect(classifyFolder(mockManifest, false, 'sp_owner_123')).toBe('owned');
+        expect(classifyFolder(mockManifest, true, 'sp_owner_123')).toBe('owned');
     });
 
     it('classifies present manifest with empty requestedPipelineId as foreign', () => {
@@ -369,7 +369,7 @@ describe('foreignLanguageDescriptors', () => {
 describe('planCleanup', () => {
     const pythonManifest: GenerationManifest = {
         schemaVersion: 1,
-        pipelineId: 'bp_pipeline_1',
+        pipelineId: 'sp_pipeline_1',
         language: 'python',
         generatedAt: '2026-09-12T00:00:00.000Z',
         files: [
@@ -527,7 +527,7 @@ describe('resolveDeletablePath', () => {
     /**
      * DEFENCE IN DEPTH RATIONALE:
      * A manifest is on-disk data and therefore attacker-influenced if a malicious repository
-     * or .beam project is shared. A crafted manifest entry like `../../.ssh/id_rsa` or
+     * or .spark project is shared. A crafted manifest entry like `../../.ssh/id_rsa` or
      * `/etc/passwd` must not escape the target folder.
      */
 
@@ -553,13 +553,14 @@ describe('resolveDeletablePath', () => {
         expect(resolveDeletablePath(baseFolder, './')).toBeNull();
     });
 
-    // Rejection of manifest marker and .beam pipeline files
-    it('rejects the manifest filename (.beamgen.json) and any .beam design files', () => {
+    // Rejection of manifest marker and .spark pipeline files
+    it('rejects the manifest filename (.sparkgen.json) and any .spark design files', () => {
+        expect(MANIFEST_FILENAME).toBe('.sparkgen.json');
         expect(resolveDeletablePath(baseFolder, MANIFEST_FILENAME)).toBeNull();
-        expect(resolveDeletablePath(baseFolder, '.beamgen.json')).toBeNull();
-        expect(resolveDeletablePath(baseFolder, 'pipeline.beam')).toBeNull();
-        expect(resolveDeletablePath(baseFolder, 'nested/design.beam')).toBeNull();
-        expect(resolveDeletablePath(baseFolder, 'src/transforms/flow.beam')).toBeNull();
+        expect(resolveDeletablePath(baseFolder, '.sparkgen.json')).toBeNull();
+        expect(resolveDeletablePath(baseFolder, 'pipeline.spark')).toBeNull();
+        expect(resolveDeletablePath(baseFolder, 'nested/design.spark')).toBeNull();
+        expect(resolveDeletablePath(baseFolder, 'src/transforms/flow.spark')).toBeNull();
     });
 
     // Rejection of invalid folder or non-string inputs
@@ -588,11 +589,11 @@ describe('resolveDeletablePath', () => {
 describe('buildManifest', () => {
     // Simple case: builds manifest with correct fields and sha256 digests
     it('constructs a valid manifest with correct schemaVersion, hashes, and timestamp', () => {
-        const pipelineId = 'bp_abc123';
+        const pipelineId = 'sp_abc123';
         const language = 'python';
         const files = [
             { path: 'main.py', content: 'print("hello")\n' },
-            { path: 'requirements.txt', content: 'apache-beam>=2.50.0\n' }
+            { path: 'requirements.txt', content: 'pyspark>=4.0.0\n' }
         ];
 
         const manifest = buildManifest(pipelineId, language, files);
@@ -607,13 +608,13 @@ describe('buildManifest', () => {
         // Hashes match sha256(content)
         expect(manifest.files).toEqual([
             { path: 'main.py', sha256: sha256('print("hello")\n') },
-            { path: 'requirements.txt', sha256: sha256('apache-beam>=2.50.0\n') }
+            { path: 'requirements.txt', sha256: sha256('pyspark>=4.0.0\n') }
         ]);
     });
 
     // Serialization round-trip
     it('round-trips cleanly through JSON.stringify -> JSON.parse -> parseManifest', () => {
-        const original = buildManifest('bp_roundtrip', 'java', [
+        const original = buildManifest('sp_roundtrip', 'java', [
             { path: 'pom.xml', content: '<project></project>' },
             { path: 'src/main/java/App.java', content: 'public class App {}' }
         ]);
@@ -627,7 +628,7 @@ describe('buildManifest', () => {
 
     // Extreme / edge case: empty files list
     it('handles an empty files list gracefully', () => {
-        const emptyManifest = buildManifest('bp_empty', 'python', []);
+        const emptyManifest = buildManifest('sp_empty', 'python', []);
         expect(emptyManifest.files).toEqual([]);
         expect(parseManifest(emptyManifest)?.files).toEqual([]);
     });

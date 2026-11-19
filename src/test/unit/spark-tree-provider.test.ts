@@ -45,8 +45,8 @@ vi.mock('vscode', async () => (await import('./helpers/vscodeMock')).createVscod
     }
 }));
 
+import { activate, SPARK_EDITOR_VIEW_TYPE } from '../../extension';
 import {
-    activate,
     SparkTreeProvider,
     DataFlowTreeProvider,
     DataItem,
@@ -55,11 +55,11 @@ import {
     getJobStartTime,
     normalizeServerlessBatch,
     normalizeClusterJob,
-    SPARK_EDITOR_VIEW_TYPE,
     type SparkJob,
     type RawServerlessBatch,
     type RawClusterJob
-} from '../../extension';
+} from '../../tree/sparkTree';
+import { PIPELINE_SEARCH_EXCLUDE_PATTERN } from '../../core/constants';
 
 describe('Job & Batch Status Categorization and Timestamp Sorting (R9 & R10)', () => {
     it('categorizes Serverless Batch states into Running, Cancelled, and Completed (R9)', () => {
@@ -597,5 +597,384 @@ describe('openJobInConsole Command URL Routing (R11)', () => {
         expect(parsedUri).toBe(
             'https://console.cloud.google.com/dataproc/jobs/job-999?region=us-west1&project=resolved-proj-42'
         );
+    });
+});
+
+/** Signature of the mocked execFile callback. */
+type ExecCallback = (err: (Error & { killed?: boolean }) | null, stdout: string, stderr: string) => void;
+
+/**
+ * Makes the mocked execFile answer every call with one result.
+ *
+ * @param err Error passed to the callback, or null.
+ * @param stdout Standard output text.
+ * @param stderr Standard error text.
+ */
+function answerExecFile(err: (Error & { killed?: boolean }) | null, stdout = '', stderr = ''): void {
+    mockExecFile.mockImplementation((_bin: string, _args: string[], _opts: unknown, cb: ExecCallback) => {
+        cb(err, stdout, stderr);
+    });
+}
+
+/**
+ * Returns the theme icon id of a tree item.
+ *
+ * @param item Tree item.
+ * @returns Icon id, or undefined.
+ */
+function iconId(item: DataItem | undefined): string | undefined {
+    return (item?.iconPath as { id?: string } | undefined)?.id;
+}
+
+describe('SparkTreeProvider boundary and failure cases (T5)', () => {
+    let provider: SparkTreeProvider;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetGcloudProject.mockResolvedValue('my-spark-project');
+        mockFindGcloudPath.mockReturnValue('/usr/bin/gcloud');
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+            get: vi.fn(),
+            has: vi.fn(),
+            inspect: vi.fn(),
+            update: vi.fn()
+        } as unknown as vscode.WorkspaceConfiguration);
+        provider = new SparkTreeProvider();
+    });
+
+    describe('categorizeJobStatus', () => {
+        it.each([
+            ['', 'Completed'],
+            ['UNKNOWN', 'Completed'],
+            ['running', 'Running'],
+            ['  pending  ', 'Running'],
+            ['STATE_QUEUED', 'Running'],
+            ['RESOURCE_CLEANING_UP', 'Running'],
+            ['CANCELED', 'Cancelled'],
+            ['JOB_STATE_DRAINING', 'Cancelled'],
+            ['STOPPED', 'Cancelled'],
+            ['ATTEMPT_FAILURE', 'Completed'],
+            ['done', 'Completed']
+        ])('maps state %j to %s', (state, expected) => {
+            expect(categorizeJobStatus(state)).toBe(expected);
+        });
+
+        it('treats a missing state as Completed', () => {
+            expect(categorizeJobStatus(undefined as unknown as string)).toBe('Completed');
+        });
+    });
+
+    describe('getJobStartTime', () => {
+        it('returns 0 when no timestamp is present or every timestamp is invalid', () => {
+            expect(getJobStartTime({} as RawServerlessBatch)).toBe(0);
+            expect(getJobStartTime({ createTime: 'not-a-date' } as RawServerlessBatch)).toBe(0);
+        });
+
+        it('skips an invalid stateStartTime and uses the latest valid statusHistory entry', () => {
+            const job = {
+                status: { stateStartTime: 'garbage' },
+                statusHistory: [
+                    { stateStartTime: '2026-01-01T00:00:00Z' },
+                    null,
+                    { stateStartTime: 'bad' },
+                    { stateStartTime: '2026-03-01T00:00:00Z' }
+                ]
+            } as unknown as RawClusterJob;
+            expect(getJobStartTime(job)).toBe(Date.parse('2026-03-01T00:00:00Z'));
+        });
+
+        it('falls back from createTime to startTime, creationTime, and stateTime in order', () => {
+            expect(getJobStartTime({ stateTime: '2026-05-01T00:00:00Z' } as RawServerlessBatch)).toBe(Date.parse('2026-05-01T00:00:00Z'));
+            expect(
+                getJobStartTime({ creationTime: '2026-04-01T00:00:00Z', stateTime: '2026-05-01T00:00:00Z' } as RawServerlessBatch)
+            ).toBe(Date.parse('2026-04-01T00:00:00Z'));
+        });
+    });
+
+    describe('normalizeServerlessBatch', () => {
+        it('uses safe defaults for an empty batch', () => {
+            expect(normalizeServerlessBatch({} as RawServerlessBatch)).toMatchObject({
+                id: '',
+                name: 'unknown-batch',
+                state: 'UNKNOWN',
+                region: 'us-central1',
+                location: 'us-central1',
+                jobType: 'serverless-batch',
+                category: 'batch',
+                type: 'Serverless Batch'
+            });
+        });
+
+        it('uses the last name segment, then the uuid, as the batch ID', () => {
+            expect(normalizeServerlessBatch({ name: 'some/path/batch-x' } as RawServerlessBatch).id).toBe('batch-x');
+            expect(normalizeServerlessBatch({ uuid: 'uuid-1' } as RawServerlessBatch).id).toBe('uuid-1');
+        });
+
+        it('prefers the resource name region over the location field and the default region', () => {
+            const batch = normalizeServerlessBatch(
+                { name: 'projects/p/locations/asia-east1/batches/b-1', location: 'europe-west1' } as RawServerlessBatch,
+                'us-west1'
+            );
+            expect(batch.region).toBe('asia-east1');
+            expect(normalizeServerlessBatch({ id: 'b-2', location: 'europe-west1' } as RawServerlessBatch, 'us-west1').region).toBe('europe-west1');
+        });
+
+        it('reads the runtime version from runtimeConfig', () => {
+            expect(normalizeServerlessBatch({ id: 'b', runtimeConfig: { version: '2.3' } } as unknown as RawServerlessBatch).runtimeVersion).toBe('2.3');
+        });
+    });
+
+    describe('normalizeClusterJob', () => {
+        it('uses safe defaults for an empty job', () => {
+            expect(normalizeClusterJob({} as RawClusterJob, 'us-east4')).toMatchObject({
+                id: 'unknown-job',
+                name: 'unknown-job',
+                state: 'UNKNOWN',
+                region: 'us-east4',
+                jobType: 'cluster-job',
+                category: 'cluster-job',
+                type: 'Cluster Job'
+            });
+        });
+
+        it('takes the latest statusHistory start time when status has none', () => {
+            const job = normalizeClusterJob({
+                reference: { jobId: 'j-1' },
+                statusHistory: [
+                    { state: 'PENDING', stateStartTime: '2026-01-01T00:00:00Z' },
+                    { state: 'RUNNING', stateStartTime: '2026-01-02T00:00:00Z' }
+                ]
+            } as RawClusterJob);
+            expect(job.stateStartTime).toBe('2026-01-02T00:00:00Z');
+            expect(job.startTime).toBe('2026-01-02T00:00:00Z');
+        });
+
+        it('uses the raw name as display name only when no reference jobId exists', () => {
+            expect(normalizeClusterJob({ name: 'display', id: 'id-1' } as unknown as RawClusterJob).name).toBe('display');
+            expect(normalizeClusterJob({ name: 'display', reference: { jobId: 'ref-1' } } as unknown as RawClusterJob).name).toBe('ref-1');
+        });
+    });
+
+    describe('buildTree and pipeline scanning', () => {
+        it('returns no nodes when no workspace folder is open', () => {
+            const original = vscode.workspace.workspaceFolders;
+            Object.defineProperty(vscode.workspace, 'workspaceFolders', { value: undefined, configurable: true, writable: true });
+            try {
+                expect(provider.buildTree([vscode.Uri.file('/workspace/a.spark')])).toEqual([]);
+            } finally {
+                Object.defineProperty(vscode.workspace, 'workspaceFolders', { value: original, configurable: true, writable: true });
+            }
+        });
+
+        it('returns no nodes for an empty file list', () => {
+            expect(provider.buildTree([])).toEqual([]);
+        });
+
+        it('merges files that share a folder and nests deep folders', () => {
+            const tree = provider.buildTree([
+                vscode.Uri.file('/workspace/etl/a.spark'),
+                vscode.Uri.file('/workspace/etl/b.spark'),
+                vscode.Uri.file('/workspace/etl/nightly/c.spark')
+            ]);
+            expect(tree).toHaveLength(1);
+            expect(tree[0].label).toBe('etl');
+            expect(iconId(tree[0])).toBe('folder');
+            expect(tree[0].children?.map((c) => c.label)).toEqual(['a.spark', 'b.spark', 'nightly']);
+            const nightly = tree[0].children?.[2];
+            expect(nightly?.children?.map((c) => c.label)).toEqual(['c.spark']);
+            expect(iconId(nightly?.children?.[0])).toBe('file');
+        });
+
+        it('scans .spark files with the exclude pattern and fires a tree change', async () => {
+            vi.mocked(vscode.workspace.findFiles).mockResolvedValue([vscode.Uri.file('/workspace/x.spark')] as never);
+            const scanned = new SparkTreeProvider();
+            await vi.waitFor(() => expect(vscode.workspace.findFiles).toHaveBeenCalledWith('**/*.spark', PIPELINE_SEARCH_EXCLUDE_PATTERN));
+            const emitter = (scanned as unknown as { _onDidChangeTreeData: { fire: ReturnType<typeof vi.fn> } })._onDidChangeTreeData;
+            await vi.waitFor(() => expect(emitter.fire).toHaveBeenCalled());
+            const [pipelines] = await scanned.getChildren();
+            expect(pipelines.children?.map((c) => c.label)).toEqual(['x.spark']);
+            vi.mocked(vscode.workspace.findFiles).mockResolvedValue([] as never);
+        });
+    });
+
+    describe('getChildren routing', () => {
+        it('shows a placeholder under Pipelines when no pipeline exists', async () => {
+            const [pipelines] = await provider.getChildren();
+            expect(pipelines.children).toHaveLength(1);
+            expect(pipelines.children?.[0].label).toBe('No pipelines found');
+            expect(pipelines.children?.[0].contextValue).toBe('empty');
+        });
+
+        it('assigns valid lowercase codicon ids to the three root sections', async () => {
+            const roots = await provider.getChildren();
+            expect(roots.map(iconId)).toEqual(['repo', 'flame', 'server-process']);
+        });
+
+        it('routes the legacy category-running-jobs node to the Serverless batch query', async () => {
+            const spy = vi.spyOn(provider, 'fetchServerlessBatches').mockResolvedValue({ batches: [], region: 'us-central1' });
+            const children = await provider.getChildren(new DataItem('Running Jobs', vscode.TreeItemCollapsibleState.Collapsed, 'category-running-jobs'));
+            expect(spy).toHaveBeenCalledTimes(1);
+            expect(children[0].contextValue).toBe('job-empty');
+        });
+
+        it('returns the stored children of folder, job group, and Pipelines-labelled nodes', async () => {
+            const child = new DataItem('c', vscode.TreeItemCollapsibleState.None, 'pipeline-edit');
+            for (const contextValue of ['folder', 'job-group-running', 'job-group-cancelled', 'job-group-completed']) {
+                expect(await provider.getChildren(new DataItem('x', vscode.TreeItemCollapsibleState.Collapsed, contextValue, [child]))).toEqual([child]);
+                expect(await provider.getChildren(new DataItem('x', vscode.TreeItemCollapsibleState.Collapsed, contextValue))).toEqual([]);
+            }
+            expect(await provider.getChildren(new DataItem('Pipelines', vscode.TreeItemCollapsibleState.Collapsed, 'other', [child]))).toEqual([child]);
+        });
+
+        it('returns no children for leaf and unknown nodes', async () => {
+            expect(await provider.getChildren(new DataItem('leaf', vscode.TreeItemCollapsibleState.None, 'serverless-batch'))).toEqual([]);
+            expect(await provider.getChildren(new DataItem('?', vscode.TreeItemCollapsibleState.None, 'mystery'))).toEqual([]);
+        });
+
+        it('returns the same element from getTreeItem', () => {
+            const item = new DataItem('x', vscode.TreeItemCollapsibleState.None, 'empty');
+            expect(provider.getTreeItem(item)).toBe(item);
+        });
+    });
+
+    describe('fetchServerlessBatches and fetchClusterJobs', () => {
+        it('passes a 15 second timeout and a 10 MB output buffer to gcloud', async () => {
+            answerExecFile(null, '[]');
+            await provider.fetchServerlessBatches();
+            expect(mockExecFile.mock.calls[0][2]).toEqual({ timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+        });
+
+        it('omits --project when the project is the placeholder or gcloud has no default', async () => {
+            answerExecFile(null, '[]');
+            await provider.fetchServerlessBatches('YOUR_PROJECT_ID');
+            expect(mockExecFile.mock.calls[0][1]).not.toContainEqual(expect.stringMatching(/^--project=/));
+
+            mockGetGcloudProject.mockResolvedValue(undefined);
+            const result = await provider.fetchClusterJobs();
+            expect(mockExecFile.mock.calls[1][1]).not.toContainEqual(expect.stringMatching(/^--project=/));
+            expect(result.projectId).toBeUndefined();
+        });
+
+        it('uses a valid region override, then the configured region, then the constructor default', async () => {
+            answerExecFile(null, '[]');
+            expect((await provider.fetchServerlessBatches('p', 'europe-west4')).region).toBe('europe-west4');
+
+            vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+                get: vi.fn(() => 'asia-south1')
+            } as unknown as vscode.WorkspaceConfiguration);
+            expect((await provider.fetchServerlessBatches('p', 'bad region;rm')).region).toBe('asia-south1');
+
+            vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+                get: vi.fn(() => '../etc')
+            } as unknown as vscode.WorkspaceConfiguration);
+            expect((await new SparkTreeProvider('me-west1').fetchClusterJobs('p')).region).toBe('me-west1');
+            expect((await new SparkTreeProvider('not a region').fetchClusterJobs('p')).region).toBe('us-central1');
+        });
+
+        it('reports a timeout message when gcloud is killed', async () => {
+            answerExecFile(Object.assign(new Error('killed'), { killed: true }), '', 'partial');
+            expect((await provider.fetchServerlessBatches('p')).error).toBe('Request timed out waiting for gcloud CLI response.');
+            expect((await provider.fetchClusterJobs('p')).error).toBe('Request timed out waiting for gcloud CLI response.');
+        });
+
+        it('prefers stderr over the error message and falls back to the message', async () => {
+            answerExecFile(new Error('exit 1'), '', 'ERROR: PERMISSION_DENIED');
+            expect((await provider.fetchServerlessBatches('p')).error).toBe('ERROR: PERMISSION_DENIED');
+            answerExecFile(new Error('exit 2'), '', '');
+            expect((await provider.fetchClusterJobs('p')).error).toBe('exit 2');
+        });
+
+        it('reports a parse error for malformed JSON output', async () => {
+            answerExecFile(null, '{not json');
+            const batches = await provider.fetchServerlessBatches('p');
+            expect(batches.batches).toEqual([]);
+            expect(batches.error).toMatch(/^Failed to parse gcloud output: /);
+            const jobs = await provider.fetchClusterJobs('p');
+            expect(jobs.jobs).toEqual([]);
+            expect(jobs.error).toMatch(/^Failed to parse gcloud output: /);
+        });
+
+        it('accepts wrapped object output and treats empty or unknown shapes as no items', async () => {
+            answerExecFile(null, JSON.stringify({ batches: [{ id: 'b-1', state: 'RUNNING' }] }));
+            expect((await provider.fetchServerlessBatches('p')).batches.map((b) => b.id)).toEqual(['b-1']);
+
+            answerExecFile(null, JSON.stringify({ jobs: [{ reference: { jobId: 'j-1' } }] }));
+            expect((await provider.fetchClusterJobs('p')).jobs.map((j) => j.id)).toEqual(['j-1']);
+
+            answerExecFile(null, '');
+            expect((await provider.fetchServerlessBatches('p')).batches).toEqual([]);
+            answerExecFile(null, JSON.stringify({ unexpected: true }));
+            expect((await provider.fetchClusterJobs('p')).jobs).toEqual([]);
+        });
+
+        it('maps fetchJobs onto the Serverless batch result', async () => {
+            answerExecFile(null, JSON.stringify([{ id: 'b-9', state: 'DONE' }]));
+            const result = await provider.fetchJobs('p');
+            expect(result).toEqual({ jobs: [expect.objectContaining({ id: 'b-9' })], projectId: 'p', error: undefined });
+        });
+    });
+
+    describe('grouped job items', () => {
+        it('returns three empty groups, with Running collapsed, for no jobs', () => {
+            const groups = provider.buildBatchGroups([]);
+            expect(groups.map((g) => g.label)).toEqual(['Running (0)', 'Cancelled (0)', 'Completed (0)']);
+            expect(groups.map((g) => g.collapsibleState)).toEqual([
+                vscode.TreeItemCollapsibleState.Collapsed,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                vscode.TreeItemCollapsibleState.Collapsed
+            ]);
+            expect(groups.map(iconId)).toEqual(['run', 'stop-circle', 'check-all']);
+        });
+
+        it.each([
+            ['RUNNING', 'play-circle'],
+            ['SETUP_DONE', 'play-circle'],
+            ['PENDING', 'clock'],
+            ['CANCEL_STARTED', 'clock'],
+            ['CANCELLED', 'circle-slash'],
+            ['FAILED', 'error'],
+            ['ERROR', 'error'],
+            ['ATTEMPT_FAILURE', 'error'],
+            ['DONE', 'check'],
+            ['SUCCEEDED', 'check']
+        ])('assigns the %s state the %s icon', (state, icon) => {
+            const groups = provider.buildClusterJobGroups([{ reference: { jobId: 'j-1' }, status: { state } } as RawClusterJob]);
+            const item = groups.flatMap((g) => g.children ?? [])[0];
+            expect(iconId(item)).toBe(icon);
+        });
+
+        it('adds the cluster name to the description and tooltip of a cluster job', () => {
+            const groups = provider.buildClusterJobGroups([
+                { reference: { jobId: 'j-1' }, placement: { clusterName: 'c-1' }, status: { state: 'DONE' } } as RawClusterJob
+            ]);
+            const item = groups[2].children?.[0];
+            expect(item?.description).toBe('c-1 • DONE');
+            expect((item?.tooltip as { value: string }).value).toContain('- **Cluster:** `c-1`');
+            expect((item?.tooltip as { value: string }).value).toContain('- **Timestamp:** -');
+        });
+
+        it('adds the runtime version to the tooltip of a Serverless batch', () => {
+            const groups = provider.buildBatchGroups([{ id: 'b-1', state: 'SUCCEEDED', runtimeVersion: '2.3' } as RawServerlessBatch]);
+            const tooltip = (groups[2].children?.[0].tooltip as { value: string }).value;
+            expect(tooltip).toContain('- **Runtime Version:** 2.3');
+            expect(tooltip).toContain('- **Type:** Serverless Batch');
+        });
+
+        it('keeps each job type in buildJobGroups and passes the project to the console command', () => {
+            const groups = provider.buildJobGroups(
+                [
+                    { id: 'b-1', name: 'b-1', state: 'RUNNING', jobType: 'serverless-batch' } as SparkJob,
+                    { id: 'j-1', name: 'j-1', state: 'RUNNING', category: 'cluster-job', region: 'us-east1' } as SparkJob
+                ],
+                'proj-x'
+            );
+            const items = groups[0].children ?? [];
+            expect(items.map((i) => i.contextValue).sort()).toEqual(['cluster-job', 'serverless-batch']);
+            const cluster = items.find((i) => i.contextValue === 'cluster-job');
+            expect(cluster?.command?.arguments).toEqual([
+                expect.objectContaining({ id: 'j-1', region: 'us-east1', jobType: 'cluster-job', category: 'cluster-job' }),
+                'proj-x'
+            ]);
+        });
     });
 });

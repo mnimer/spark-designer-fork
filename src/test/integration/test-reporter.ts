@@ -25,6 +25,7 @@ import {
     EvaluatorFinding,
     PromptRemediationDirective,
 } from './evaluators/types';
+import { DEFAULT_GEMINI_MODEL } from '../../constants';
 
 export interface TestReportEntry {
     testName: string;
@@ -200,10 +201,10 @@ export function generateReportMarkdown(entries: TestReportEntry[]): string {
     const totalCount = entries.length;
 
     // 1. Header & Metadata
-    lines.push('# Apache Beam Codegen Integration Test Report');
+    lines.push('# Apache Spark Codegen Integration Test Report');
     lines.push('');
     lines.push(`> **Last Updated:** ${now}  `);
-    lines.push(`> **Evaluator Model:** \`gemini-3.7-flash\` (Vertex AI \`global\`)  `);
+    lines.push(`> **Evaluator Model:** \`${DEFAULT_GEMINI_MODEL}\` (Vertex AI \`global\`)  `);
     lines.push(`> **Suites Recorded:** ${totalCount} (${passedCount} Passed, ${failedCount} Failed)`);
     lines.push('');
 

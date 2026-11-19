@@ -453,3 +453,397 @@ describe('Extension Host validateDagTopology — Multi-Input, Watermark Warnings
         }
     });
 });
+
+describe('validateDagTopology — cycle detection boundaries (T3)', () => {
+    it('returns a clean valid result for empty, null, and id-less node inputs', () => {
+        for (const res of [
+            validateDagTopology([], []),
+            validateDagTopology(null as unknown as DagNode[], null as unknown as DagEdge[]),
+            validateDagTopology([{ id: undefined } as unknown as DagNode], []),
+        ]) {
+            expect(res.isValid).toBe(true);
+            expect(res.hasCycles).toBe(false);
+            expect(res.sortedNodeIds).toEqual([]);
+            expect(res.errors).toEqual([]);
+            expect(res.warnings).toEqual([]);
+        }
+    });
+
+    it('detects a self-loop with an exact path, edge id, and labeled path string', () => {
+        const res = validateDagTopology(
+            [{ id: 'a', data: { label: 'Loop', type: 'STEP', spark_transform: 'Select' } }],
+            [{ id: 'self', source: 'a', target: 'a' }]
+        );
+        expect(res.hasCycles).toBe(true);
+        expect(res.cyclePaths).toEqual([['a', 'a']]);
+        expect(res.cycleEdgeIds).toEqual(['self']);
+        expect(res.cyclePathString).toBe('Loop (a) -> Loop (a)');
+        expect(res.sortedNodeIds).toEqual([]);
+    });
+
+    it('marks only the loop members of a cycle and not the upstream source or downstream tail', () => {
+        const nodes: DagNode[] = [
+            { id: 'src', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } },
+            { id: 'b', data: { type: 'STEP', spark_transform: 'Filter' } },
+            { id: 'c', data: { type: 'STEP', spark_transform: 'Select' } },
+            { id: 'd', data: { type: 'STEP', spark_transform: 'WithColumns' } },
+            { id: 'tail', data: { type: 'SINK', spark_transform: 'ParquetSink' } },
+        ];
+        const edges: DagEdge[] = [
+            { id: 'e_src_b', source: 'src', target: 'b' },
+            { id: 'e_b_c', source: 'b', target: 'c' },
+            { id: 'e_c_d', source: 'c', target: 'd' },
+            { id: 'e_d_b', source: 'd', target: 'b' },
+            { id: 'e_d_tail', source: 'd', target: 'tail' },
+        ];
+        const res = validateDagTopology(nodes, edges);
+        expect(res.isValid).toBe(false);
+        expect([...res.cycleNodeIds].sort()).toEqual(['b', 'c', 'd']);
+        expect([...res.cycleEdgeIds].sort()).toEqual(['e_b_c', 'e_c_d', 'e_d_b']);
+        expect(Object.keys(res.nodeErrors ?? {}).sort()).toEqual(['b', 'c', 'd']);
+        expect(res.errors).toHaveLength(1);
+        expect(res.errors[0]).toMatch(/^Cyclic dependency detected in pipeline graph: /);
+    });
+
+    it('reports every disjoint cycle and every parallel edge id while ignoring id-less edges', () => {
+        const nodes: DagNode[] = ['a', 'b', 'x', 'y'].map((id) => ({
+            id,
+            data: { type: 'STEP', spark_transform: 'Select' },
+        }));
+        const edges: DagEdge[] = [
+            { id: 'ab1', source: 'a', target: 'b' },
+            { id: 'ab2', source: 'a', target: 'b' },
+            { id: 'ba', source: 'b', target: 'a' },
+            { source: 'x', target: 'y' },
+            { id: 'yx', source: 'y', target: 'x' },
+        ];
+        const res = validateDagTopology(nodes, edges);
+        expect(res.cyclePaths).toHaveLength(2);
+        expect([...res.cycleNodeIds].sort()).toEqual(['a', 'b', 'x', 'y']);
+        expect([...res.cycleEdgeIds].sort()).toEqual(['ab1', 'ab2', 'ba', 'yx']);
+        // The path string describes only the first detected loop.
+        expect(res.cyclePathString.split(' -> ')).toHaveLength(3);
+    });
+
+    it('suppresses source-inbound and arity errors for nodes inside a cycle', () => {
+        const nodes: DagNode[] = [
+            { id: 'src', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } },
+            { id: 'join', data: { type: 'STEP', spark_transform: 'Join' } },
+        ];
+        const res = validateDagTopology(nodes, [
+            { id: 'e1', source: 'src', target: 'join' },
+            { id: 'e2', source: 'join', target: 'src' },
+        ]);
+        expect(res.hasCycles).toBe(true);
+        expect(res.errors).toHaveLength(1);
+        expect(res.invalidUpstreamNodeIds).toEqual([]);
+        expect(res.missingUpstreamNodeIds).toEqual([]);
+    });
+});
+
+describe('validateDagTopology — orphan node boundaries (T3)', () => {
+    it('never flags a single-node graph as orphaned but warns about missing SOURCE or SINK', () => {
+        const res = validateDagTopology([{ id: 'only', data: { type: 'STEP', spark_transform: 'Filter' } }], []);
+        expect(res.orphanNodeIds).toEqual([]);
+        expect(res.isValid).toBe(true);
+        expect(res.warnings).toEqual([
+            'Pipeline has no SOURCE node. At least one SOURCE is required for execution.',
+            'Pipeline has no SINK node. At least one SINK is recommended for output delivery.',
+        ]);
+    });
+
+    it('lists multiple orphans in one error using labels when present and ids otherwise', () => {
+        const nodes: DagNode[] = [
+            { id: 'src', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } },
+            { id: 'sink', data: { type: 'SINK', spark_transform: 'ParquetSink' } },
+            { id: 'o1', data: { label: 'Lonely Filter', type: 'STEP', spark_transform: 'Filter' } },
+            { id: 'o2', data: { type: 'STEP', spark_transform: 'Select' } },
+        ];
+        const res = validateDagTopology(nodes, [{ id: 'e', source: 'src', target: 'sink' }]);
+        expect(res.orphanNodeIds).toEqual(['o1', 'o2']);
+        expect(res.errors).toEqual([
+            'Orphan node(s) detected: "Lonely Filter" (o1), o2. All steps must be connected into the pipeline.',
+        ]);
+        expect(res.nodeErrors?.o1).toEqual(res.errors);
+        expect(res.nodeErrors?.o2).toEqual(res.errors);
+    });
+
+    it('treats nodes linked only by dangling edges as orphans', () => {
+        const nodes: DagNode[] = [
+            { id: 'src', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } },
+            { id: 'sink', data: { type: 'SINK', spark_transform: 'ParquetSink' } },
+        ];
+        const res = validateDagTopology(nodes, [
+            { id: 'd1', source: 'src', target: 'ghost' },
+            { id: 'd2', source: 'ghost', target: 'sink' },
+            { id: 'bad' } as unknown as DagEdge,
+        ]);
+        expect(res.orphanNodeIds).toEqual(['src', 'sink']);
+        expect(res.isValid).toBe(false);
+    });
+
+    it('reports only the orphan error for orphaned Join and UnionByName steps', () => {
+        const nodes: DagNode[] = [
+            { id: 'src', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } },
+            { id: 'sink', data: { type: 'SINK', spark_transform: 'ParquetSink' } },
+            { id: 'join', data: { type: 'STEP', spark_transform: 'Join' } },
+            { id: 'union', data: { type: 'STEP', spark_transform: 'UnionByName' } },
+        ];
+        const res = validateDagTopology(nodes, [{ id: 'e', source: 'src', target: 'sink' }]);
+        expect(res.orphanNodeIds).toEqual(['join', 'union']);
+        expect(res.errors).toHaveLength(1);
+        expect(res.missingUpstreamNodeIds).toEqual([]);
+        expect(res.invalidUpstreamNodeIds).toEqual([]);
+    });
+});
+
+describe('validateDagTopology — stream-stream outer join watermark boundaries (T3)', () => {
+    const streamL: DagNode = { id: 'sl', data: { type: 'SOURCE', spark_transform: 'KafkaSource' } };
+    const streamR: DagNode = { id: 'sr', data: { type: 'SOURCE', spark_transform: 'RateSource' } };
+    const sink: DagNode = {
+        id: 'sink',
+        data: { type: 'SINK', spark_transform: 'DeltaSink', properties: { checkpointLocation: 'gs://ckpt/out' } },
+    };
+    const join = (properties: Record<string, unknown>): DagNode => ({
+        id: 'join',
+        data: { label: 'J', type: 'STEP', spark_transform: 'Join', properties },
+    });
+    const directEdges: DagEdge[] = [
+        { id: 'l', source: 'sl', target: 'join', targetHandle: 'left' },
+        { id: 'r', source: 'sr', target: 'join', targetHandle: 'right' },
+        { id: 'o', source: 'join', target: 'sink' },
+    ];
+
+    it('normalizes camelCase, spaced, upper-case, and alias join types before the watermark check', () => {
+        const cases: Array<[Record<string, unknown>, string]> = [
+            [{ joinType: 'leftOuter' }, 'left_outer'],
+            [{ joinType: 'FULL OUTER' }, 'full_outer'],
+            [{ joinType: 'outer' }, 'full_outer'],
+            [{ joinType: 'right-outer' }, 'right_outer'],
+            [{ how: 'fullouter' }, 'full_outer'],
+        ];
+        for (const [props, normalized] of cases) {
+            const res = validateDagTopology([streamL, streamR, join(props), sink], directEdges);
+            expect(res.isValid, JSON.stringify(props)).toBe(false);
+            expect(res.errors).toEqual([
+                `Stream-stream "${normalized}" Join node "J" (join) requires an upstream Watermark step on streaming inputs (missing on "left" and "right").`,
+            ]);
+        }
+    });
+
+    it('names only the unwatermarked side when one branch has a Watermark step', () => {
+        const wm: DagNode = { id: 'wm', data: { type: 'STEP', spark_transform: 'Watermark' } };
+        const res = validateDagTopology(
+            [streamL, wm, streamR, join({ joinType: 'left_outer' }), sink],
+            [
+                { id: 'a', source: 'sl', target: 'wm' },
+                { id: 'b', source: 'wm', target: 'join', targetHandle: 'left' },
+                { id: 'r', source: 'sr', target: 'join', targetHandle: 'right' },
+                { id: 'o', source: 'join', target: 'sink' },
+            ]
+        );
+        expect(res.errors).toHaveLength(1);
+        expect(res.errors[0]).toContain('(missing on "right")');
+        expect(res.nodeErrors?.join).toEqual(res.errors);
+    });
+
+    it('rejects a branch where an unwatermarked stream merges after the Watermark step', () => {
+        const extra: DagNode = { id: 'extra', data: { type: 'SOURCE', spark_transform: 'PubSubSource' } };
+        const wmL: DagNode = { id: 'wm_l', data: { type: 'STEP', spark_transform: 'Watermark' } };
+        const wmR: DagNode = { id: 'wm_r', data: { type: 'STEP', spark_transform: 'Watermark' } };
+        const union: DagNode = { id: 'union', data: { type: 'STEP', spark_transform: 'UnionByName' } };
+        const res = validateDagTopology(
+            [streamL, extra, wmL, union, streamR, wmR, join({ joinType: 'full_outer' }), sink],
+            [
+                { id: 'a', source: 'sl', target: 'wm_l' },
+                { id: 'b', source: 'wm_l', target: 'union' },
+                { id: 'c', source: 'extra', target: 'union' },
+                { id: 'd', source: 'union', target: 'join', targetHandle: 'left' },
+                { id: 'e', source: 'sr', target: 'wm_r' },
+                { id: 'f', source: 'wm_r', target: 'join', targetHandle: 'right' },
+                { id: 'o', source: 'join', target: 'sink' },
+            ]
+        );
+        expect(res.isValid).toBe(false);
+        expect(res.errors[0]).toContain('(missing on "left")');
+    });
+
+    it('accepts Watermark steps that feed the Join handles directly', () => {
+        const wmL: DagNode = { id: 'wm_l', data: { type: 'STEP', spark_transform: 'Watermark' } };
+        const wmR: DagNode = { id: 'wm_r', data: { type: 'STEP', spark_transform: 'Watermark' } };
+        const res = validateDagTopology(
+            [streamL, wmL, streamR, wmR, join({ joinType: 'right' }), sink],
+            [
+                { id: 'a', source: 'sl', target: 'wm_l' },
+                { id: 'b', source: 'wm_l', target: 'join', targetHandle: 'left' },
+                { id: 'c', source: 'sr', target: 'wm_r' },
+                { id: 'd', source: 'wm_r', target: 'join', targetHandle: 'right' },
+                { id: 'o', source: 'join', target: 'sink' },
+            ]
+        );
+        expect(res.isValid).toBe(true);
+        expect(res.errors).toEqual([]);
+    });
+
+    it('does not require watermarks for inner, cross, semi, or missing join types', () => {
+        for (const props of [{}, { joinType: '' }, { joinType: 'cross' }, { joinType: 'leftsemi' }, { joinType: 'anti' }]) {
+            const res = validateDagTopology([streamL, streamR, join(props), sink], directEdges);
+            expect(res.isValid, JSON.stringify(props)).toBe(true);
+        }
+    });
+
+    it('does not apply the watermark rule to batch-batch outer joins', () => {
+        const bl: DagNode = { id: 'sl', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } };
+        const br: DagNode = { id: 'sr', data: { type: 'SOURCE', spark_transform: 'BigQuerySource' } };
+        const batchSink: DagNode = { id: 'sink', data: { type: 'SINK', spark_transform: 'ParquetSink' } };
+        const res = validateDagTopology([bl, br, join({ joinType: 'full_outer' }), batchSink], directEdges);
+        expect(res.isValid).toBe(true);
+    });
+
+    it('reads the join type from top-level YAML-shaped node properties', () => {
+        const yamlJoin = {
+            id: 'join',
+            type: 'STEP',
+            spark_transform: 'Join',
+            properties: { joinType: 'left_outer' },
+        } as DagNode;
+        const res = validateDagTopology([streamL, streamR, yamlJoin, sink], directEdges);
+        expect(res.isValid).toBe(false);
+        expect(res.errors[0]).toContain('Stream-stream "left_outer" Join node join requires an upstream Watermark step');
+    });
+
+    it('treats a null targetHandle as an untyped Join input', () => {
+        const res = validateDagTopology(
+            [streamL, streamR, join({ joinType: 'inner' }), sink],
+            [
+                { id: 'l', source: 'sl', target: 'join', targetHandle: null },
+                { id: 'r', source: 'sr', target: 'join', targetHandle: 'right' },
+                { id: 'o', source: 'join', target: 'sink' },
+            ]
+        );
+        expect(res.isValid).toBe(false);
+        expect(res.invalidUpstreamNodeIds).toEqual(['join']);
+        expect(res.missingUpstreamNodeIds).toEqual(['join']);
+    });
+});
+
+describe('validateDagTopology — missing and malformed checkpoint boundaries (T3)', () => {
+    const kafka: DagNode = { id: 'k', data: { type: 'SOURCE', spark_transform: 'KafkaSource' } };
+    const sinkWith = (properties?: Record<string, unknown>, transform = 'DeltaSink'): DagNode => ({
+        id: 'sink',
+        data: { label: 'Out', type: 'SINK', spark_transform: transform, ...(properties ? { properties } : {}) },
+    });
+    const edges: DagEdge[] = [{ id: 'e', source: 'k', target: 'sink' }];
+    const missingMsg =
+        'Streaming Sink node "Out" (sink) is missing a checkpoint path. Configure "checkpointLocation" on the sink or "checkpointRoot" in jobConfig.';
+
+    it('raises a fatal error when requireCheckpoints is true even without jobConfig', () => {
+        const res = validateDagTopology([kafka, sinkWith()], edges, { requireCheckpoints: true });
+        expect(res.isValid).toBe(false);
+        expect(res.errors).toEqual([missingMsg]);
+        expect(res.warnings).toEqual([]);
+    });
+
+    it('keeps the missing checkpoint as a warning when requireCheckpoints is false and jobConfig is absent', () => {
+        const res = validateDagTopology([kafka, sinkWith()], edges, { requireCheckpoints: false });
+        expect(res.isValid).toBe(true);
+        expect(res.warnings).toEqual([missingMsg]);
+        expect(res.nodeWarnings?.sink).toEqual([missingMsg]);
+    });
+
+    it('exempts MemorySink and batch sinks from the checkpoint requirement', () => {
+        const memory = validateDagTopology([kafka, sinkWith(undefined, 'MemorySink')], edges, { jobConfig: {} });
+        expect(memory.isValid).toBe(true);
+        expect(memory.warnings).toEqual([]);
+
+        const batchSrc: DagNode = { id: 'k', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } };
+        const batch = validateDagTopology([batchSrc, sinkWith()], edges, { requireCheckpoints: true });
+        expect(batch.isValid).toBe(true);
+        expect(batch.errors).toEqual([]);
+    });
+
+    it('accepts every supported cloud, local, and drive-letter checkpoint form', () => {
+        for (const ckpt of [
+            'gs://bucket/ckpt',
+            's3a://bucket/ckpt',
+            's3://bucket',
+            'abfss://container@acct.dfs.core.windows.net/ckpt',
+            'wasbs://container@acct.blob.core.windows.net/ckpt',
+            'hdfs://namenode:8020/ckpt',
+            'file:///tmp/ckpt',
+            'file:/tmp/ckpt',
+            'dbfs:/ckpt',
+            '/tmp/ckpt',
+            'relative/ckpt',
+            'C:/ckpt',
+        ]) {
+            const res = validateDagTopology([kafka, sinkWith({ checkpointLocation: ckpt })], edges, { jobConfig: {} });
+            expect(res.isValid, ckpt).toBe(true);
+            expect(res.errors, ckpt).toEqual([]);
+        }
+    });
+
+    it('rejects control characters, missing authority, unsupported schemes, and bad local URIs', () => {
+        const cases: Array<[string, string]> = [
+            ['gs://bucket/ck\tpt', 'control characters'],
+            ['gs:///no-bucket', 'must include a bucket or authority'],
+            ['gs://bucket/with space', 'cannot contain whitespace'],
+            ['ftp://host/ckpt', 'Unsupported checkpoint URI scheme "ftp:"'],
+            ['file:tmp/ckpt', 'must start with "file:/"'],
+            ['..\\escape', 'parent directory traversal'],
+        ];
+        for (const [ckpt, fragment] of cases) {
+            const res = validateDagTopology([kafka, sinkWith({ checkpointLocation: ckpt })], edges);
+            expect(res.isValid, ckpt).toBe(false);
+            expect(res.errors, ckpt).toHaveLength(1);
+            expect(res.errors[0], ckpt).toContain('invalid checkpointLocation');
+            expect(res.errors[0], ckpt).toContain(fragment);
+        }
+    });
+
+    it('reports an invalid checkpointRoot and lets a valid sink checkpoint override it', () => {
+        const badRoot = validateDagTopology([kafka, sinkWith()], edges, { jobConfig: { checkpointRoot: 'http://x/y' } });
+        expect(badRoot.isValid).toBe(false);
+        expect(badRoot.errors).toHaveLength(1);
+        expect(badRoot.errors[0]).toContain('invalid pipeline checkpointRoot');
+
+        const override = validateDagTopology([kafka, sinkWith({ checkpointLocation: 'gs://ok/ckpt' })], edges, {
+            jobConfig: { checkpointRoot: 'http://x/y' },
+        });
+        expect(override.isValid).toBe(true);
+    });
+
+    it('falls back to checkpointRoot when the sink checkpoint is not a string', () => {
+        const res = validateDagTopology([kafka, sinkWith({ checkpointLocation: 42 })], edges, {
+            jobConfig: { checkpointRoot: 'gs://root/ckpt' },
+        });
+        expect(res.isValid).toBe(true);
+    });
+
+    it('reads checkpointLocation from top-level YAML-shaped sink properties', () => {
+        const yamlSink = {
+            id: 'sink',
+            type: 'SINK',
+            spark_transform: 'DeltaSink',
+            properties: { checkpointLocation: 'gs://yaml/ckpt' },
+        } as DagNode;
+        const res = validateDagTopology([kafka, yamlSink], edges, { jobConfig: {} });
+        expect(res.isValid).toBe(true);
+        expect(res.errors).toEqual([]);
+    });
+
+    it('records a separate missing checkpoint error for every streaming sink', () => {
+        const s1: DagNode = { id: 's1', data: { type: 'SINK', spark_transform: 'DeltaSink' } };
+        const s2: DagNode = { id: 's2', data: { type: 'SINK', spark_transform: 'IcebergSink' } };
+        const res = validateDagTopology(
+            [kafka, s1, s2],
+            [
+                { id: 'a', source: 'k', target: 's1' },
+                { id: 'b', source: 'k', target: 's2' },
+            ],
+            { jobConfig: { runner: 'ServerlessSpark' } }
+        );
+        expect(res.errors).toHaveLength(2);
+        expect(Object.keys(res.nodeErrors ?? {}).sort()).toEqual(['s1', 's2']);
+    });
+});

@@ -4,10 +4,10 @@
  * Author: Mike Nimer <mikenimer@google.com>
  * 
  * Purpose:
- * Validates fixes for findings M5 and M4 in BeamEditorProvider and handleMessages:
+ * Validates fixes for findings M5 and M4 in SparkEditorProvider and handleMessages:
  * - M5: Webview listeners and panel disposal lifecycle (preventing listener leaks
  *   and guarding against postMessage calls on disposed webview panels).
- * - M4: Two-way synchronization of .beam files via VS Code document model (WorkspaceEdit),
+ * - M4: Two-way synchronization of .spark files via VS Code document model (WorkspaceEdit),
  *   avoiding out-of-band disk desynchronization and suppressing echo loops.
  */
 
@@ -208,8 +208,8 @@ describe('M5 — Webview Lifecycle and Safe Message Dispatching', () => {
         const mockDocument = {
             uri: {
                 scheme: 'file',
-                fsPath: '/test/workspace/pipeline.beam',
-                toString: () => 'file:///test/workspace/pipeline.beam'
+                fsPath: '/test/workspace/pipeline.spark',
+                toString: () => 'file:///test/workspace/pipeline.spark'
             },
             getText: () => 'nodes: []\nedges: []\n',
             positionAt: (offset: number) => ({ line: 0, character: offset }),
@@ -287,7 +287,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-test-'));
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-test-'));
         mockState.mockTextDocuments.length = 0;
         mockState.mockApplyEdit.mockClear();
     });
@@ -301,7 +301,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('persists through WorkspaceEdit when the document is currently open in VS Code (simple case)', async () => {
-        const filePath = path.join(tempDir, 'open-pipeline.beam');
+        const filePath = path.join(tempDir, 'open-pipeline.spark');
         fs.writeFileSync(filePath, 'initial: on-disk\n', 'utf-8');
 
         const targetUri = {
@@ -338,7 +338,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('skips WorkspaceEdit when open document content is already identical to data (prevents marking clean document dirty on open)', async () => {
-        const filePath = path.join(tempDir, 'unmodified-pipeline.beam');
+        const filePath = path.join(tempDir, 'unmodified-pipeline.spark');
         const initialContent = 'nodes: []\nedges: []\n';
         fs.writeFileSync(filePath, initialContent, 'utf-8');
 
@@ -383,7 +383,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('falls back to fs.writeFileSync when the document is NOT open in VS Code (extreme / fallback case)', async () => {
-        const filePath = path.join(tempDir, 'unopened-pipeline.beam');
+        const filePath = path.join(tempDir, 'unopened-pipeline.spark');
         const targetUri = {
             scheme: 'file',
             fsPath: filePath,
@@ -415,7 +415,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('guarantees directory mkdir resolves before any file write into it is attempted (M18 ordering regression)', async () => {
-        const filePath = path.join(tempDir, 'ordered-pipeline.beam');
+        const filePath = path.join(tempDir, 'ordered-pipeline.spark');
         const targetUri = {
             scheme: 'file',
             fsPath: filePath,
@@ -447,7 +447,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
                 'print("hello world")\n',
                 'py',
                 undefined,
-                'apache-beam\n',
+                'pyspark\n',
                 'FROM python:3.10\n',
                 '#!/bin/bash\necho 1\n',
                 '#!/bin/bash\necho 2\n',
@@ -473,7 +473,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('clears syncState.isApplyingEdit in finally block even when applyEdit rejects (M18 failure case)', async () => {
-        const filePath = path.join(tempDir, 'rejecting-pipeline.beam');
+        const filePath = path.join(tempDir, 'rejecting-pipeline.spark');
         const targetUri = {
             scheme: 'file',
             fsPath: filePath,
@@ -516,7 +516,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('propagates filesystem write error when target file cannot be written (M18 failure case)', async () => {
-        const invalidPath = path.join('/invalid-nonexistent-root-dir', 'pipeline.beam');
+        const invalidPath = path.join('/invalid-nonexistent-root-dir', 'pipeline.spark');
         const targetUri = {
             scheme: 'file',
             fsPath: invalidPath,
@@ -530,7 +530,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 
     it('asynchronously writes auxiliary generated files and updates script permissions (M18 extreme case)', async () => {
-        const filePath = path.join(tempDir, 'aux-pipeline.beam');
+        const filePath = path.join(tempDir, 'aux-pipeline.spark');
         const targetUri = {
             scheme: 'file',
             fsPath: filePath,
@@ -544,8 +544,8 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
             '# Python code\n',
             'py',
             undefined,
-            'apache-beam>=2.50.0\n',
-            'FROM apache/beam_python3.10_sdk\n',
+            'pyspark==4.0.0\n',
+            'FROM python:3.11-slim\n',
             '#!/bin/bash\necho "direct runner"\n',
             '#!/bin/bash\necho "dataflow runner"\n',
             '*.log\n',
@@ -563,7 +563,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
     });
 });
 
-describe('M4 — Two-Way Synchronization in BeamEditorProvider', () => {
+describe('M4 — Two-Way Synchronization in SparkEditorProvider', () => {
     beforeEach(() => {
         mockState.textDocumentChangeListeners.length = 0;
     });
@@ -585,8 +585,8 @@ describe('M4 — Two-Way Synchronization in BeamEditorProvider', () => {
 
         const docUri = {
             scheme: 'file',
-            fsPath: '/test/workspace/pipeline.beam',
-            toString: () => 'file:///test/workspace/pipeline.beam'
+            fsPath: '/test/workspace/pipeline.spark',
+            toString: () => 'file:///test/workspace/pipeline.spark'
         };
 
         let documentText = 'initial: content\n';
@@ -617,19 +617,19 @@ describe('M4 — Two-Way Synchronization in BeamEditorProvider', () => {
             expect.objectContaining({
                 command: 'loadPipeline',
                 data: 'external: update\n',
-                filename: 'pipeline.beam'
+                filename: 'pipeline.spark'
             })
         );
     });
 
-    it('automatically saves the .beam document and calls document.save() when regenerateCode is dispatched', async () => {
+    it('automatically saves the .spark document and calls document.save() when regenerateCode is dispatched', async () => {
         mockState.mockTextDocuments.length = 0;
         mockState.mockApplyEdit.mockClear();
 
         const docUri = {
             scheme: 'file',
-            fsPath: '/test/workspace/auto-save-on-codegen.beam',
-            toString: () => 'file:///test/workspace/auto-save-on-codegen.beam'
+            fsPath: '/test/workspace/auto-save-on-codegen.spark',
+            toString: () => 'file:///test/workspace/auto-save-on-codegen.spark'
         };
 
         const mockSave = vi.fn().mockResolvedValue(true);
@@ -662,7 +662,7 @@ describe('M4 — Two-Way Synchronization in BeamEditorProvider', () => {
             {
                 command: 'regenerateCode',
                 data: updatedYaml,
-                filename: 'auto-save-on-codegen.beam',
+                filename: 'auto-save-on-codegen.spark',
                 language: 'Python'
             }
         );

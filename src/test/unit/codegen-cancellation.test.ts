@@ -179,6 +179,8 @@ describe('S6 — gemini.log privacy', () => {
 
         const gitignore = fs.readFileSync(path.join(tempDir, '.gitignore'), 'utf-8');
         expect(gitignore.split(/\r?\n/)).toContain('gemini.log');
+        expect(gitignore.split(/\r?\n/)).toContain('.venv/');
+        expect(gitignore.split(/\r?\n/)).toContain('.spark-ivy/');
     });
 
     it('does not overwrite an existing user .gitignore', async () => {

@@ -121,3 +121,53 @@ describe('consoleUrl (R7)', () => {
     });
   });
 });
+
+describe('consoleUrl boundary and failure cases (T5)', () => {
+  it('encodes special characters in every Dataflow URL part', () => {
+    expect(buildDataflowConsoleUrl('proj&x=1', 'us central1', 'job/../id?y')).toBe(
+      'https://console.cloud.google.com/dataflow/jobs/us%20central1/job%2F..%2Fid%3Fy?project=proj%26x%3D1'
+    );
+  });
+
+  it('builds the Dataflow job URL through buildGcpConsoleUrl', () => {
+    expect(buildGcpConsoleUrl('Dataflow', '2026-01-01_00_00_00-1', 'asia-east1', 'df-proj')).toBe(
+      'https://console.cloud.google.com/dataflow/jobs/asia-east1/2026-01-01_00_00_00-1?project=df-proj'
+    );
+  });
+
+  it('applies the default region and project to the cluster job URL', () => {
+    expect(buildGcpConsoleUrl('DataprocCluster', 'job-1')).toBe(
+      'https://console.cloud.google.com/dataproc/jobs/job-1?region=us-central1&project=YOUR_PROJECT_ID'
+    );
+  });
+
+  it('treats empty region and project strings as missing', () => {
+    expect(buildGcpConsoleUrl('ServerlessSpark', 'batch-1', '', '')).toBe(
+      'https://console.cloud.google.com/dataproc/batches/us-central1/batch-1/monitoring?project=YOUR_PROJECT_ID'
+    );
+  });
+
+  it('matches runner names case-sensitively and returns an empty string for other spellings', () => {
+    expect(buildGcpConsoleUrl('serverlessspark', 'batch-1', 'us-east1', 'p')).toBe('');
+    expect(buildGcpConsoleUrl('dataproccluster', 'job-1', 'us-east1', 'p')).toBe('');
+    expect(buildGcpConsoleUrl('', 'job-1', 'us-east1', 'p')).toBe('');
+  });
+
+  it('encodes a whitespace-only job ID instead of dropping it', () => {
+    expect(buildGcpConsoleUrl('DataprocCluster', ' ', 'us-east1', 'p')).toBe(
+      'https://console.cloud.google.com/dataproc/jobs/%20?region=us-east1&project=p'
+    );
+  });
+
+  it('returns the same URL from the Dataproc alias and the Serverless batch builder', () => {
+    expect(buildDataprocConsoleUrl('p', 'r', 'b#1')).toBe(buildServerlessBatchConsoleUrl('p', 'r', 'b#1'));
+    expect(buildServerlessBatchConsoleUrl('p', 'r', 'b#1')).toContain('/b%231/monitoring');
+  });
+
+  it('keeps the cluster job ID in the path and the region in the query string', () => {
+    const url = new URL(buildDataprocJobConsoleUrl('my:proj', 'eu/west', 'job 1'));
+    expect(url.pathname).toBe('/dataproc/jobs/job%201');
+    expect(url.searchParams.get('region')).toBe('eu/west');
+    expect(url.searchParams.get('project')).toBe('my:proj');
+  });
+});

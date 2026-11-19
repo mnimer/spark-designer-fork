@@ -170,6 +170,28 @@ function pushUnique(list: string[], nodeId: string): void {
 }
 
 /**
+ * Reads the configuration properties record from a React Flow or YAML-shaped DAG node.
+ * If `node.data.properties` is a plain object, returns it.
+ * Otherwise returns the top-level `node.properties` object, or an empty record.
+ *
+ * @param node DAG node instance.
+ * @returns Node properties record, or an empty record when unset.
+ */
+function getNodeProperties(node: DagNode): Record<string, unknown> {
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+        value !== null && typeof value === 'object' && !Array.isArray(value);
+    const dataProperties: unknown = node.data?.properties;
+    if (isRecord(dataProperties)) {
+        return dataProperties;
+    }
+    const topLevelProperties: unknown = node.properties;
+    if (isRecord(topLevelProperties)) {
+        return topLevelProperties;
+    }
+    return {};
+}
+
+/**
  * Normalizes a Spark join type string (`inner`, `left_outer`, `left_semi`, `full_outer`, etc.).
  *
  * @param raw Raw join type property value.
@@ -639,9 +661,8 @@ export function validateDagTopology(
                 }
 
                 if (leftEdges.length === 1 && rightEdges.length === 1 && untypedEdges.length === 0) {
-                    const joinType = normalizeJoinType(
-                        node.data?.properties?.joinType ?? node.data?.properties?.how
-                    );
+                    const joinProps = getNodeProperties(node);
+                    const joinType = normalizeJoinType(joinProps.joinType ?? joinProps.how);
                     const joinMode = streaming.joinModes.get(id) ?? 'batch_batch';
                     const leftSourceId = leftEdges[0].source;
                     const rightSourceId = rightEdges[0].source;
@@ -774,7 +795,7 @@ export function validateDagTopology(
 
         // 6g. Streaming SINK checkpoint path validation
         if (category === 'SINK' && streaming.streamingNodeIds.has(id)) {
-            const rawSinkCheckpoint = node.data?.properties?.checkpointLocation;
+            const rawSinkCheckpoint = getNodeProperties(node).checkpointLocation;
             const rawRootCheckpoint = options?.jobConfig?.checkpointRoot;
 
             let hasConfiguredCheckpoint = false;

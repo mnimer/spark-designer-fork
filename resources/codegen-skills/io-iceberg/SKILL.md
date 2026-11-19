@@ -24,7 +24,7 @@ Use these rules when generating PySpark {{spark_version}} code for Apache Iceber
 ## 1. Runtime Classpath Rules (`versionMatrix.ts`)
 
 - **Google Cloud Managed Spark (`run_serverless_spark.sh` and `run_dataproc_cluster.sh`)**: `iceberg-spark-runtime` (with `GCSFileIO` on Serverless Spark) is pre-installed on Serverless Spark 4.0 and Dataproc Cluster runtimes. Never pass `org.apache.iceberg:iceberg-spark-runtime*` to `--packages` or `spark.jars.packages` on Serverless Spark or Dataproc Cluster because duplicate JARs cause classpath conflicts.
-- **Local Spark (`run_local.sh` only)**: If running locally, pass `--packages org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.9.0` along with the required cloud storage connector coordinate.
+- **Local Spark (`run_local.sh` only)**: If running locally, pass `--packages org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1` along with the required cloud storage connector coordinate.
 - **Spark Session Extensions**: Configure `spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions` on the session so `MERGE INTO` and Iceberg DDL commands parse cleanly.
 
 ## 2. Catalog Configuration (`BigLake`, `REST`, `Hive`, `Hadoop`)

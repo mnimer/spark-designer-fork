@@ -14,14 +14,34 @@ const execFileCalls = vi.hoisted(() => ({
     nextStderr: '',
 }));
 
+/** Minimal fake child process recorded by the spawn mock. */
+interface FakeChild {
+    stdout: { emit: (event: string, ...args: unknown[]) => boolean };
+    stderr: { emit: (event: string, ...args: unknown[]) => boolean };
+    emit: (event: string, ...args: unknown[]) => boolean;
+}
+
+const spawnCalls = vi.hoisted(() => ({
+    calls: [] as Array<{ cmd: string; args: string[]; opts: Record<string, unknown>; child: FakeChild }>,
+}));
+
 vi.mock('child_process', async (importOriginal) => {
     const actual = await importOriginal<typeof import('child_process')>();
+    const { EventEmitter } = await import('events');
     return {
         ...actual,
         execFile: vi.fn((bin: string, args: string[], opts: any, cb: any) => {
             const callback = typeof opts === 'function' ? opts : cb;
             execFileCalls.calls.push({ bin, args, opts });
             callback(execFileCalls.nextError, execFileCalls.nextStdout, execFileCalls.nextStderr);
+        }),
+        spawn: vi.fn((cmd: string, args: string[], opts: Record<string, unknown>) => {
+            type Emitter = InstanceType<typeof EventEmitter>;
+            const child = new EventEmitter() as Emitter & { stdout: Emitter; stderr: Emitter };
+            child.stdout = new EventEmitter();
+            child.stderr = new EventEmitter();
+            spawnCalls.calls.push({ cmd, args, opts, child });
+            return child;
         }),
     };
 });
@@ -41,7 +61,9 @@ import {
     formatBatchTtl,
     resolveRunTarget,
     runnerScriptCandidates,
+    spawnRunnerScript,
 } from '../../execution/PipelineRunner';
+import { findGcloudPath } from '../../cli/cliResolver';
 
 describe('runnerScriptCandidates', () => {
     it('lists scripts per runner in priority order', () => {
@@ -349,5 +371,356 @@ describe('cancelRemoteSparkJob', () => {
         });
         expect(result.cancelled).toBe(false);
         expect(result.error).toContain('NOT_FOUND');
+    });
+});
+
+describe('PipelineRunner boundary and failure cases (T5)', () => {
+    beforeEach(() => {
+        execFileCalls.calls.length = 0;
+        execFileCalls.nextError = null;
+        execFileCalls.nextStdout = '';
+        execFileCalls.nextStderr = '';
+        spawnCalls.calls.length = 0;
+    });
+
+    describe('runnerScriptCandidates and describeRunner', () => {
+        it('matches runner names case-sensitively', () => {
+            expect(runnerScriptCandidates('local')).toEqual([]);
+            expect(runnerScriptCandidates('serverlessspark')).toEqual([]);
+            expect(runnerScriptCandidates('')).toEqual([]);
+        });
+
+        it('returns a fresh array so callers cannot mutate the next lookup', () => {
+            const first = runnerScriptCandidates('Local');
+            first.push('evil.sh');
+            expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh', 'run_directrunner.sh']);
+        });
+
+        it('falls back to the Serverless Spark description for an unknown runner', () => {
+            expect(describeRunner('Flink')).toBe('# Submitting PySpark Batch Job to GCP Serverless Spark (Dataproc)');
+            expect(describeRunner('')).toContain('Serverless Spark');
+        });
+
+        it('returns null from findRunnerScript for an empty candidate list without checking the disk', () => {
+            const exists = vi.fn(() => true);
+            expect(findRunnerScript('/p', [], exists)).toBeNull();
+            expect(exists).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('formatBatchTtl', () => {
+        it('rounds fractional minutes to whole seconds', () => {
+            expect(formatBatchTtl(1.5)).toBe('90s');
+            expect(formatBatchTtl('0.5')).toBe('30s');
+            expect(formatBatchTtl(0.001)).toBe('0s');
+        });
+
+        it('trims and lower-cases suffixed duration strings', () => {
+            expect(formatBatchTtl(' 30 ')).toBe('1800s');
+            expect(formatBatchTtl('2D')).toBe('2d');
+            expect(formatBatchTtl('90M')).toBe('90m');
+        });
+
+        it.each([-5, Number.NaN, Number.POSITIVE_INFINITY, '-5', '0', '0.0', '1w', '4 h', 'abc', '1.5h'])(
+            'rejects invalid TTL %j',
+            (value) => {
+                expect(formatBatchTtl(value as number | string)).toBeUndefined();
+            }
+        );
+
+        it('rejects null', () => {
+            expect(formatBatchTtl(null as unknown as undefined)).toBeUndefined();
+        });
+    });
+
+    describe('buildRunnerEnvironment', () => {
+        it('never adds an empty PATH entry, so the current folder is not searched', () => {
+            const { env } = buildRunnerEnvironment({ baseEnv: {}, exists: (d) => d === '/usr/bin' });
+            expect(env.PATH).toBe('/usr/bin');
+            expect(env.PATH.split(path.delimiter)).not.toContain('');
+
+            const empty = buildRunnerEnvironment({ baseEnv: {}, exists: () => false });
+            expect(empty.env.PATH).toBe('');
+        });
+
+        it('drops empty segments from an inherited PATH and removes duplicates', () => {
+            const { env } = buildRunnerEnvironment({
+                baseEnv: { PATH: ['/usr/bin', '', '/custom', '/usr/bin', ''].join(path.delimiter) },
+                exists: (d) => d === '/usr/bin',
+            });
+            expect(env.PATH.split(path.delimiter)).toEqual(['/usr/bin', '/custom']);
+        });
+
+        it('resolves home-relative tool folders against HOME', () => {
+            const sdkBin = path.join('/home/u', 'google-cloud-sdk/bin');
+            const { env } = buildRunnerEnvironment({ baseEnv: { HOME: '/home/u' }, exists: (d) => d === sdkBin });
+            expect(env.PATH).toBe(sdkBin);
+        });
+
+        it('exports no Spark variables when the job config is absent', () => {
+            const { env, rejectedKeys } = buildRunnerEnvironment({ baseEnv: { HOME: '/h' }, exists: () => false });
+            for (const key of ['PROJECT_ID', 'REGION', 'DEPS_BUCKET', 'SPARK_JARS', 'BATCH_TTL', 'USE_SPARK_CONNECT']) {
+                expect(env[key], key).toBeUndefined();
+            }
+            expect(rejectedKeys).toEqual([]);
+        });
+
+        it('prefers the primary job config field over its alias', () => {
+            const { env } = buildRunnerEnvironment({
+                baseEnv: {},
+                exists: () => false,
+                jobConfig: {
+                    depsBucket: 'gs://deps',
+                    gcsStagingPath: 'gs://staging',
+                    tier: 'premium',
+                    serverlessTier: 'standard',
+                    subnetwork: 'primary-subnet',
+                    subnet: 'alias-subnet',
+                    customJarUris: 'gs://a.jar',
+                    sparkJars: 'gs://b.jar',
+                },
+            });
+            expect(env.DEPS_BUCKET).toBe('gs://deps');
+            expect(env.GCS_STAGING_PATH).toBe('gs://staging');
+            expect(env.SERVERLESS_TIER).toBe('premium');
+            expect(env.SUBNET).toBe('primary-subnet');
+            expect(env.SUBNETWORK).toBe('primary-subnet');
+            expect(env.SPARK_JARS).toBe('gs://a.jar');
+        });
+
+        it('uses each alias field when the primary field is empty', () => {
+            const { env } = buildRunnerEnvironment({
+                baseEnv: {},
+                exists: () => false,
+                jobConfig: {
+                    gcsStagingPath: 'gs://staging',
+                    serverlessTier: 'standard',
+                    subnet: 'alias-subnet',
+                    sparkJars: 'gs://b.jar',
+                    batchTtlMinutes: 'not-a-ttl',
+                    batchTtl: '2h',
+                },
+            });
+            expect(env.DEPS_BUCKET).toBe('gs://staging');
+            expect(env.GCS_STAGING_PATH).toBe('gs://staging');
+            expect(env.SERVERLESS_TIER).toBe('standard');
+            expect(env.SUBNET).toBe('alias-subnet');
+            expect(env.SPARK_JARS).toBe('gs://b.jar');
+            expect(env.BATCH_TTL).toBe('2h');
+        });
+
+        it('omits USE_SPARK_CONNECT unless the flag is exactly true', () => {
+            for (const flag of [false, undefined, 'true' as unknown as boolean]) {
+                const { env } = buildRunnerEnvironment({ baseEnv: {}, exists: () => false, jobConfig: { useSparkConnect: flag } });
+                expect(env.USE_SPARK_CONNECT).toBeUndefined();
+            }
+        });
+
+        it('lets the job config override a runtime variable with the same name', () => {
+            const { env } = buildRunnerEnvironment({
+                baseEnv: {},
+                exists: () => false,
+                runtimeVariables: [{ key: 'PROJECT_ID', value: 'from-runtime' }],
+                jobConfig: { projectId: 'from-config' },
+            });
+            expect(env.PROJECT_ID).toBe('from-config');
+        });
+
+        it('does not mutate the base environment object', () => {
+            const baseEnv = { HOME: '/h', PATH: '/usr/bin' };
+            buildRunnerEnvironment({ baseEnv, exists: () => true, runtimeVariables: [{ key: 'X_VAR', value: '1' }] });
+            expect(baseEnv).toEqual({ HOME: '/h', PATH: '/usr/bin' });
+        });
+    });
+
+    describe('resolveRunTarget', () => {
+        it('treats an empty projectId and region as missing', async () => {
+            expect(await resolveRunTarget({ projectId: '', region: '' }, async () => 'g-proj')).toEqual({
+                project: 'g-proj',
+                region: DEFAULT_RUN_REGION,
+            });
+        });
+
+        it('asks gcloud when the projectId is the placeholder', async () => {
+            const getProject = vi.fn(async () => 'g-proj');
+            expect((await resolveRunTarget({ projectId: PLACEHOLDER_PROJECT_ID }, getProject)).project).toBe('g-proj');
+            expect(getProject).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('createJobIdTracker', () => {
+        it('stops after the first job even when a later chunk holds another runner type', () => {
+            const track = createJobIdTracker({ project: 'p', region: 'r' });
+            expect(track('Batch ID: batch-first-1')).toMatchObject({ runner: 'ServerlessSpark', jobId: 'batch-first-1' });
+            expect(track('Job [cluster-job-2] submitted.')).toBeNull();
+            expect(track('Submitted job: 2026-01-01_00_00_00-1234567890123')).toBeNull();
+        });
+
+        it('keeps returning null for empty chunks', () => {
+            const track = createJobIdTracker({ project: 'p', region: 'r' });
+            expect(track('')).toBeNull();
+            expect(track('\n')).toBeNull();
+            expect(track('Job [cluster-job-3]')).toMatchObject({ jobId: 'cluster-job-3' });
+        });
+
+        it('uses project and region from a full Serverless batch resource path', () => {
+            expect(
+                createJobIdTracker({ project: 'p', region: 'r' })('projects/res-proj/locations/asia-south1/batches/batch-res-1')
+            ).toEqual({ jobId: 'batch-res-1', runner: 'ServerlessSpark', projectId: 'res-proj', region: 'asia-south1' });
+        });
+    });
+
+    describe('cancelRemoteSparkJob', () => {
+        it('trims the job ID and runs gcloud with a 15 second timeout', async () => {
+            const result = await cancelRemoteSparkJob({
+                runner: 'Spark',
+                jobId: '  batch-trim-1  ',
+                projectId: 'proj',
+                region: 'us-east1',
+                gcloudBin: '/g',
+            });
+            expect(result).toEqual({
+                cancelled: true,
+                commandLine: '/g dataproc batches cancel batch-trim-1 --region=us-east1 --project=proj --quiet',
+            });
+            expect(execFileCalls.calls[0].opts).toEqual({ timeout: 15000 });
+        });
+
+        it('returns trimmed stdout only when gcloud prints output', async () => {
+            execFileCalls.nextStdout = '  Cancelled batch.  \n';
+            const result = await cancelRemoteSparkJob({ runner: 'ServerlessSpark', jobId: 'batch-1', projectId: 'p', region: 'r' });
+            expect(result.stdout).toBe('Cancelled batch.');
+        });
+
+        it('uses findGcloudPath and the default region when neither is given', async () => {
+            const result = await cancelRemoteSparkJob({ runner: 'DataprocCluster', jobId: 'job-1', projectId: 'p' });
+            expect(findGcloudPath).toHaveBeenCalled();
+            expect(execFileCalls.calls[0].bin).toBe('/usr/bin/gcloud');
+            expect(execFileCalls.calls[0].args).toContain(`--region=${DEFAULT_RUN_REGION}`);
+            expect(result.cancelled).toBe(true);
+        });
+
+        it('resolves the project through gcloud when the projectId is missing', async () => {
+            const result = await cancelRemoteSparkJob({
+                runner: 'ServerlessSpark',
+                jobId: 'batch-1',
+                region: 'r',
+                gcloudBin: '/g',
+                getProject: async () => 'g-default',
+            });
+            expect(result.cancelled).toBe(true);
+            expect(execFileCalls.calls[0].args).toContain('--project=g-default');
+        });
+
+        it('fails without gcloud when no real project is available', async () => {
+            const result = await cancelRemoteSparkJob({
+                runner: 'ServerlessSpark',
+                jobId: 'batch-1',
+                projectId: PLACEHOLDER_PROJECT_ID,
+                getProject: async () => undefined,
+            });
+            expect(result).toEqual({
+                cancelled: false,
+                commandLine: '',
+                error: "Valid GCP project ID is required to cancel remote job 'batch-1'.",
+            });
+            expect(execFileCalls.calls).toHaveLength(0);
+        });
+
+        it.each(['us central1', 'us-east1;rm', 'r/../x'])('rejects unsafe region %j without gcloud', async (region) => {
+            const result = await cancelRemoteSparkJob({ runner: 'ServerlessSpark', jobId: 'batch-1', projectId: 'p', region });
+            expect(result.cancelled).toBe(false);
+            expect(result.error).toContain('Invalid GCP region');
+            expect(execFileCalls.calls).toHaveLength(0);
+        });
+
+        it.each(['p roj', 'p;rm', '$(id)'])('rejects unsafe project ID %j without gcloud', async (projectId) => {
+            const result = await cancelRemoteSparkJob({ runner: 'ServerlessSpark', jobId: 'batch-1', projectId, region: 'r' });
+            expect(result.cancelled).toBe(false);
+            expect(result.error).toContain('Valid GCP project ID is required');
+            expect(execFileCalls.calls).toHaveLength(0);
+        });
+
+        it('enforces the 2 to 128 character job ID length limits', async () => {
+            const ok = async (jobId: string) =>
+                (await cancelRemoteSparkJob({ runner: 'ServerlessSpark', jobId, projectId: 'p', region: 'r', gcloudBin: '/g' })).cancelled;
+            expect(await ok('a')).toBe(false);
+            expect(await ok('ab')).toBe(true);
+            expect(await ok('a'.repeat(128))).toBe(true);
+            expect(await ok('a'.repeat(129))).toBe(false);
+            expect(await ok('-ab')).toBe(false);
+        });
+
+        it('reports a missing job ID with an empty quoted value', async () => {
+            const result = await cancelRemoteSparkJob({
+                runner: 'ServerlessSpark',
+                jobId: undefined as unknown as string,
+                projectId: 'p',
+            });
+            expect(result.error).toBe("Invalid remote Spark job/batch ID: ''");
+        });
+
+        it('falls back to the error message when gcloud writes nothing to stderr', async () => {
+            execFileCalls.nextError = new Error('spawn gcloud ENOENT');
+            const result = await cancelRemoteSparkJob({ runner: 'DataprocCluster', jobId: 'job-1', projectId: 'p', region: 'r', gcloudBin: '/g' });
+            expect(result).toEqual({
+                cancelled: false,
+                commandLine: '/g dataproc jobs kill job-1 --region=r --project=p --quiet',
+                error: 'spawn gcloud ENOENT',
+            });
+        });
+    });
+
+    describe('spawnRunnerScript', () => {
+        it('runs the script through bash as a detached group leader on POSIX and forwards events', () => {
+            if (process.platform === 'win32') {
+                return;
+            }
+            const onOutput = vi.fn();
+            const onError = vi.fn();
+            const onClose = vi.fn();
+            const env = { PATH: '/usr/bin' };
+            const child = spawnRunnerScript('/work', '/work/run_local.sh', env, { onOutput, onError, onClose });
+
+            expect(spawnCalls.calls).toHaveLength(1);
+            const call = spawnCalls.calls[0];
+            expect(call.cmd).toBe('bash');
+            expect(call.args).toEqual(['/work/run_local.sh']);
+            expect(call.opts).toEqual({ cwd: '/work', env, detached: true });
+            expect(child).toBe(call.child);
+
+            call.child.stdout.emit('data', Buffer.from('hello'));
+            call.child.stderr.emit('data', 'warn');
+            const error = new Error('boom');
+            call.child.emit('error', error);
+            call.child.emit('close', 1, null);
+            call.child.emit('close', null, 'SIGTERM');
+
+            expect(onOutput).toHaveBeenNthCalledWith(1, 'hello', 'stdout');
+            expect(onOutput).toHaveBeenNthCalledWith(2, 'warn', 'stderr');
+            expect(onError).toHaveBeenCalledWith(error);
+            expect(onClose).toHaveBeenNthCalledWith(1, 1, null);
+            expect(onClose).toHaveBeenNthCalledWith(2, null, 'SIGTERM');
+        });
+
+        it('runs the script directly without detaching on Windows', () => {
+            const original = Object.getOwnPropertyDescriptor(process, 'platform');
+            Object.defineProperty(process, 'platform', { value: 'win32' });
+            try {
+                spawnRunnerScript('C:\\work', 'C:\\work\\run_local.sh', {}, {
+                    onOutput: vi.fn(),
+                    onError: vi.fn(),
+                    onClose: vi.fn(),
+                });
+            } finally {
+                if (original) {
+                    Object.defineProperty(process, 'platform', original);
+                }
+            }
+            const call = spawnCalls.calls[0];
+            expect(call.cmd).toBe('C:\\work\\run_local.sh');
+            expect(call.args).toEqual([]);
+            expect(call.opts.detached).toBe(false);
+        });
     });
 });

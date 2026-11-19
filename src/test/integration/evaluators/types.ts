@@ -4,7 +4,7 @@
  * Purpose:
  * Defines domain models, sub-agent result structures, scoring rubrics, and
  * prompt remediation guidance types used during integration testing of the
- * Apache Beam code generation pipeline.
+ * Apache Spark (PySpark 4.x) code generation pipeline.
  *
  * Architectural decisions:
  * - Sub-agents output structured findings with severity levels: 'CRITICAL' (hard veto),
@@ -13,15 +13,15 @@
  * - Supports Requirement Traceability Matrix (RTM) verifications for 100% specification coverage audit.
  * - The Lead Arbiter calculates category-specific rubric scores (0-100) on confirmed findings
  *   (after filtering out false positives with recorded justification), and produces
- *   actionable Prompt Remediation Directives targeting the generator prompts
- *   (skill files under resources/codegen-skills/).
+ *   actionable Skill Remediation Directives. Each directive targets one
+ *   resources/codegen-skills/<skill>/SKILL.md file, resolved from the node sparkTransform.
  */
 
 export type FindingSeverity = 'CRITICAL' | 'MAJOR' | 'MINOR';
 
 export interface EvaluatorFinding {
     id: string;
-    category: 'ARCHITECTURE' | 'SECURITY' | 'PACKAGING' | 'SYNTAX' | 'IDIOMATIC_BEAM' | 'SPECIFICATION';
+    category: 'ARCHITECTURE' | 'SECURITY' | 'PACKAGING' | 'SYNTAX' | 'IDIOMATIC_SPARK' | 'SPECIFICATION';
     severity: FindingSeverity;
     file: string;
     line?: number;
@@ -68,6 +68,31 @@ export interface PromptRemediationDirective {
     rationale: string;
 }
 
+/**
+ * Actionable instruction to edit one codegen skill file so that the generator stops making an error.
+ * The arbiter resolves the skill from the `sparkTransform` of the affected node when a node is known.
+ */
+export interface SkillRemediationDirective {
+    /** Skill id (folder name under `resources/codegen-skills/`), for example `io-kafka`. */
+    skillId: string;
+    /** Skill file to edit, relative to the repository root: `resources/codegen-skills/<skillId>/SKILL.md`. */
+    skillFile: string;
+    /** Pipeline node id that exhibited the defect, when the defect belongs to one node. */
+    nodeId?: string;
+    /** Catalog `sparkTransform` of that node. */
+    sparkTransform?: string;
+    /** Ids of the confirmed findings that this directive fixes. */
+    findingIds: string[];
+    /** Short statement of the defect in the generated code. */
+    finding: string;
+    /** Section of the skill file to change, for example `## 2. Batch and Streaming Read Modes`. */
+    targetSection: string;
+    /** Concrete edit: the exact rule text to add or replace in the skill file. */
+    editInstruction: string;
+    /** Why the edit stops the generator from repeating the defect. */
+    rationale: string;
+}
+
 export interface EvaluationScorecard {
     architectureScore: number;    // 0-100
     specificationScore?: number;  // 0-100 (YAML specification & property conformance)
@@ -91,6 +116,9 @@ export interface MultiAgentEvaluationResult {
     confirmedFindings?: EvaluatorFinding[];
     rejectedFindings?: RejectedFinding[];
     specialistResults: Record<string, SpecialistAgentResult>;
+    /** Structured directives that target `resources/codegen-skills/<skill>/SKILL.md`. */
+    skillRemediationDirectives: SkillRemediationDirective[];
+    /** Legacy flat view of `skillRemediationDirectives` for the Markdown test reporter. */
     promptRemediationDirectives: PromptRemediationDirective[];
     explanation: string;
 }

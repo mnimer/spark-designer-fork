@@ -5,7 +5,7 @@
  * 
  * Purpose:
  * Unit tests validating fixes for findings M7, M3, and M15:
- * - M7: Removal of author-specific hardcoded gcloud path; resolution via PATH and dataflowDesigner.gcloudPath setting.
+ * - M7: Removal of author-specific hardcoded gcloud path; resolution via PATH and sparkDesigner.gcloudPath setting.
  * - M3: Command injection prevention: rejection of shell metacharacters in outputFolder; terminal execution without redundant cd.
  * - M15: Exclusion of *.log and gemini.log in generated ignore files (.dockerignore, .gcloudignore) to prevent leaking raw prompts.
  */
@@ -55,24 +55,24 @@ describe('M7 — gcloud Path Resolution and Configuration Contribution', () => {
         process.env.PATH = originalEnvPath;
     });
 
-    it('package.json contributes dataflowDesigner.gcloudPath configuration (simple case)', () => {
+    it('package.json contributes sparkDesigner.gcloudPath configuration (simple case)', () => {
         const pkgPath = path.resolve(__dirname, '../../../package.json');
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
         expect(pkg.contributes).toBeDefined();
         expect(pkg.contributes.configuration).toBeDefined();
         expect(pkg.contributes.configuration.properties).toBeDefined();
-        expect(pkg.contributes.configuration.properties['dataflowDesigner.gcloudPath']).toBeDefined();
-        expect(pkg.contributes.configuration.properties['dataflowDesigner.gcloudPath'].type).toBe('string');
+        expect(pkg.contributes.configuration.properties['sparkDesigner.gcloudPath']).toBeDefined();
+        expect(pkg.contributes.configuration.properties['sparkDesigner.gcloudPath'].type).toBe('string');
     });
 
-    it('honours the dataflowDesigner.gcloudPath setting when present', () => {
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '/opt/custom/google-cloud-sdk/bin/gcloud';
+    it('honours the sparkDesigner.gcloudPath setting when present', () => {
+        mockConfigValues['sparkDesigner.gcloudPath'] = '/opt/custom/google-cloud-sdk/bin/gcloud';
         const resolved = findGcloudPath();
         expect(resolved).toBe('/opt/custom/google-cloud-sdk/bin/gcloud');
     });
 
-    it('trims whitespace and ignores empty dataflowDesigner.gcloudPath setting', () => {
-        mockConfigValues['dataflowDesigner.gcloudPath'] = '   ';
+    it('trims whitespace and ignores empty sparkDesigner.gcloudPath setting', () => {
+        mockConfigValues['sparkDesigner.gcloudPath'] = '   ';
         // When setting is empty whitespace, should fallback to PATH or candidates, not return spaces
         const resolved = findGcloudPath();
         expect(resolved).not.toBe('   ');
@@ -86,7 +86,7 @@ describe('M7 — gcloud Path Resolution and Configuration Contribution', () => {
         const originalHome = process.env.HOME;
         process.env.PATH = '';
         process.env.HOME = '/Users/mikenimer';
-        mockConfigValues['dataflowDesigner.gcloudPath'] = undefined;
+        mockConfigValues['sparkDesigner.gcloudPath'] = undefined;
 
         try {
             const resolved = findGcloudPath();

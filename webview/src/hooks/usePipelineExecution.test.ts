@@ -19,6 +19,7 @@ import {
   appendLog,
   MAX_EXECUTION_LOG_LINES,
   type UsePipelineExecutionOptions,
+  formatRunnerLabel,
 } from './usePipelineExecution';
 import type { LogEntry } from '../components/BottomPanel/DeploymentTab';
 
@@ -155,17 +156,17 @@ describe('usePipelineExecution', () => {
           new MessageEvent('message', {
             data: {
               command: 'pipelineStarted',
-              commandLine: 'python -m my_pipeline --runner=DataflowRunner',
-              runner: 'DataflowRunner',
+              commandLine: './run_local.sh',
+              runner: 'DirectRunner',
             },
           })
         );
       });
 
       expect(result.current.pipelineStatus).toBe('running');
-      expect(result.current.runnerCommand).toBe('python -m my_pipeline --runner=DataflowRunner');
+      expect(result.current.runnerCommand).toBe('./run_local.sh');
       expect(result.current.pipelineLogs).toHaveLength(1);
-      expect(result.current.pipelineLogs[0].text).toContain('Pipeline execution initiated (DataflowRunner)');
+      expect(result.current.pipelineLogs[0].text).toContain('Pipeline execution initiated (Local)');
       expect(result.current.pipelineLogs[0].stream).toBe('stdout');
     });
 
@@ -351,5 +352,24 @@ describe('usePipelineExecution', () => {
         'Log line 5000 (overflow)'
       );
     });
+  });
+});
+
+describe('formatRunnerLabel', () => {
+  it('returns Spark runner identifiers unchanged (normal condition)', () => {
+    expect(formatRunnerLabel('Local')).toBe('Local');
+    expect(formatRunnerLabel('DataprocCluster')).toBe('DataprocCluster');
+    expect(formatRunnerLabel('ServerlessSpark')).toBe('ServerlessSpark');
+  });
+
+  it('maps empty and missing runners to Local (boundary condition)', () => {
+    expect(formatRunnerLabel('')).toBe('Local');
+    expect(formatRunnerLabel(undefined)).toBe('Local');
+    expect(formatRunnerLabel(42)).toBe('Local');
+  });
+
+  it('maps legacy DirectRunner and Spark values (failure condition)', () => {
+    expect(formatRunnerLabel('DirectRunner')).toBe('Local');
+    expect(formatRunnerLabel('Spark')).toBe('ServerlessSpark');
   });
 });

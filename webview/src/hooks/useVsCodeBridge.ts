@@ -298,7 +298,7 @@ export function useVsCodeBridge({
                 network: '',
                 subnetwork: '',
                 ...(data.jobConfig || {}),
-                runner: data.jobConfig?.runner || 'DirectRunner',
+                runner: data.jobConfig?.runner || 'Local',
               });
 
               const rawConfig = data.pipelineConfig || {};
@@ -339,7 +339,7 @@ export function useVsCodeBridge({
               : 'default_job';
             setRuntimeVariables([{ key: 'JOB_ID', value: defaultJobId }]);
             setJobConfig({
-              runner: 'DirectRunner',
+              runner: 'Local',
               machineType: 'n1-standard-1',
               minInstances: 1,
               maxInstances: 10,

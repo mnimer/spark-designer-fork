@@ -511,3 +511,230 @@ describe('sparkDagRules helpers (A3)', () => {
         ]);
     });
 });
+
+describe('sparkDagRules streaming propagation, Join detection, and arity boundaries (T1)', () => {
+    it('returns empty results for empty, null, and malformed node and edge inputs', () => {
+        const empty = computeStreamingNodeSet([], []);
+        expect(empty.hasStreamingSource).toBe(false);
+        expect(empty.streamingNodeIds.size).toBe(0);
+        expect(empty.streamingEdgeIds.size).toBe(0);
+        expect(empty.joinModes.size).toBe(0);
+
+        const nullish = computeStreamingNodeSet(
+            null as unknown as DagNode[],
+            undefined as unknown as DagEdge[]
+        );
+        expect(nullish.hasStreamingSource).toBe(false);
+        expect(nullish.joinModes.size).toBe(0);
+
+        const malformed = computeStreamingNodeSet(
+            [
+                null as unknown as DagNode,
+                { id: undefined } as unknown as DagNode,
+                { id: 'rate', data: { type: 'SOURCE', spark_transform: 'RateSource' } },
+                { id: 'sink', data: { type: 'SINK', spark_transform: 'ConsoleSink' } },
+            ],
+            [
+                null as unknown as DagEdge,
+                { id: 'no_target', source: 'rate' } as unknown as DagEdge,
+                { id: 'e1', source: 'rate', target: 'sink' },
+            ]
+        );
+        expect(malformed.hasStreamingSource).toBe(true);
+        expect([...malformed.streamingNodeIds].sort()).toEqual(['rate', 'sink']);
+        expect([...malformed.streamingEdgeIds]).toEqual(['e1']);
+    });
+
+    it('propagates streaming mode through diamonds and long chains without duplicate visits', () => {
+        const nodes: DagNode[] = [
+            { id: 'kafka', data: { type: 'SOURCE', spark_transform: 'KafkaSource' } },
+            { id: 'a', data: { type: 'STEP', spark_transform: 'Filter' } },
+            { id: 'b', data: { type: 'STEP', spark_transform: 'Select' } },
+            { id: 'union', data: { type: 'STEP', spark_transform: 'UnionByName' } },
+            { id: 'agg', data: { type: 'STEP', spark_transform: 'GroupByAgg' } },
+            { id: 'sink', data: { type: 'SINK', spark_transform: 'DeltaSink' } },
+        ];
+        const edges: DagEdge[] = [
+            { id: 'e1', source: 'kafka', target: 'a' },
+            { id: 'e2', source: 'kafka', target: 'b' },
+            { id: 'e3', source: 'a', target: 'union' },
+            { id: 'e4', source: 'b', target: 'union' },
+            { id: 'e5', source: 'union', target: 'agg' },
+            { id: 'e6', source: 'agg', target: 'sink' },
+        ];
+        const res = computeStreamingNodeSet(nodes, edges);
+        expect([...res.streamingNodeIds].sort()).toEqual(['a', 'agg', 'b', 'kafka', 'sink', 'union']);
+        expect([...res.streamingEdgeIds].sort()).toEqual(['e1', 'e2', 'e3', 'e4', 'e5', 'e6']);
+        expect(res.joinModes.size).toBe(0);
+    });
+
+    it('never propagates streaming mode into SOURCE nodes or across edges without an id', () => {
+        const nodes: DagNode[] = [
+            { id: 'rate', data: { type: 'SOURCE', spark_transform: 'RateSource' } },
+            { id: 'bq', data: { type: 'SOURCE', spark_transform: 'BigQuerySource' } },
+            { id: 'step', data: { type: 'STEP', spark_transform: 'Filter' } },
+        ];
+        const edges: DagEdge[] = [
+            { id: 'bad', source: 'rate', target: 'bq' },
+            { source: 'rate', target: 'step' } as DagEdge,
+            { id: '', source: 'step', target: 'step' },
+        ];
+        const res = computeStreamingNodeSet(nodes, edges);
+        expect(res.streamingNodeIds.has('bq')).toBe(false);
+        expect(res.streamingEdgeIds.has('bad')).toBe(false);
+        expect(res.streamingNodeIds.has('step')).toBe(true);
+        // Edges without an id and edges with an empty id do not appear in the edge set.
+        expect(res.streamingEdgeIds.size).toBe(0);
+    });
+
+    it('treats a streaming-default source overridden to batch as a static branch', () => {
+        const nodes: DagNode[] = [
+            {
+                id: 'kafka_batch',
+                data: { type: 'SOURCE', spark_transform: 'KafkaSource', properties: { readMode: 'batch' } },
+            },
+            { id: 'pubsub', data: { type: 'SOURCE', spark_transform: 'PubSubSource' } },
+            { id: 'join', data: { type: 'STEP', spark_transform: 'Join' } },
+        ];
+        const edges: DagEdge[] = [
+            { id: 'e1', source: 'pubsub', target: 'join', targetHandle: 'left' },
+            { id: 'e2', source: 'kafka_batch', target: 'join', targetHandle: 'right' },
+        ];
+        const res = computeStreamingNodeSet(nodes, edges);
+        expect(res.streamingNodeIds.has('kafka_batch')).toBe(false);
+        expect(res.joinModes.get('join')).toBe('stream_static');
+        expect(res.streamingEdgeIds.has('e2')).toBe(false);
+    });
+
+    it('classifies chained Joins independently as stream-static and stream-stream', () => {
+        const nodes: DagNode[] = [
+            { id: 'clicks', data: { type: 'SOURCE', spark_transform: 'KafkaSource' } },
+            { id: 'dim', data: { type: 'SOURCE', spark_transform: 'ParquetSource' } },
+            { id: 'impressions', data: { type: 'SOURCE', spark_transform: 'KinesisSource' } },
+            { id: 'enrich', data: { type: 'STEP', spark_transform: 'Join' } },
+            { id: 'attribute', data: { type: 'STEP', spark_transform: 'Join' } },
+            { id: 'static_join', data: { type: 'STEP', spark_transform: 'Join' } },
+        ];
+        const edges: DagEdge[] = [
+            { id: 'e1', source: 'clicks', target: 'enrich', targetHandle: 'left' },
+            { id: 'e2', source: 'dim', target: 'enrich', targetHandle: 'right' },
+            { id: 'e3', source: 'enrich', target: 'attribute', targetHandle: 'left' },
+            { id: 'e4', source: 'impressions', target: 'attribute', targetHandle: 'right' },
+            { id: 'e5', source: 'dim', target: 'static_join', targetHandle: 'left' },
+            { id: 'e6', source: 'dim', target: 'static_join', targetHandle: 'right' },
+        ];
+        const res = computeStreamingNodeSet(nodes, edges);
+        expect(res.joinModes.get('enrich')).toBe('stream_static');
+        expect(res.joinModes.get('attribute')).toBe('stream_stream');
+        expect(res.joinModes.get('static_join')).toBe('batch_batch');
+        expect(res.streamingNodeIds.has('static_join')).toBe(false);
+    });
+
+    it('classifies a streaming self-join as stream-stream and an unconnected Join as batch-batch', () => {
+        const nodes: DagNode[] = [
+            { id: 'rate', data: { type: 'SOURCE', spark_transform: 'RateSource' } },
+            { id: 'self_join', data: { type: 'STEP', spark_transform: 'Join' } },
+            { id: 'lonely_join', data: { type: 'STEP', spark_transform: 'Join' } },
+        ];
+        const edges: DagEdge[] = [
+            { id: 'l', source: 'rate', target: 'self_join', targetHandle: 'left' },
+            { id: 'r', source: 'rate', target: 'self_join', targetHandle: 'right' },
+        ];
+        const res = computeStreamingNodeSet(nodes, edges);
+        expect(res.joinModes.get('self_join')).toBe('stream_stream');
+        expect(res.joinModes.get('lonely_join')).toBe('batch_batch');
+    });
+
+    it('detects Joins from top-level node fields and ignores non-Join lookalikes', () => {
+        expect(isJoinNode({ id: 'j1', type: 'STEP', spark_transform: 'Join' } as DagNode)).toBe(true);
+        expect(isJoinNode({ id: 'j2', data: { sparkTransform: 'Join' } })).toBe(true);
+        expect(isJoinNode({ id: 'j3', data: { type: 'STEP', spark_transform: 'join' } })).toBe(false);
+        expect(isJoinNode({ id: 'j4', data: { type: 'STEP', spark_transform: 'BroadcastJoin' } })).toBe(false);
+        expect(isJoinNode({ id: 'j5', data: { type: 'SINK', spark_transform: 'Join' } })).toBe(false);
+        expect(isJoinNode({ id: 'j6', data: { type: 'STEP' } })).toBe(false);
+    });
+
+    it('resolves Join handle arity to two and rejects invalid explicit arity overrides', () => {
+        expect(getNodeInputArity({ id: 'j', type: 'STEP', spark_transform: 'Join' } as DagNode)).toBe(2);
+        expect(getNodeInputArity({ id: 'j', data: { spark_transform: 'Join' } })).toBe(2);
+        expect(getNodeInputArity({ id: 'j', data: { type: 'STEP', spark_transform: 'Join', inputArity: 'n' } })).toBe('n');
+        expect(getNodeInputArity({ id: 'j', data: { type: 'STEP', spark_transform: 'Join', inputArity: 3 } })).toBe(2);
+        expect(getNodeInputArity({ id: 'j', data: { type: 'STEP', spark_transform: 'Join', inputArity: '2' } })).toBe(2);
+        expect(getNodeInputArity({ id: 'j', data: { type: 'STEP', spark_transform: 'Join', inputArity: 0 } })).toBe(2);
+        expect(getNodeInputArity({ id: 'u', data: { type: 'STEP', spark_transform: 'UnknownStep' } })).toBe(1);
+        expect(getNodeInputArity({ id: 'k', data: { type: 'SINK', spark_transform: 'KafkaSink' } })).toBe(1);
+        expect(getNodeInputArity({ id: 'f', data: { type: 'STEP', spark_transform: 'Filter', label: 'Flatten' } })).toBe(1);
+    });
+
+    it('prefers data.type over node.type and ignores non-string category or transform values', () => {
+        expect(getNodeCategory({ id: 'n', type: 'SINK', data: { type: ' step ' } })).toBe('STEP');
+        expect(getNodeCategory({ id: 'n', type: 'source', data: { type: 'custom' } })).toBe('SOURCE');
+        expect(getNodeCategory({ id: 'n', data: { type: 7 as unknown as string } })).toBeUndefined();
+        expect(getNodeCategory(null)).toBeUndefined();
+        expect(getNodeCategory(undefined)).toBeUndefined();
+
+        expect(getNodeSparkTransform({ id: 'n', spark_transform: 'Join' } as DagNode)).toBe('Join');
+        expect(getNodeSparkTransform({ id: 'n', sparkTransform: 'Filter' } as DagNode)).toBe('Filter');
+        expect(getNodeSparkTransform({ id: 'n', data: { spark_transform: 'Join', sparkTransform: 'Filter' } })).toBe('Join');
+        expect(getNodeSparkTransform({ id: 'n', data: { spark_transform: 5 as unknown as string } })).toBeUndefined();
+        expect(getNodeSparkTransform(null)).toBeUndefined();
+    });
+
+    it('falls back to batch read mode for unknown sources and invalid defaults', () => {
+        expect(getEffectiveSourceReadMode({ id: 's', data: { type: 'SOURCE', spark_transform: 'MySource' } })).toBe('batch');
+        expect(
+            getEffectiveSourceReadMode({ id: 's', data: { type: 'SOURCE', defaultReadMode: 'micro_batch' } })
+        ).toBe('batch');
+        expect(
+            getEffectiveSourceReadMode({
+                id: 's',
+                data: { type: 'SOURCE', spark_transform: 'ParquetSource', defaultReadMode: 'streaming' },
+            })
+        ).toBe('streaming');
+        expect(
+            getEffectiveSourceReadMode({
+                id: 's',
+                data: {
+                    type: 'SOURCE',
+                    spark_transform: 'RateSource',
+                    defaultReadMode: 'streaming',
+                    properties: { readMode: 'batch' },
+                },
+            })
+        ).toBe('batch');
+    });
+
+    it('lets an explicit errorOutput false disable the DLQ handle on error-capable steps', () => {
+        expect(isErrorCapableStep({ id: 'p', data: { type: 'STEP', spark_transform: 'ParsePayload', errorOutput: false } })).toBe(false);
+        expect(isErrorCapableStep({ id: 'p', data: { spark_transform: 'ParsePayload' } })).toBe(true);
+        expect(isErrorCapableStep({ id: 'u', data: { type: 'STEP', spark_transform: 'Unknown' } })).toBe(false);
+    });
+
+    it('tolerates non-object rules and non-string conditions in ConditionalSplit handles', () => {
+        expect(
+            getConditionalSplitHandles({
+                id: 'cs',
+                data: {
+                    type: 'STEP',
+                    spark_transform: 'ConditionalSplit',
+                    properties: { rules: [null, 'raw', { name: '  hot  ', condition: 5 }] },
+                },
+            })
+        ).toEqual([
+            { id: 'rule_1', label: 'rule_1' },
+            { id: 'rule_2', label: 'rule_2' },
+            { id: 'hot', label: 'hot' },
+            { id: 'else', label: 'else' },
+        ]);
+
+        expect(
+            getConditionalSplitHandles({
+                id: 'cs',
+                data: { type: 'STEP', spark_transform: 'ConditionalSplit', properties: { rules: 'vip' } },
+            })
+        ).toEqual([
+            { id: 'rule_1', label: 'rule_1', condition: '' },
+            { id: 'else', label: 'else' },
+        ]);
+    });
+});

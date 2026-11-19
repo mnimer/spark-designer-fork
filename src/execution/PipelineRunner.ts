@@ -213,7 +213,8 @@ export function buildRunnerEnvironment(options: RunnerEnvironmentOptions): Runne
         path.join(home, '.sdkman/candidates/maven/current/bin'),
         path.join(home, '.sdkman/candidates/java/current/bin')
     ];
-    const existingPaths = (baseEnv.PATH || '').split(path.delimiter);
+    // NOTE: An empty PATH entry makes the shell search the current folder. Drop empty entries.
+    const existingPaths = (baseEnv.PATH || '').split(path.delimiter).filter((p) => p !== '');
     const mergedPaths = Array.from(new Set([...extraPathDirs.filter(d => exists(d)), ...existingPaths]));
 
     const env: Record<string, string> = {

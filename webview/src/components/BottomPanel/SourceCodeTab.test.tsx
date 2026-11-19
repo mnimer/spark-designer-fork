@@ -65,7 +65,7 @@ describe('SourceCodeTab & GeneratorSettings', () => {
 
     // Check top header bar shows active filename, model badge, and action buttons
     expect(screen.getByTestId('active-file-header-name')).toHaveTextContent('job.py');
-    expect(screen.getByTestId('active-model-badge')).toHaveTextContent('Model: gemini-3.7-flash');
+    expect(screen.getByTestId('active-model-badge')).toHaveTextContent('Model: gemini-3.8-flash');
     expect(screen.getByTestId('find-in-code-btn')).toBeInTheDocument();
     expect(screen.getByTestId('copy-code-btn')).toBeInTheDocument();
     expect(screen.getByTestId('download-code-btn')).toBeInTheDocument();

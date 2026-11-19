@@ -47,8 +47,8 @@ Connect complex multi-step pipelines with automated GCP resource discovery (BigQ
     - Cloud Pub/Sub topics and subscriptions
     - Google Compute Engine VPC networks and subnetworks
 
-- **AI-Powered Code Generation (Gemini 3.5 Flash)**
-  - Powered by the `@google/genai` SDK and Vertex AI (`gemini-3.5-flash`).
+- **AI-Powered Code Generation (Gemini 3.8 Flash)**
+  - Powered by the `@google/genai` SDK and Vertex AI (`gemini-3.8-flash`, `global` endpoint).
   - Converts visual DAG schemas into production-ready pipelines in either **Python** (Apache Beam Python SDK) or **Java** (Apache Beam Java SDK with Maven).
   - Generates comprehensive project structures:
     - Main pipeline entrypoints (`pipeline.py` or `Pipeline.java`)

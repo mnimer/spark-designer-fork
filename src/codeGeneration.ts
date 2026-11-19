@@ -387,7 +387,10 @@ async function writeSuccessLog(logFilePath: string, logData: Record<string, unkn
 }
 
 /**
- * Creates a `.gitignore` excluding `gemini.log` in the output folder when none exists (S6).
+ * Creates a `.gitignore` in the output folder when none exists (S6).
+ *
+ * The file excludes `gemini.log`, the `.venv` that `run_local.sh` creates, and the
+ * `.spark-ivy` Maven package cache.
  *
  * An existing `.gitignore` is never modified -- it belongs to the user.
  *
@@ -397,7 +400,7 @@ async function ensureGitignoreExcludesLog(targetFolderPath: string): Promise<voi
     const gitignorePath = path.join(targetFolderPath, '.gitignore');
     // NOTE: inherently TOCTOU existence check; the 'wx' flag makes creation atomic anyway.
     try {
-        await fs.promises.writeFile(gitignorePath, `${GEMINI_LOG_FILENAME}\n`, { encoding: 'utf-8', flag: 'wx' });
+        await fs.promises.writeFile(gitignorePath, `${GEMINI_LOG_FILENAME}\n.venv/\n.spark-ivy/\n`, { encoding: 'utf-8', flag: 'wx' });
     } catch {
         // File already exists (EEXIST) or folder is not writable -- leave it alone.
     }

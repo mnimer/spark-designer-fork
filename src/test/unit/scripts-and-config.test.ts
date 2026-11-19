@@ -10,7 +10,7 @@
  * package.json test scripts, and regression checks.
  */
 
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -26,6 +26,14 @@ interface FlatConfigEntry {
 describe('ESLint Flat Configuration', () => {
     const rootDir = path.resolve(__dirname, '../../../');
     const eslintConfigPath = path.join(rootDir, 'eslint.config.js');
+
+    // NOTE: The config requires the ESLint plugins. On a cold module cache this load takes
+    // more than the 10 second test timeout. Load it once here with a longer timeout.
+    beforeAll(() => {
+        if (fs.existsSync(eslintConfigPath)) {
+            req(eslintConfigPath);
+        }
+    }, 60_000);
 
     it('exists and exports a flat config array (simple case)', () => {
         expect(fs.existsSync(eslintConfigPath)).toBe(true);

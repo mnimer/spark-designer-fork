@@ -5,9 +5,9 @@
  *
  * Purpose:
  * Coordinates the full end-to-end evaluation lifecycle:
- * 1. Runs the Deterministic Pre-Flight Gate (syntax, bash -n, JSON, XML, placeholders, secret scan).
+ * 1. Runs the Deterministic Pre-Flight Gate (py_compile, bash -n, JSON, placeholders, secret scan).
  * 2. Concurrently invokes the 4 specialized sub-agents:
- *    - BeamArchitectureAgent
+ *    - SparkArchitectureAgent (Catalyst, D3 separation, caching, foreachBatch, watermarks, classpath)
  *    - PipelineSpecificationAgent (with Requirement Traceability Matrix)
  *    - SecurityAndHardeningAgent (with gemini-3.8-flash-cyber / fallback)
  *    - PackagingAndDeployabilityAgent
@@ -19,7 +19,7 @@
  *   quality scorecard for network/503/timeout errors.
  * - Passes full line-numbered files to Lead Arbiter to enable accurate verification.
  * - Formats rich terminal reports including scorecard, confirmed findings, rejected false positives,
- *   and actionable prompt remediation directives.
+ *   and actionable Skill Remediation Directives.
  */
 
 import { GoogleGenAI } from '@google/genai';
@@ -28,19 +28,8 @@ import { evaluatePipelineSpecification } from './pipeline-spec-evaluator';
 import { evaluateSecurityAndHardening } from './security-evaluator';
 import { evaluatePackagingAndDeployability } from './packaging-evaluator';
 import { synthesizeEvaluation } from './arbiter-evaluator';
+import { evaluateSparkArchitecture, SPARK_ARCHITECTURE_AGENT_NAME } from './spark-architecture-evaluator';
 import { MultiAgentEvaluationResult, SpecialistAgentResult } from './types';
-
-/**
- * Placeholder until T6 (`spark-architecture-evaluator.ts`) is implemented.
- */
-async function evaluateSparkArchitecturePlaceholder(): Promise<SpecialistAgentResult> {
-    return {
-        agentName: 'SparkArchitectureAgent',
-        passed: true,
-        summary: 'SparkArchitectureAgent pending Phase 8 T6 implementation.',
-        findings: [],
-    };
-}
 
 /**
  * Runs the comprehensive multi-agent code evaluation harness.
@@ -60,9 +49,17 @@ export async function runMultiAgentEvaluation(
     files: GeneratedFileCandidate[]
 ): Promise<MultiAgentEvaluationResult> {
     console.log(`   [MultiAgentEvaluator] 1. Running Deterministic Gate + 4 Specialist Sub-Agents in parallel...`);
-    const [deterministic, beamArch, pipelineSpec, security, packaging] = await Promise.all([
+    const [deterministic, sparkArch, pipelineSpec, security, packaging] = await Promise.all([
         runDeterministicGate(files, language),
-        evaluateSparkArchitecturePlaceholder(),
+        evaluateSparkArchitecture(ai, language, yamlContent, files).catch((err): SpecialistAgentResult => {
+            console.error(`   [MultiAgentEvaluator] ⚠️ ${SPARK_ARCHITECTURE_AGENT_NAME} error: ${err.message}`);
+            return {
+                agentName: SPARK_ARCHITECTURE_AGENT_NAME,
+                passed: false,
+                summary: `Subagent infrastructure/API error: ${err.message}`,
+                findings: []
+            };
+        }),
         evaluatePipelineSpecification(ai, language, yamlContent, files).catch((err): SpecialistAgentResult => {
             console.error(`   [MultiAgentEvaluator] ⚠️ PipelineSpecificationAgent error: ${err.message}`);
             return {
@@ -81,7 +78,7 @@ export async function runMultiAgentEvaluation(
                 findings: []
             };
         }),
-        evaluatePackagingAndDeployability(ai, language, files).catch((err): SpecialistAgentResult => {
+        evaluatePackagingAndDeployability(ai, language, files, yamlContent).catch((err): SpecialistAgentResult => {
             console.error(`   [MultiAgentEvaluator] ⚠️ PackagingAndDeployabilityAgent error: ${err.message}`);
             return {
                 agentName: 'PackagingAndDeployabilityAgent',
@@ -100,7 +97,7 @@ export async function runMultiAgentEvaluation(
     }
 
     const specialistResults: Record<string, SpecialistAgentResult> = {
-        BeamArchitectureAgent: beamArch,
+        [SPARK_ARCHITECTURE_AGENT_NAME]: sparkArch,
         PipelineSpecificationAgent: pipelineSpec,
         SecurityAndHardeningAgent: security,
         PackagingAndDeployabilityAgent: packaging
@@ -182,7 +179,25 @@ export function formatEvaluationReport(result: MultiAgentEvaluationResult, langu
         lines.push(`\n📋 Requirement Traceability: ${verified}/${total} requirements verified (${Math.round((verified / total) * 100)}%)`);
     }
 
-    if (result.promptRemediationDirectives.length > 0) {
+    const skillDirectives = result.skillRemediationDirectives ?? [];
+    if (skillDirectives.length > 0) {
+        lines.push(`\n💡 SKILL REMEDIATION DIRECTIVES (Targeting Codegen Skills):`);
+        lines.push(`   NOTE: Integration tests test the codegen skills. Fix the skill, never the generated code.`);
+        skillDirectives.forEach((dir, idx) => {
+            lines.push(`\n   --- Directive #${idx + 1} for ${dir.skillFile} ---`);
+            if (dir.nodeId) {
+                lines.push(`   Node: ${dir.nodeId}${dir.sparkTransform ? ` (sparkTransform: ${dir.sparkTransform})` : ''}`);
+            }
+            if (dir.findingIds.length > 0) {
+                lines.push(`   Findings: ${dir.findingIds.join(', ')}`);
+            }
+            lines.push(`   Finding: ${dir.finding}`);
+            lines.push(`   Target Section: ${dir.targetSection || '(new section)'}`);
+            lines.push(`   Edit Instruction:`);
+            lines.push(dir.editInstruction.split('\n').map(l => '     ' + l).join('\n'));
+            lines.push(`   Rationale: ${dir.rationale}`);
+        });
+    } else if (result.promptRemediationDirectives.length > 0) {
         lines.push(`\n💡 PROMPT REMEDIATION DIRECTIVES (Targeting Generator Prompts):`);
         lines.push(`   NOTE: Integration tests test the generator prompts. Do not patch test code.`);
         lines.push(`   Update the corresponding prompt file(s) with these directives:`);

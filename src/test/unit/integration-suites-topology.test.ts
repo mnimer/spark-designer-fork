@@ -1,22 +1,25 @@
 /**
- * Integration Test Suites Topology & Schema Unit Test
+ * Integration Suites Topology & Schema Unit Test
  *
- * Validates that all generated .beam DAG files across:
- * - src/test/integration/sources/java & python
- * - src/test/integration/sinks/java & python
- * - src/test/integration/steps/java & python
+ * Validates that every `.spark` pipeline file under:
+ * - src/test/integration/sources/
+ * - src/test/integration/sinks/
+ * - src/test/integration/steps/
  *
- * strictly adhere to topological DAG rules via Kahn's algorithm (0 cycles, 0 orphans, valid edges),
- * enforce the required pipeline patterns, and achieve 100% coverage across all 31 Step Node Types.
+ * strictly adheres to topological DAG rules via Kahn's algorithm (0 cycles, 0 orphans, valid edges),
+ * starts at a SOURCE node, ends at a SINK node, and carries a `spark_transform` on every node.
+ * Phase 9 adds the suites. Until then, the discovery helper keeps its own fixture coverage.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import { validateDagTopology, DagNode, DagEdge } from '../../dagValidator';
+import { PIPELINE_FILE_EXT } from '../../core/constants';
 
-interface BeamFileContent {
+interface SparkFileContent {
     nodes: DagNode[];
     edges: DagEdge[];
     runtimeVariables?: { key: string; value: string }[];
@@ -25,42 +28,69 @@ interface BeamFileContent {
 }
 
 /**
- * Recursively locates all `.beam` pipeline files within a directory.
+ * Recursively locates all `.spark` pipeline files within a directory.
  *
  * @param dir The root directory to search.
- * @returns An array of absolute file paths to discovered `.beam` files.
+ * @returns Sorted absolute file paths of discovered `.spark` files.
  */
-function getBeamFiles(dir: string): string[] {
+function getSparkFiles(dir: string): string[] {
     if (!fs.existsSync(dir)) return [];
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     let files: string[] = [];
     for (const e of entries) {
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-            files = files.concat(getBeamFiles(full));
-        } else if (e.isFile() && e.name.endsWith('.beam')) {
+            files = files.concat(getSparkFiles(full));
+        } else if (e.isFile() && e.name.endsWith(PIPELINE_FILE_EXT)) {
             files.push(full);
         }
     }
-    return files;
+    return files.sort();
 }
+
+describe('getSparkFiles discovery helper', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-suites-'));
+    afterAll(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+    it('finds nested .spark files and ignores other extensions', () => {
+        fs.mkdirSync(path.join(tmpRoot, 'sources', 'kafka'), { recursive: true });
+        fs.writeFileSync(path.join(tmpRoot, 'sources', 'kafka', 'kafka-source.spark'), 'nodes: []');
+        fs.writeFileSync(path.join(tmpRoot, 'sources', 'legacy.beam'), 'nodes: []');
+        fs.writeFileSync(path.join(tmpRoot, 'sources', 'notes.md'), '# x');
+        const found = getSparkFiles(path.join(tmpRoot, 'sources'));
+        expect(found.map(f => path.basename(f))).toEqual(['kafka-source.spark']);
+    });
+
+    it('returns an empty list for a missing directory (extreme condition)', () => {
+        expect(getSparkFiles(path.join(tmpRoot, 'does-not-exist'))).toEqual([]);
+    });
+});
 
 describe('Integration Suites DAG Topology and Pattern Verification', () => {
     const integrationDir = path.resolve(__dirname, '../integration');
-    const splitBeamFiles = [
-        ...getBeamFiles(path.join(integrationDir, 'sources')),
-        ...getBeamFiles(path.join(integrationDir, 'sinks')),
-        ...getBeamFiles(path.join(integrationDir, 'steps')),
+    const suiteFiles = [
+        ...getSparkFiles(path.join(integrationDir, 'sources')),
+        ...getSparkFiles(path.join(integrationDir, 'sinks')),
+        ...getSparkFiles(path.join(integrationDir, 'steps')),
     ];
 
-    it('contains all expected 227 integration .beam files across sources, sinks, and steps', () => {
-        expect(splitBeamFiles.length).toBe(227);
+    it('never ships legacy .beam suites next to the Spark suites', () => {
+        const legacy: string[] = [];
+        const walk = (dir: string): void => {
+            if (!fs.existsSync(dir)) return;
+            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, e.name);
+                if (e.isDirectory()) walk(full);
+                else if (e.name.endsWith('.beam')) legacy.push(full);
+            }
+        };
+        walk(integrationDir);
+        expect(legacy).toEqual([]);
     });
 
-    it('validates every .beam file passes Kahn algorithm with 0 cycles and 0 orphans', () => {
-        for (const filePath of splitBeamFiles) {
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const parsed = yaml.parse(content) as BeamFileContent;
+    it('validates every .spark file passes Kahn algorithm with 0 cycles and 0 orphans', () => {
+        for (const filePath of suiteFiles) {
+            const parsed = yaml.parse(fs.readFileSync(filePath, 'utf-8')) as SparkFileContent;
             expect(parsed, `Failed to parse YAML: ${filePath}`).toBeDefined();
             expect(Array.isArray(parsed.nodes), `Nodes missing in ${filePath}`).toBe(true);
             expect(Array.isArray(parsed.edges), `Edges missing in ${filePath}`).toBe(true);
@@ -72,110 +102,24 @@ describe('Integration Suites DAG Topology and Pattern Verification', () => {
         }
     });
 
-    it('enforces properties-only policy (no system_instructions on built-in SOURCE, SINK, or non-ParDo STEP nodes)', () => {
-        const CUSTOM_CONNECTOR_TRANSFORMS = new Set([
-            'CloudBigtable',
-            'CloudSQL',
-            'CogniteDataFusion',
-            'KineticaDB',
-            'MySQLPostgreSQLOracleSQLServer',
-            'MySQL',
-            'Pyodbc',
-            'Tinybird',
-            'TrepWsIO',
-        ]);
-        for (const filePath of splitBeamFiles) {
-            const parsed = yaml.parse(fs.readFileSync(filePath, 'utf-8')) as BeamFileContent;
+    it('enforces SOURCE -> STEP* -> SINK shape with a spark_transform on every node', () => {
+        for (const filePath of suiteFiles) {
+            const parsed = yaml.parse(fs.readFileSync(filePath, 'utf-8')) as SparkFileContent;
+            const types = parsed.nodes.map(n => n.data?.type);
+            expect(types, `No SOURCE node in ${filePath}`).toContain('SOURCE');
+            expect(types, `No SINK node in ${filePath}`).toContain('SINK');
             for (const node of parsed.nodes) {
-                const isParDo = node.data?.type === 'STEP' && node.data?.spark_transform === 'ParDo';
-                const isCustomConnector = Boolean(
-                    node.data?.spark_transform && CUSTOM_CONNECTOR_TRANSFORMS.has(node.data.spark_transform)
-                );
-                if (!isParDo && !isCustomConnector) {
-                    expect(node.data?.system_instructions, `Unexpected system_instructions on ${node.id} in ${filePath}`).toBeUndefined();
+                expect(node.data?.spark_transform, `Missing spark_transform on ${node.id} in ${filePath}`).toBeTruthy();
+            }
+            const targets = new Set(parsed.edges.map(e => e.target));
+            const sources = new Set(parsed.edges.map(e => e.source));
+            for (const node of parsed.nodes) {
+                if (node.data?.type === 'SOURCE') {
+                    expect(targets.has(node.id), `SOURCE ${node.id} has an inbound edge in ${filePath}`).toBe(false);
                 }
-            }
-        }
-    });
-
-    it('enforces SOURCE tests follow IO Connector -> ParDo -> Log Message pattern', () => {
-        const sourceSpecs = [
-            { dir: path.join(integrationDir, 'sources', 'java'), expectedCount: 69 },
-            { dir: path.join(integrationDir, 'sources', 'python'), expectedCount: 38 }
-        ];
-        for (const { dir, expectedCount } of sourceSpecs) {
-            const files = getBeamFiles(dir);
-            expect(files.length).toBe(expectedCount);
-            for (const file of files) {
-                const parsed = yaml.parse(fs.readFileSync(file, 'utf-8')) as BeamFileContent;
-                expect(parsed.nodes.length, `Expected 3 nodes in ${file}`).toBe(3);
-                expect(parsed.nodes[0].data?.type).toBe('SOURCE');
-                expect(parsed.nodes[1].data?.spark_transform).toBe('ParDo');
-                expect(parsed.nodes[2].data?.spark_transform).toBe('LogMessage');
-                expect(parsed.nodes[2].data?.type).toBe('SINK');
-
-                expect(parsed.edges.length).toBe(2);
-                expect(parsed.edges[0].source).toBe(parsed.nodes[0].id);
-                expect(parsed.edges[0].target).toBe(parsed.nodes[1].id);
-                expect(parsed.edges[1].source).toBe(parsed.nodes[1].id);
-                expect(parsed.edges[1].target).toBe(parsed.nodes[2].id);
-            }
-        }
-    });
-
-    it('enforces SINK tests follow Create/GenerateSequence -> ParDo -> IO Connector pattern', () => {
-        const sinkSpecs = [
-            { dir: path.join(integrationDir, 'sinks', 'java'), expectedCount: 65 },
-            { dir: path.join(integrationDir, 'sinks', 'python'), expectedCount: 35 }
-        ];
-        for (const { dir, expectedCount } of sinkSpecs) {
-            const files = getBeamFiles(dir);
-            expect(files.length).toBe(expectedCount);
-            for (const file of files) {
-                const parsed = yaml.parse(fs.readFileSync(file, 'utf-8')) as BeamFileContent;
-                expect(parsed.nodes.length, `Expected 3 nodes in ${file}`).toBe(3);
-                const sourceTransform = parsed.nodes[0].data?.spark_transform;
-                expect(['Create', 'GenerateSequence']).toContain(sourceTransform);
-                expect(parsed.nodes[1].data?.spark_transform).toBe('ParDo');
-                expect(parsed.nodes[2].data?.type).toBe('SINK');
-
-                expect(parsed.edges.length).toBe(2);
-                expect(parsed.edges[0].source).toBe(parsed.nodes[0].id);
-                expect(parsed.edges[0].target).toBe(parsed.nodes[1].id);
-                expect(parsed.edges[1].source).toBe(parsed.nodes[1].id);
-                expect(parsed.edges[1].target).toBe(parsed.nodes[2].id);
-            }
-        }
-    });
-
-    it('achieves 100% coverage across all 31 Step Node Types in steps/ test suites', () => {
-        const ALL_31_STEP_TRANSFORMS = [
-            'ParDo', 'ParseMessage', 'WithTimestamps', 'Filter', 'FlatMap',
-            'Keys', 'KVMapper', 'KvSwap', 'Map', 'ToString', 'Values',
-            'ApproximateQuantiles', 'ApproximateUnique', 'BatchElements', 'CoGroupByKey',
-            'Combine', 'CombineWithContext', 'Count', 'Distinct', 'GroupByKey',
-            'GroupIntoBatches', 'Latest', 'Max', 'Mean', 'Min', 'Sample', 'Sum', 'Top',
-            'WindowInto', 'Flatten', 'Reshuffle'
-        ];
-
-        for (const lang of ['java', 'python']) {
-            const stepDir = path.join(integrationDir, 'steps', lang);
-            const files = getBeamFiles(stepDir);
-            expect(files.length).toBe(10);
-
-            const found = new Set<string>();
-            for (const file of files) {
-                const parsed = yaml.parse(fs.readFileSync(file, 'utf-8')) as BeamFileContent;
-                for (const n of parsed.nodes) {
-                    if (n.data?.spark_transform && ALL_31_STEP_TRANSFORMS.includes(n.data.spark_transform)) {
-                        found.add(n.data.spark_transform);
-                    }
+                if (node.data?.type === 'SINK') {
+                    expect(sources.has(node.id), `SINK ${node.id} has an outbound edge in ${filePath}`).toBe(false);
                 }
-            }
-
-            expect(found.size).toBe(ALL_31_STEP_TRANSFORMS.length);
-            for (const transform of ALL_31_STEP_TRANSFORMS) {
-                expect(found.has(transform), `Missing step transform in ${lang}: ${transform}`).toBe(true);
             }
         }
     });

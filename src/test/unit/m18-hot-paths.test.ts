@@ -25,7 +25,7 @@ describe('M18 — getSamplePipelines non-blocking asynchronous loading', () => {
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-samples-test-'));
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-samples-test-'));
     });
 
     afterEach(() => {
@@ -42,9 +42,9 @@ describe('M18 — getSamplePipelines non-blocking asynchronous loading', () => {
 
         const sampleYaml = `
 pipelineConfig:
-  language: Python
+  language: PySpark
 jobConfig:
-  runner: DirectRunner
+  runner: DataprocCluster
 nodes:
   - id: node_1
     type: custom
@@ -59,7 +59,7 @@ edges:
     source: node_1
     target: node_2
 `;
-        fs.writeFileSync(path.join(samplesDir, 'custom-test-pipeline.beam'), sampleYaml, 'utf-8');
+        fs.writeFileSync(path.join(samplesDir, 'custom-test-pipeline.spark'), sampleYaml, 'utf-8');
 
         const mockContext: any = {
             asAbsolutePath: (rel: string) => path.join(tempDir, rel),
@@ -75,8 +75,8 @@ edges:
             expect(Array.isArray(results)).toBe(true);
             expect(results.length).toBe(1);
             expect(results[0].id).toBe('custom-test-pipeline');
-            expect(results[0].language).toBe('Python');
-            expect(results[0].runner).toBe('DirectRunner');
+            expect(results[0].language).toBe('PySpark');
+            expect(results[0].runner).toBe('DataprocCluster');
             expect(results[0].title).toBe('Custom Test Pipeline');
 
             // Verify non-blocking fs.promises APIs were exercised
@@ -104,7 +104,7 @@ edges:
 
         // Corrupt YAML that causes YAML.parse to throw
         const corruptContent = '::: corrupt [not valid yaml :::';
-        fs.writeFileSync(path.join(samplesDir, 'corrupt-sample.beam'), corruptContent, 'utf-8');
+        fs.writeFileSync(path.join(samplesDir, 'corrupt-sample.spark'), corruptContent, 'utf-8');
 
         const mockContext: any = {
             asAbsolutePath: (rel: string) => path.join(tempDir, rel),
@@ -114,8 +114,8 @@ edges:
         const results = await getSamplePipelines(mockContext);
         expect(results.length).toBe(1);
         expect(results[0].id).toBe('corrupt-sample');
-        expect(results[0].language).toBe('Java'); // default fallback
-        expect(results[0].runner).toBe('Dataflow'); // default fallback
+        expect(results[0].language).toBe('PySpark'); // default fallback
+        expect(results[0].runner).toBe('Local'); // default fallback
     });
 });
 
@@ -123,7 +123,7 @@ describe('M18 — savePipelineFiles non-blocking file operations', () => {
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-save-test-'));
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-save-test-'));
     });
 
     afterEach(() => {
@@ -135,7 +135,7 @@ describe('M18 — savePipelineFiles non-blocking file operations', () => {
     });
 
     it('executes non-blocking writes via fs.promises (hot path non-blocking verification)', async () => {
-        const filePath = path.join(tempDir, 'async-verify.beam');
+        const filePath = path.join(tempDir, 'async-verify.spark');
         const targetUri = {
             scheme: 'file',
             fsPath: filePath,
@@ -153,7 +153,7 @@ describe('M18 — savePipelineFiles non-blocking file operations', () => {
                 '# Generated python code\n',
                 'py',
                 undefined,
-                'apache-beam\n',
+                'pyspark\n',
                 'FROM python\n',
                 '#!/bin/bash\necho "direct"\n',
                 '#!/bin/bash\necho "dataflow"\n'

@@ -166,6 +166,76 @@ describe('codegen skill library invariants', () => {
         expect(missing).toEqual([]);
     });
 
+    it('parses every sparkTransform entry in each catalog file, so the regex never skips a node', () => {
+        const dir = path.join(REPO_ROOT, 'webview', 'src', 'catalog', 'nodes');
+        const expected: Record<string, { type: string; count: number }> = {
+            'sources.ts': { type: 'SOURCE', count: 38 },
+            'sinks.ts': { type: 'SINK', count: 37 },
+            'steps.ts': { type: 'STEP', count: 29 },
+        };
+        for (const [file, { type, count }] of Object.entries(expected)) {
+            const text = fs.readFileSync(path.join(dir, file), 'utf-8');
+            const declared = [...text.matchAll(/sparkTransform:\s*'/g)].length;
+            expect(declared, `${file} sparkTransform declarations`).toBe(count);
+            expect(CATALOG.filter((entry) => entry.type === type), `${file} parsed entries`).toHaveLength(count);
+        }
+        expect(CATALOG).toHaveLength(38 + 37 + 29);
+    });
+
+    it('declares every catalog sparkTransform once across all node types', () => {
+        const transforms = CATALOG.map((entry) => entry.sparkTransform);
+        const duplicates = transforms.filter((value, index) => transforms.indexOf(value) !== index);
+        expect(duplicates).toEqual([]);
+    });
+
+    it('resolves every catalog sparkTransform exactly to one owning skill folder with a SKILL.md on disk', () => {
+        // Core skills can list transforms as triggers. Only io and transform skills own them.
+        const owners = new Map<string, CodegenSkill[]>();
+        for (const skill of SKILLS.filter((s) => TRANSFORM_OWNER_KINDS.has(s.kind))) {
+            for (const transform of skill.transforms) {
+                owners.set(transform, [...(owners.get(transform) ?? []), skill]);
+            }
+        }
+        const problems: string[] = [];
+        for (const entry of CATALOG) {
+            const resolution = LIBRARY.resolveTransform(entry.sparkTransform);
+            if (!resolution.known || resolution.aliased || resolution.canonical !== entry.sparkTransform) {
+                problems.push(`${entry.type}:${entry.sparkTransform} does not resolve exactly`);
+                continue;
+            }
+            const skills = owners.get(entry.sparkTransform) ?? [];
+            if (skills.length !== 1) {
+                problems.push(`${entry.type}:${entry.sparkTransform} has ${skills.length} owning skills`);
+                continue;
+            }
+            const expectedPrefix = entry.type === 'STEP' ? 'transform-' : 'io-';
+            if (!skills[0].name.startsWith(expectedPrefix)) {
+                problems.push(`${entry.type}:${entry.sparkTransform} resolves to ${skills[0].name}`);
+            }
+            if (!fs.existsSync(path.join(SKILLS_ROOT, skills[0].name, 'SKILL.md'))) {
+                problems.push(`${skills[0].name} has no SKILL.md`);
+            }
+        }
+        expect(problems).toEqual([]);
+    });
+
+    it('gives every io and transform skill folder at least one catalog sparkTransform', () => {
+        const catalogTransforms = new Set(CATALOG.map((entry) => entry.sparkTransform));
+        const orphans = SKILLS.filter((s) => s.name.startsWith('io-') || s.name.startsWith('transform-'))
+            .filter((s) => !s.transforms.some((t) => catalogTransforms.has(t)))
+            .map((s) => s.name);
+        expect(orphans).toEqual([]);
+    });
+
+    it('reports an unknown sparkTransform as unresolved instead of guessing a skill', () => {
+        expect(LIBRARY.resolveTransform('NotARealSparkTransform')).toEqual({
+            canonical: 'NotARealSparkTransform',
+            aliased: false,
+            known: false,
+        });
+        expect(LIBRARY.resolveTransform('   ').known).toBe(false);
+    });
+
     it('names only known Spark transforms in metadata.transforms', () => {
         const unknown = SKILLS.flatMap((s) =>
             s.transforms.filter((t) => !KNOWN_SPARK_TRANSFORMS.has(t)).map((t) => `${s.name}: ${t}`)
