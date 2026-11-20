@@ -45,7 +45,8 @@ export type AssetType =
   | 'sessionTemplates'
   | 'bigLakeCatalogs'
   | 'icebergCatalogs'
-  | 'regions';
+  | 'regions'
+  | 'codegenModels';
 
 /**
  * Configuration descriptor for an asset type IPC request/response contract.
@@ -190,6 +191,11 @@ export const ASSET_CONFIGS: Record<string, AssetConfig> = {
     requestCommand: 'getRegions',
     responseCommand: 'regionsLoaded',
     responseKey: 'regions'
+  },
+  codegenModels: {
+    requestCommand: 'getCodegenModels',
+    responseCommand: 'codegenModelsLoaded',
+    responseKey: 'models'
   }
 };
 
@@ -256,8 +262,8 @@ export function useAssetLoader<T = any>(
     ...(options?.params || {})
   };
 
-  // Some assets (tables, bigtableTables, sqlDatabases) require a parent identifier;
-  // auto-disable until the config's requiredParam is provided.
+  // Some assets (tables, bigtableTables, sqlDatabases) require a parent identifier.
+  // Auto-disable until the config requiredParam is provided.
   const requiredParam = config.requiredParam;
   const hasRequiredParam = !requiredParam ||
     Boolean(params[requiredParam] && String(params[requiredParam]).trim().length > 0);

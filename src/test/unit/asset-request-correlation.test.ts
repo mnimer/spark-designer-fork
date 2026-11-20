@@ -92,6 +92,7 @@ describe('F11 — router echoes request parameters on asset responses', () => {
             'getBigLakeCatalogs',
             'getBigtableInstances',
             'getBigtableTables',
+            'getCodegenModels',
             'getComputeInstances',
             'getDataprocClusters',
             'getDatasets',
@@ -109,7 +110,7 @@ describe('F11 — router echoes request parameters on asset responses', () => {
             'getTables',
             'getTopics',
         ]);
-        expect(ASSET_REQUEST_COMMANDS.size).toBe(20);
+        expect(ASSET_REQUEST_COMMANDS.size).toBe(21);
     });
 
     it('echoes parameters end-to-end through handleMessages for a validation error response', async () => {

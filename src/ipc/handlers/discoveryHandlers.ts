@@ -22,6 +22,10 @@ import {
     mapRegions,
 } from '../../cli/resourceMappers';
 import { getDesignerOutputChannel } from '../../core/outputChannel';
+import {
+    discoverCodegenModels,
+    createDefaultCodegenModelOption,
+} from '../../codegen/modelDiscovery';
 import { isValidGcpRegion } from '../../security/pathGuard';
 import { MessageContext } from '../messageContext';
 
@@ -514,6 +518,25 @@ export async function handleGetRegions(ctx: MessageContext, _message: any): Prom
     );
 }
 
+/**
+ * Handles the 'getCodegenModels' command (MOD1).
+ * Discovers ranked Gemini models and posts the catalog to the webview.
+ *
+ * @param ctx Message context
+ * @param message Incoming IPC message with optional `projectId`
+ */
+export async function handleGetCodegenModels(ctx: MessageContext, message: unknown): Promise<void> {
+    const projectId = extractValidProjectId(message);
+    const result = await discoverCodegenModels({ projectId });
+    ctx.postToWebview({
+        command: 'codegenModelsLoaded',
+        models: result.models.length > 0 ? result.models : [createDefaultCodegenModelOption()],
+        defaultModel: result.defaultModel,
+        source: result.source,
+        ...(result.warning ? { debugLog: result.warning } : {}),
+    });
+}
+
 export const fetchDataprocClusters = handleGetDataprocClusters;
 export const fetchSessionTemplates = handleGetSessionTemplates;
 export const fetchBigLakeCatalogs = handleGetBigLakeCatalogs;
@@ -524,6 +547,7 @@ export const fetchStorageBuckets = handleGetStorageBuckets;
 export const fetchSubnetworks = handleGetSubnetworks;
 export const fetchRegions = handleGetRegions;
 export const fetchSecrets = handleGetSecrets;
+export const fetchCodegenModels = handleGetCodegenModels;
 
 /**
  * Handler for 'getRunningJobs' command.

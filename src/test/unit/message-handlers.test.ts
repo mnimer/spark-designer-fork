@@ -61,6 +61,7 @@ describe('A1 — Message Handler Registry & Dispatcher', () => {
         'getBigLakeCatalogs',
         'getBigtableInstances',
         'getBigtableTables',
+        'getCodegenModels',
         'getComputeInstances',
         'getDataprocClusters',
         'getDatasets',
@@ -98,10 +99,10 @@ describe('A1 — Message Handler Registry & Dispatcher', () => {
     });
 
     describe('Registry completeness and structure', () => {
-        it('exposes exactly the 34 expected webview commands (simple case)', () => {
+        it('exposes exactly the 35 expected webview commands (simple case)', () => {
             const actualCommands = Object.keys(MESSAGE_HANDLERS).sort();
             expect(actualCommands).toEqual(EXPECTED_COMMANDS);
-            expect(actualCommands).toHaveLength(34);
+            expect(actualCommands).toHaveLength(35);
         });
 
         it('every registered entry is a callable handler function (extreme case)', () => {

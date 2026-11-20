@@ -22,4 +22,6 @@ export type {
     SdpRefreshMode,
     SdpCommandMode,
     SdpJobConfigFields,
+    CodegenModelTier,
+    CodegenModelOption,
 } from '../../../src/shared/types';

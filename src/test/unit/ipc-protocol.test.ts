@@ -34,6 +34,19 @@ describe('M4 — typed IPC protocol', () => {
             { command: 'pipelineLog', text: 'hello', stream: 'stdout' },
             { command: 'pipelineFinished', exitCode: 0, status: 'completed' },
             { command: 'tablesLoaded', tables: ['t1'], requestParams: { dataset: 'd' } },
+            {
+                command: 'codegenModelsLoaded',
+                models: [
+                    {
+                        id: 'gemini-4-hydrogen',
+                        displayName: 'Gemini 4 Hydrogen',
+                        tier: 'flash',
+                        isDefault: true,
+                    },
+                ],
+                defaultModel: 'gemini-4-hydrogen',
+                source: 'vertexai',
+            },
             { command: 'codeGenerationStopped' },
         ];
 
@@ -48,7 +61,7 @@ describe('M4 — typed IPC protocol', () => {
             { command: 'fileContentLoaded', filePath: 'a.py' },
         ];
 
-        expect(ok).toHaveLength(4);
+        expect(ok).toHaveLength(5);
         expect(bad).toHaveLength(4);
     });
 });

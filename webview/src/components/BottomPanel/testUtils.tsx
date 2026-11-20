@@ -14,6 +14,7 @@ import {
 import { pipelineConfigReducer, type PipelineConfig } from '../../state/pipelineConfigReducer';
 import type { LogEntry } from './DeploymentTab';
 import type { TokenUsage } from './SourceCodeTab';
+import type { CodegenModelOption } from '../../utils/sharedTypes';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -50,7 +51,7 @@ export interface BottomPanelTestOverrides {
   setOutputFolder?: (folder: string) => void;
   setPipelineConfig?: (update: any) => void;
   onPickFolder?: () => void;
-  onRegenerate?: (options?: { enableReviewer?: boolean }) => void;
+  onRegenerate?: (options?: { enableReviewer?: boolean; model?: string }) => void;
   onStopGeneration?: () => void;
   files?: string[];
   folderFiles?: string[];
@@ -66,6 +67,12 @@ export interface BottomPanelTestOverrides {
   tokenUsage?: TokenUsage | null;
   enableReviewer?: boolean;
   setEnableReviewer?: (value: boolean) => void;
+  selectedModel?: string;
+  setSelectedModel?: (model: string) => void;
+  models?: CodegenModelOption[];
+  modelsLoading?: boolean;
+  modelsError?: string | null;
+  refreshModels?: () => void;
 }
 
 /**
@@ -168,6 +175,12 @@ export function createBottomPanelContextValue(
       setUseSdkForUnsupportedNodes: rawCodegen.setUseSdkForUnsupportedNodes ?? vi.fn(),
       enableReviewer: rawCodegen.enableReviewer ?? overrides?.enableReviewer,
       setEnableReviewer: rawCodegen.setEnableReviewer ?? overrides?.setEnableReviewer,
+      selectedModel: rawCodegen.selectedModel ?? overrides?.selectedModel,
+      setSelectedModel: rawCodegen.setSelectedModel ?? overrides?.setSelectedModel,
+      models: rawCodegen.models ?? overrides?.models,
+      modelsLoading: rawCodegen.modelsLoading ?? overrides?.modelsLoading,
+      modelsError: rawCodegen.modelsError ?? overrides?.modelsError,
+      refreshModels: rawCodegen.refreshModels ?? overrides?.refreshModels,
     },
   };
 }

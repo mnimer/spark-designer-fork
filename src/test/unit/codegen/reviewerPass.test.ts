@@ -186,4 +186,66 @@ describe('runReviewerPass', () => {
         expect(calls[0][0].contents).toContain('spark-pipeline.yml');
         expect(calls[0][0].contents).toContain('run_sdp_local.sh');
     });
+
+    it('forwards custom Gemini 4 model override distinct from DEFAULT_GEMINI_MODEL to both review and fix calls', async () => {
+        const responses = [
+            JSON.stringify({
+                findings: [{ file: 'src/pipeline.py', severity: 'blocking', problem: 'p', fix: 'f', skillRule: 'core-pyspark' }],
+                summary: 'needs fix',
+            }),
+            JSON.stringify({ files: [{ filename: 'src/pipeline.py', content: 'fixed_v4' }] }),
+            JSON.stringify({ findings: [], summary: 'clean' }),
+        ];
+        const generateContent = vi.fn(async () => ({ text: responses.shift() }));
+        const ai: ReviewerModelClient = { models: { generateContent } };
+        const executor = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+
+        expect(DEFAULT_GEMINI_MODEL).toBe('gemini-4-hydrogen');
+        const outcome = await runReviewerPass({
+            ai,
+            files: [{ filename: 'src/pipeline.py', content: 'draft' }],
+            generationPrompt: 'GEN',
+            yamlText: 'nodes: []\n',
+            language: 'PySpark',
+            baseName: 'orders',
+            model: 'gemini-4-carbon',
+            skillsRoot,
+            reviewerTemplate: 'REVIEW TEMPLATE',
+            fixTemplate: 'FIX TEMPLATE',
+            responseSchema: { generator: true },
+            checkRunner: new ReadOnlyCheckRunner(executor),
+        });
+
+        expect(outcome.fixRounds).toBe(1);
+        expect(outcome.files[0].content).toBe('fixed_v4');
+        const calls = generateContent.mock.calls as unknown as Array<[{ model: string }]>;
+        expect(calls.map((c) => c[0].model)).toEqual([
+            'gemini-4-carbon',
+            'gemini-4-carbon',
+            'gemini-4-carbon',
+        ]);
+    });
+
+    it('rejects deprecated Gemini 2.5 models before calling the reviewer SDK', async () => {
+        const generateContent = vi.fn();
+        const ai: ReviewerModelClient = { models: { generateContent } };
+
+        await expect(
+            runReviewerPass({
+                ai,
+                files: [{ filename: 'src/pipeline.py', content: 'draft' }],
+                generationPrompt: 'GEN',
+                yamlText: 'nodes: []\n',
+                language: 'PySpark',
+                baseName: 'orders',
+                model: 'gemini-2.5-flash',
+                skillsRoot,
+                reviewerTemplate: 'REVIEW TEMPLATE',
+                fixTemplate: 'FIX TEMPLATE',
+                responseSchema: {},
+            })
+        ).rejects.toThrow(/Unsupported or deprecated Gemini code generation model: 'gemini-2\.5-flash'/);
+
+        expect(generateContent).not.toHaveBeenCalled();
+    });
 });

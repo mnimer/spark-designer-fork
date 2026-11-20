@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { SourceCodeTab, highlightCode } from './SourceCodeTab';
 import {
@@ -93,17 +93,23 @@ describe('SourceCodeTab & GeneratorSettings', () => {
     expect(reviewerToggle).toBeInTheDocument();
     expect(reviewerToggle.checked).toBe(false);
 
-    // Clicking Generate Code with default (false) passes { enableReviewer: false }
+    // Clicking Generate Code with default (false) passes { enableReviewer: false, model: 'gemini-4-hydrogen' }
     fireEvent.click(screen.getByText('Generate Code'));
-    expect(onRegenerate).toHaveBeenCalledWith({ enableReviewer: false });
+    expect(onRegenerate).toHaveBeenCalledWith({
+      enableReviewer: false,
+      model: 'gemini-4-hydrogen',
+    });
 
-    // Toggling the AI Reviewer switch on updates state and passes { enableReviewer: true }
+    // Toggling the AI Reviewer switch on updates state and passes { enableReviewer: true, model: 'gemini-4-hydrogen' }
     fireEvent.click(reviewerToggle);
     expect(setEnableReviewer).toHaveBeenCalledWith(true);
     expect(reviewerToggle.checked).toBe(true);
 
     fireEvent.click(screen.getByText('Generate Code'));
-    expect(onRegenerate).toHaveBeenLastCalledWith({ enableReviewer: true });
+    expect(onRegenerate).toHaveBeenLastCalledWith({
+      enableReviewer: true,
+      model: 'gemini-4-hydrogen',
+    });
   });
 
   it('respects controlled enableReviewer value from BottomPanelContext and disables toggle while generating (G12)', () => {
@@ -118,7 +124,10 @@ describe('SourceCodeTab & GeneratorSettings', () => {
     expect(reviewerToggle.checked).toBe(true);
 
     fireEvent.click(screen.getByText('Generate Code'));
-    expect(onRegenerate).toHaveBeenCalledWith({ enableReviewer: true });
+    expect(onRegenerate).toHaveBeenCalledWith({
+      enableReviewer: true,
+      model: 'gemini-4-hydrogen',
+    });
 
     // Re-render with isGenerating: true -> toggle should be disabled
     rerenderWithContext(<SourceCodeTab />, {
@@ -269,7 +278,287 @@ describe('SourceCodeTab & GeneratorSettings', () => {
     renderWithBottomPanel(<SourceCodeTab />, mockProps);
 
     fireEvent.click(screen.getByText('Generate Code'));
-    expect(mockProps.onRegenerate).toHaveBeenCalledWith({ enableReviewer: false });
+    expect(mockProps.onRegenerate).toHaveBeenCalledWith({
+      enableReviewer: false,
+      model: 'gemini-4-hydrogen',
+    });
+  });
+
+  describe('Phase 14 Dynamic Codegen Model Selector & Active Badge (MOD1)', () => {
+    const vsWindow = window as unknown as {
+      vscode?: { postMessage: ReturnType<typeof vi.fn> };
+    };
+
+    it('populates codegen-model-select from codegenModelsLoaded, auto-selects Flash default, updates active-model-badge, and forwards model to onRegenerate', () => {
+      const mockPostMessage = vi.fn();
+      vsWindow.vscode = { postMessage: mockPostMessage };
+      const onRegenerate = vi.fn();
+      const setSelectedModel = vi.fn();
+
+      try {
+        renderWithBottomPanel(<SourceCodeTab />, {
+          ...mockProps,
+          projectId: 'my-gcp-project',
+          onRegenerate,
+          setSelectedModel,
+        });
+
+        // Initial mount sends getCodegenModels with valid projectId and displays fallback gemini-4-hydrogen
+        expect(mockPostMessage).toHaveBeenCalledTimes(1);
+        expect(mockPostMessage).toHaveBeenCalledWith({
+          command: 'getCodegenModels',
+          projectId: 'my-gcp-project',
+        });
+
+        const modelSelect = screen.getByLabelText(/CODEGEN MODEL/i) as HTMLSelectElement;
+        expect(modelSelect).toBe(screen.getByTestId('codegen-model-select'));
+        expect(modelSelect.value).toBe('gemini-4-hydrogen');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-4-hydrogen',
+        );
+
+        // Host responds with ranked catalog where a newer Flash release gemini-4.1-flash leads gemini-4-hydrogen and gemini-3.8-flash
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                command: 'codegenModelsLoaded',
+                models: [
+                  {
+                    id: 'gemini-4.1-flash',
+                    displayName: 'Gemini 4.1 Flash',
+                    tier: 'flash',
+                    version: '4.1',
+                    isDefault: true,
+                  },
+                  {
+                    id: 'gemini-4-hydrogen',
+                    displayName: 'Gemini 4 Hydrogen',
+                    tier: 'flash',
+                    version: '4.0',
+                  },
+                  {
+                    id: 'gemini-3.8-flash',
+                    displayName: 'Gemini 3.8 Flash',
+                    tier: 'flash',
+                    version: '3.8',
+                  },
+                  {
+                    id: 'gemini-4-carbon',
+                    displayName: 'Gemini 4 Carbon',
+                    tier: 'pro',
+                    version: '4.0',
+                  },
+                ],
+                requestParams: { projectId: 'my-gcp-project' },
+              },
+            }),
+          );
+        });
+
+        expect(modelSelect.value).toBe('gemini-4.1-flash');
+        expect(setSelectedModel).toHaveBeenCalledWith('gemini-4.1-flash');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-4.1-flash',
+        );
+        expect(
+          screen.getByRole('option', { name: 'Gemini 4.1 Flash (gemini-4.1-flash)' }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole('option', { name: 'Gemini 4 Hydrogen (gemini-4-hydrogen)' }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole('option', { name: 'Gemini 4 Carbon (gemini-4-carbon)' }),
+        ).toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Generate Code'));
+        expect(onRegenerate).toHaveBeenCalledWith({
+          enableReviewer: false,
+          model: 'gemini-4.1-flash',
+        });
+      } finally {
+        delete vsWindow.vscode;
+      }
+    });
+
+    it('preserves manual user model choice across Refresh and falls back to Flash default only when removed from catalog', () => {
+      const mockPostMessage = vi.fn();
+      vsWindow.vscode = { postMessage: mockPostMessage };
+      const onRegenerate = vi.fn();
+
+      try {
+        renderWithBottomPanel(<SourceCodeTab />, {
+          ...mockProps,
+          projectId: 'YOUR_PROJECT_ID',
+          onRegenerate,
+        });
+
+        // Placeholder YOUR_PROJECT_ID is omitted from getCodegenModels
+        expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getCodegenModels' });
+
+        const fullCatalog = [
+          {
+            id: 'gemini-4-hydrogen',
+            displayName: 'Gemini 4 Hydrogen',
+            tier: 'flash' as const,
+            version: '4.0',
+            isDefault: true,
+          },
+          {
+            id: 'gemini-3.8-flash',
+            displayName: 'Gemini 3.8 Flash',
+            tier: 'flash' as const,
+            version: '3.8',
+          },
+          {
+            id: 'gemini-4-carbon',
+            displayName: 'Gemini 4 Carbon',
+            tier: 'pro' as const,
+            version: '4.0',
+          },
+        ];
+
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                command: 'codegenModelsLoaded',
+                models: fullCatalog,
+              },
+            }),
+          );
+        });
+
+        const modelSelect = screen.getByTestId('codegen-model-select') as HTMLSelectElement;
+        expect(modelSelect.value).toBe('gemini-4-hydrogen');
+
+        // User manually selects gemini-3.8-flash, then switches to gemini-4-carbon
+        fireEvent.change(modelSelect, { target: { value: 'gemini-3.8-flash' } });
+        expect(modelSelect.value).toBe('gemini-3.8-flash');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-3.8-flash',
+        );
+
+        fireEvent.change(modelSelect, { target: { value: 'gemini-4-carbon' } });
+        expect(modelSelect.value).toBe('gemini-4-carbon');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-4-carbon',
+        );
+
+        // User clicks Refresh models button
+        mockPostMessage.mockClear();
+        const refreshBtn = screen.getByTestId('refresh-codegen-models-btn');
+        fireEvent.click(refreshBtn);
+        expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getCodegenModels' });
+
+        // Refreshed catalog still contains gemini-4-carbon -> manual selection is preserved
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                command: 'codegenModelsLoaded',
+                models: fullCatalog,
+              },
+            }),
+          );
+        });
+
+        expect(modelSelect.value).toBe('gemini-4-carbon');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-4-carbon',
+        );
+
+        fireEvent.click(screen.getByText('Generate Code'));
+        expect(onRegenerate).toHaveBeenCalledWith({
+          enableReviewer: false,
+          model: 'gemini-4-carbon',
+        });
+
+        // If a subsequent refresh removes gemini-4-carbon, selector falls back to Flash default
+        fireEvent.click(refreshBtn);
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                command: 'codegenModelsLoaded',
+                models: fullCatalog.slice(0, 2),
+              },
+            }),
+          );
+        });
+
+        expect(modelSelect.value).toBe('gemini-4-hydrogen');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-4-hydrogen',
+        );
+      } finally {
+        delete vsWindow.vscode;
+      }
+    });
+
+    it('keeps offline fallback gemini-4-hydrogen active and renders inline warning when discovery fails', () => {
+      const mockPostMessage = vi.fn();
+      vsWindow.vscode = { postMessage: mockPostMessage };
+      const onRegenerate = vi.fn();
+
+      try {
+        renderWithBottomPanel(<SourceCodeTab />, {
+          ...mockProps,
+          onRegenerate,
+        });
+
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                command: 'codegenModelsLoaded',
+                models: [],
+                error: 'Vertex AI model listing unavailable offline',
+              },
+            }),
+          );
+        });
+
+        const modelSelect = screen.getByTestId('codegen-model-select') as HTMLSelectElement;
+        expect(modelSelect.value).toBe('gemini-4-hydrogen');
+        expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+          'Model: gemini-4-hydrogen',
+        );
+        expect(screen.getByTestId('codegen-models-error')).toHaveTextContent(
+          'Vertex AI model listing unavailable offline',
+        );
+
+        fireEvent.click(screen.getByText('Generate Code'));
+        expect(onRegenerate).toHaveBeenCalledWith({
+          enableReviewer: false,
+          model: 'gemini-4-hydrogen',
+        });
+      } finally {
+        delete vsWindow.vscode;
+      }
+    });
+
+    it('preserves a controlled selectedModel not yet in catalog options', () => {
+      renderWithBottomPanel(<SourceCodeTab />, {
+        ...mockProps,
+        selectedModel: 'gemini-4-experimental',
+        models: [
+          {
+            id: 'gemini-4-hydrogen',
+            displayName: 'Gemini 4 Hydrogen',
+            tier: 'flash',
+            version: '4.0',
+            isDefault: true,
+          },
+        ],
+      });
+
+      const modelSelect = screen.getByTestId('codegen-model-select') as HTMLSelectElement;
+      expect(modelSelect.value).toBe('gemini-4-experimental');
+      expect(screen.getByTestId('active-model-badge')).toHaveTextContent(
+        'Model: gemini-4-experimental',
+      );
+    });
   });
 
   it('calls onSelectFile when clicking a file from the list', () => {

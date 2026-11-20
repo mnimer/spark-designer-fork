@@ -35,6 +35,7 @@ import {
   BottomPanelProvider,
   type BottomPanelContextValue,
 } from './components/BottomPanel/BottomPanelContext';
+import { DEFAULT_CODEGEN_MODEL } from './components/BottomPanel/SourceCodeTab';
 
 import { usePipelinePersistence } from './hooks/usePipelinePersistence';
 import { usePipelineGraph, type PipelineNodeData } from './hooks/usePipelineGraph';
@@ -541,6 +542,7 @@ function App() {
 
   const [useSdkForUnsupportedNodes, setUseSdkForUnsupportedNodes] = useState(false);
   const [enableReviewer, setEnableReviewer] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_CODEGEN_MODEL);
 
   const isCodegenValid = dagValidation.isValid;
   const combinedValidationErrors = useMemo(
@@ -548,7 +550,7 @@ function App() {
     [dagValidation.errors]
   );
 
-  const handleRegenerate = useCallback((options?: { enableReviewer?: boolean }) => {
+  const handleRegenerate = useCallback((options?: { enableReviewer?: boolean; model?: string }) => {
     if (!isCodegenValid) {
       console.warn('Blocked regenerateCode: validation failed', combinedValidationErrors);
       return;
@@ -572,16 +574,18 @@ function App() {
     });
     const resolvedEnableReviewer =
       typeof options?.enableReviewer === 'boolean' ? options.enableReviewer : enableReviewer;
+    const resolvedModel = options?.model?.trim() || selectedModel || DEFAULT_CODEGEN_MODEL;
     ipcRegenerate({
       nodes,
       edges,
       runtimeVariables,
       jobConfig: effectiveJobConfig,
       enableReviewer: resolvedEnableReviewer,
+      model: resolvedModel,
     });
-  }, [ipcRegenerate, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, activeParadigm, isCodegenValid, combinedValidationErrors, lastSavedYamlRef, serializePipeline, enableReviewer]);
+  }, [ipcRegenerate, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, activeParadigm, isCodegenValid, combinedValidationErrors, lastSavedYamlRef, serializePipeline, enableReviewer, selectedModel]);
 
-  // Resize state for Bottom Panel (minimized to 40px tab header by default; expands to 80% on tab click or toggle)
+  // Resize state for Bottom Panel (minimized to 40px tab header by default and expands to 80% on tab click or toggle)
   const [isBottomPanelExpanded, setIsBottomPanelExpanded] = useState(false);
   const [hasCustomBottomPanelHeight, setHasCustomBottomPanelHeight] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -759,6 +763,8 @@ function App() {
         setUseSdkForUnsupportedNodes,
         enableReviewer,
         setEnableReviewer,
+        selectedModel,
+        setSelectedModel,
       },
     }),
     [
@@ -797,6 +803,7 @@ function App() {
       tokenUsage,
       useSdkForUnsupportedNodes,
       enableReviewer,
+      selectedModel,
     ]
   );
 

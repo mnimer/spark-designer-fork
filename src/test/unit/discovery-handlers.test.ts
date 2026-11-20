@@ -34,8 +34,18 @@ vi.mock('child_process', () => {
     };
 });
 
+vi.mock('../../codegen/modelDiscovery', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../codegen/modelDiscovery')>();
+    return {
+        ...actual,
+        discoverCodegenModels: vi.fn(actual.discoverCodegenModels),
+    };
+});
+
+import { DEFAULT_GEMINI_MODEL } from '../../constants';
 import {
     MessageContext,
+    handleMessages,
     handleGetBigtableInstances,
     handleGetBigtableTables,
     handleGetSqlInstances,
@@ -49,6 +59,7 @@ import {
     handleGetStorageBuckets,
     handleGetSubnetworks,
     handleGetRegions,
+    handleGetCodegenModels,
     handleGetSecrets,
     fetchDataprocClusters,
     fetchSessionTemplates,
@@ -60,6 +71,9 @@ import {
     fetchSubnetworks,
     fetchRegions,
     fetchSecrets,
+    fetchCodegenModels,
+    discoverCodegenModels,
+    createDefaultCodegenModelOption,
     mapDataprocClusters,
     mapSessionTemplates,
     mapBigLakeCatalogs,
@@ -236,6 +250,7 @@ describe('Phase 4 Live GCP Asset Discovery (D1–D6)', () => {
         expect(fetchSubnetworks).toBe(handleGetSubnetworks);
         expect(fetchRegions).toBe(handleGetRegions);
         expect(fetchSecrets).toBe(handleGetSecrets);
+        expect(fetchCodegenModels).toBe(handleGetCodegenModels);
     });
 
     describe('D1 — fetchDataprocClusters / handleGetDataprocClusters', () => {
@@ -611,6 +626,132 @@ describe('Phase 4 Live GCP Asset Discovery (D1–D6)', () => {
                             value: 'aws-secret-key',
                         },
                     ],
+                })
+            );
+        });
+    });
+
+    describe('MOD1 — fetchCodegenModels / handleGetCodegenModels', () => {
+        it('forwards a validated projectId and posts ranked models and defaultModel', async () => {
+            const rankedModels = [
+                {
+                    id: DEFAULT_GEMINI_MODEL,
+                    displayName: 'Gemini 4 Hydrogen',
+                    tier: 'flash' as const,
+                    version: '4.0',
+                    isDefault: true,
+                },
+                {
+                    id: 'gemini-3.8-flash',
+                    displayName: 'Gemini 3.8 Flash',
+                    tier: 'flash' as const,
+                    version: '3.8',
+                },
+            ];
+            vi.mocked(discoverCodegenModels).mockResolvedValueOnce({
+                models: rankedModels,
+                defaultModel: DEFAULT_GEMINI_MODEL,
+                source: 'vertexai',
+            });
+            const { ctx, posted } = makeCtx();
+
+            await fetchCodegenModels(ctx, {
+                command: 'getCodegenModels',
+                projectId: '  my-spark-proj  ',
+            });
+
+            expect(discoverCodegenModels).toHaveBeenCalledWith({
+                projectId: 'my-spark-proj',
+            });
+            expect(posted).toEqual([
+                {
+                    command: 'codegenModelsLoaded',
+                    models: rankedModels,
+                    defaultModel: 'gemini-4-hydrogen',
+                    source: 'vertexai',
+                },
+            ]);
+        });
+
+        it('ignores placeholder, blank, and invalid projectId values before discovery', async () => {
+            for (const rawProjectId of ['YOUR_PROJECT_ID', '   ', 'bad;proj`id', 42]) {
+                vi.mocked(discoverCodegenModels).mockResolvedValueOnce({
+                    models: [createDefaultCodegenModelOption()],
+                    defaultModel: DEFAULT_GEMINI_MODEL,
+                    source: 'vertexai',
+                });
+                const { ctx, posted } = makeCtx();
+
+                await handleGetCodegenModels(ctx, {
+                    command: 'getCodegenModels',
+                    projectId: rawProjectId,
+                });
+
+                expect(discoverCodegenModels).toHaveBeenLastCalledWith({
+                    projectId: undefined,
+                });
+                expect(posted[0]).toEqual(
+                    expect.objectContaining({
+                        command: 'codegenModelsLoaded',
+                        defaultModel: DEFAULT_GEMINI_MODEL,
+                    })
+                );
+            }
+        });
+
+        it('returns offline DEFAULT_GEMINI_MODEL fallback and debugLog warning when offline or empty', async () => {
+            vi.mocked(discoverCodegenModels).mockResolvedValueOnce({
+                models: [],
+                defaultModel: DEFAULT_GEMINI_MODEL,
+                source: 'fallback',
+                warning: 'Offline catalog fallback activated.',
+            });
+            const { ctx, posted } = makeCtx();
+
+            await handleGetCodegenModels(ctx, { command: 'getCodegenModels' });
+
+            expect(posted).toEqual([
+                {
+                    command: 'codegenModelsLoaded',
+                    models: [
+                        {
+                            id: 'gemini-4-hydrogen',
+                            displayName: 'Gemini 4 Hydrogen',
+                            tier: 'flash',
+                            version: '4.0',
+                            isDefault: true,
+                        },
+                    ],
+                    defaultModel: 'gemini-4-hydrogen',
+                    source: 'fallback',
+                    debugLog: 'Offline catalog fallback activated.',
+                },
+            ]);
+        });
+
+        it('echoes requestParams when dispatched through handleMessages (F11 correlation)', async () => {
+            vi.mocked(discoverCodegenModels).mockResolvedValueOnce({
+                models: [createDefaultCodegenModelOption()],
+                defaultModel: DEFAULT_GEMINI_MODEL,
+                source: 'vertexai',
+            });
+            const posted: Posted[] = [];
+            const mockWebview = {
+                postMessage: vi.fn((msg: Posted) => {
+                    posted.push(msg);
+                    return true;
+                }),
+                onDidReceiveMessage: vi.fn(),
+            };
+            const dispatch = handleMessages(mockWebview as never, { subscriptions: [] } as never);
+
+            await dispatch({ command: 'getCodegenModels', projectId: 'my-spark-proj' });
+
+            expect(posted).toHaveLength(1);
+            expect(posted[0]).toEqual(
+                expect.objectContaining({
+                    command: 'codegenModelsLoaded',
+                    requestParams: { projectId: 'my-spark-proj' },
                 })
             );
         });

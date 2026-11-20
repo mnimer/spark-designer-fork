@@ -16,7 +16,7 @@
 
 import type { LogStream, SamplePipeline, TokenUsage } from './types';
 
-/** Every command the webview may send to the host; mirrors the host's MESSAGE_HANDLERS registry. */
+/** Every command the webview may send to the host, mirroring the host MESSAGE_HANDLERS registry. */
 export const WEBVIEW_TO_HOST_COMMANDS = [
     'getDatasets',
     'getTables',
@@ -38,6 +38,7 @@ export const WEBVIEW_TO_HOST_COMMANDS = [
     'getSessionTemplates',
     'getBigLakeCatalogs',
     'getRegions',
+    'getCodegenModels',
     'ready',
     'getSamples',
     'openSample',
@@ -87,7 +88,8 @@ export type AssetResponseCommand =
     | 'dataprocClustersLoaded'
     | 'sessionTemplatesLoaded'
     | 'bigLakeCatalogsLoaded'
-    | 'regionsLoaded';
+    | 'regionsLoaded'
+    | 'codegenModelsLoaded';
 
 /**
  * Result of an asset lookup. The item array lives under a per-command key
@@ -95,7 +97,7 @@ export type AssetResponseCommand =
  */
 export interface AssetListResponse {
     command: AssetResponseCommand;
-    /** Human-readable failure reason; absent on success. */
+    /** Human-readable failure reason, absent on success. */
     error?: string;
     /** CLI command line and raw error output, for troubleshooting. */
     debugLog?: string;
@@ -132,7 +134,7 @@ export interface LoadPipelineMessage {
  */
 export interface ProjectIdResolvedMessage {
     command: 'projectIdResolved';
-    /** Project ID from `gcloud config get-value project`; undefined when gcloud is unavailable or unset. */
+    /** Project ID from `gcloud config get-value project`, or undefined when gcloud is unavailable or unset. */
     projectId?: string;
 }
 
@@ -148,6 +150,8 @@ export interface CodeRegeneratedMessage {
     success: boolean;
     /** Generated main source, on success. */
     code?: string;
+    /** Gemini model used for generation, on success. */
+    model?: string;
     /** Token accounting reported by Gemini, on success. */
     tokenUsage?: TokenUsage;
     /** True when the user stopped generation. */

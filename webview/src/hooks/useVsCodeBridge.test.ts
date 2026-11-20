@@ -1272,6 +1272,54 @@ pipelineConfig:
       })
     );
   });
+
+  it('forwards selected model and enableReviewer in regenerateCode payload (MOD1)', () => {
+    const postMessage = vi.fn();
+    const { result } = renderHook(() =>
+      useVsCodeBridge({
+        setNodes: vi.fn(),
+        setEdges: vi.fn(),
+        setRuntimeVariables: vi.fn(),
+        setJobConfig: vi.fn(),
+        pipelineConfig: {
+          language: 'Python',
+          outputFolder: 'out/etl',
+          needsRebuild: false,
+          paradigm: 'imperative',
+        },
+        setPipelineConfig: vi.fn(),
+        filename: 'etl.spark',
+        setFilename: vi.fn(),
+        projectId: 'proj',
+        setProjectId: vi.fn(),
+        vscode: { postMessage },
+      })
+    );
+
+    postMessage.mockClear();
+    act(() => {
+      result.current.handleRegenerate({
+        nodes: [],
+        edges: [],
+        runtimeVariables: [],
+        jobConfig: { runner: 'Local' },
+        enableReviewer: true,
+        model: '  gemini-4-hydrogen  ',
+      });
+    });
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'regenerateCode',
+        filename: 'etl.spark',
+        language: 'Python',
+        outputFolder: 'out/etl',
+        enableReviewer: true,
+        model: 'gemini-4-hydrogen',
+      })
+    );
+  });
 });
+
 
 

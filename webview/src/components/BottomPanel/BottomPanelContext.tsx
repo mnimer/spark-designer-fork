@@ -16,6 +16,7 @@ import React, { createContext, useContext } from 'react';
 import type { LogEntry } from './DeploymentTab';
 import type { TokenUsage } from './SourceCodeTab';
 import type { DataprocClusterOption, SessionTemplateOption } from './deployment/AdvancedConfig';
+import type { CodegenModelOption } from '../../utils/sharedTypes';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -75,7 +76,7 @@ export interface BottomPanelPipelineConfigSlice {
  */
 export interface BottomPanelCodegenSlice {
   generatedCode: string;
-  regenerate: (options?: { enableReviewer?: boolean }) => void;
+  regenerate: (options?: { enableReviewer?: boolean; model?: string }) => void;
   stopGeneration?: () => void;
   isGenerating?: boolean;
   /** Latest progress text of a long generation run (for example the optional reviewer). */
@@ -101,6 +102,18 @@ export interface BottomPanelCodegenSlice {
   enableReviewer?: boolean;
   /** Toggles `enableReviewer`. */
   setEnableReviewer?: (value: boolean) => void;
+  /** Active Gemini model identifier selected for code generation. */
+  selectedModel?: string;
+  /** Updates the active Gemini model identifier. */
+  setSelectedModel?: (model: string) => void;
+  /** Discovered Gemini code generation model catalog options. */
+  models?: CodegenModelOption[];
+  /** Whether Gemini model catalog discovery is currently loading. */
+  modelsLoading?: boolean;
+  /** Error message when Gemini model catalog discovery fails. */
+  modelsError?: string | null;
+  /** Manually refreshes the Gemini model catalog from the host. */
+  refreshModels?: () => void;
 }
 
 /**

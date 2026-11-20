@@ -200,7 +200,10 @@ The Apache Spark Pipeline Designer provides a high-contrast visual IDE for autho
     - **Reset Protection (`pipelines.reset.allowed`)**: Toggle (`sdpResetAllowed`) emitting `table_properties={"pipelines.reset.allowed": "false"}` for streaming catalog tables, accompanied by guidance on `INVALID_RESETTABLE_DEPENDENCY` and external sink reset limits.
 
 ### 5. Bottom Panel (`SourceCodeTab` & `DeploymentTab`)
-- **Source Code Tab**: Displays output directory controls, optional `AI Code Reviewer Pass` toggle, `GENERATE CODE` CTA, live `codeGenerationProgress` line, and syntax-highlighted file tabs (`src/pipeline.py` or `spark-pipeline.yml` + `transformations/*.py`).
+- **Source Code Tab**:
+  - **Generator Settings (`GeneratorSettings`)**: Displays the `PySpark (Spark 4.x)` runtime badge, output directory controls, optional `AI Code Reviewer Pass` toggle, and `GENERATE CODE` CTA.
+  - **Codegen Model Selector & Refresh**: Renders the `CODEGEN MODEL` dropdown (`data-testid="codegen-model-select"`) and refresh button (`data-testid="refresh-codegen-models-btn"`) inside `GeneratorSettings`. Populates options via `useAssetLoader('codegenModels')` and defaults to the latest Flash-class Gemini model, with `gemini-4-hydrogen` as the offline fallback. If a user manually selects a model, refreshing preserves that selection while it remains available.
+  - **Code Preview & Active Model Badge**: Renders syntax-highlighted file tabs (`src/pipeline.py` or `spark-pipeline.yml` + `transformations/*.py`), live `codeGenerationProgress` status, and the header badge (`data-testid="active-model-badge"`) displaying `Model: <selectedModel>`.
 - **Deployment Tab**:
   - **Imperative Mode**: Runner picker (`Local`, `DataprocCluster`, `ServerlessSpark`), Spark 4.x runtime version selector, `standard` tier default, `checkpointRoot`, `defaultTriggerType`, `RUN NOW` CTA, and execution terminal.
   - **SDP Mode (`SdpSettingsPanel` & `SdpRefreshControls`)**:

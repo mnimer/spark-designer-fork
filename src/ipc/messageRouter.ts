@@ -31,6 +31,7 @@ import {
     handleGetSessionTemplates,
     handleGetBigLakeCatalogs,
     handleGetRegions,
+    handleGetCodegenModels,
     handleGetRunningJobs,
 } from './handlers/discoveryHandlers';
 import {
@@ -75,6 +76,7 @@ export const MESSAGE_HANDLERS: Record<string, MessageHandler> = {
     getSessionTemplates: handleGetSessionTemplates,
     getBigLakeCatalogs: handleGetBigLakeCatalogs,
     getRegions: handleGetRegions,
+    getCodegenModels: handleGetCodegenModels,
     ready: handleReady,
     getSamples: handleGetSamples,
     openSample: handleOpenSample,
@@ -117,6 +119,7 @@ export const ASSET_REQUEST_COMMANDS: ReadonlySet<string> = new Set([
     'getSessionTemplates',
     'getBigLakeCatalogs',
     'getRegions',
+    'getCodegenModels',
 ]);
 
 /**

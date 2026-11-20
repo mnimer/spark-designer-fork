@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import React, { useState } from 'react';
 import { useAssetLoader } from './useAssetLoader';
+import type { CodegenModelOption } from '../utils/sharedTypes';
 
 describe('useAssetLoader', () => {
   const mockPostMessage = vi.fn();
@@ -411,5 +412,59 @@ describe('useAssetLoader', () => {
       }
     );
   });
+
+  describe('Phase 14 Dynamic Codegen Model Discovery (MOD1)', () => {
+    it('requests getCodegenModels and populates CodegenModelOption items on codegenModelsLoaded', () => {
+      const TestComponent = () => {
+        const { items, loading, error } = useAssetLoader<CodegenModelOption>('codegenModels', {
+          params: { projectId: 'my-vertex-project' },
+        });
+        return (
+          <div>
+            <span data-testid="loading">{String(loading)}</span>
+            <span data-testid="error">{error || 'none'}</span>
+            <ul data-testid="models">
+              {items.map((m) => (
+                <li key={m.id}>{`${m.displayName}:${m.tier}:${String(Boolean(m.isDefault))}`}</li>
+              ))}
+            </ul>
+          </div>
+        );
+      };
+
+      render(<TestComponent />);
+      expect(mockPostMessage).toHaveBeenCalledWith({
+        command: 'getCodegenModels',
+        projectId: 'my-vertex-project',
+      });
+      expect(screen.getByTestId('loading')).toHaveTextContent('true');
+
+      dispatch({
+        command: 'codegenModelsLoaded',
+        models: [
+          {
+            id: 'gemini-4-hydrogen',
+            displayName: 'Gemini 4 Hydrogen',
+            tier: 'flash',
+            version: '4.0',
+            isDefault: true,
+          },
+          {
+            id: 'gemini-3.8-flash',
+            displayName: 'Gemini 3.8 Flash',
+            tier: 'flash',
+            version: '3.8',
+          },
+        ],
+        requestParams: { projectId: 'my-vertex-project' },
+      });
+
+      expect(screen.getByTestId('loading')).toHaveTextContent('false');
+      expect(screen.getByTestId('error')).toHaveTextContent('none');
+      expect(screen.getByText('Gemini 4 Hydrogen:flash:true')).toBeInTheDocument();
+      expect(screen.getByText('Gemini 3.8 Flash:flash:false')).toBeInTheDocument();
+    });
+  });
 });
+
 

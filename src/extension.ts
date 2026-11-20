@@ -244,6 +244,26 @@ export {
 export function deactivate() { }
 
 export { findLastCompleteFileEndOffset, parseOrRepairJson } from './codegen/jsonRepair';
+export type {
+    CodegenModelOption,
+    CodegenModelTier,
+} from './shared/types';
+export type {
+    DiscoveredCodegenModel,
+    DiscoverCodegenModelsOptions,
+    DiscoverCodegenModelsResult,
+} from './codegen/modelDiscovery';
+export {
+    discoverCodegenModels,
+    filterAndRankCodegenModels,
+    resolveDefaultCodegenModel,
+    resolveSelectedCodegenModel,
+    normalizeGeminiModelId,
+    parseGeminiModelVersion,
+    classifyGeminiModelTier,
+    isSupportedCodegenModel,
+    createDefaultCodegenModelOption,
+} from './codegen/modelDiscovery';
 
 export { findExecutableInPath, resolveCli, findGcloudPath } from './cli/cliResolver';
 export type {
@@ -376,6 +396,7 @@ export {
     handleGetSessionTemplates,
     handleGetBigLakeCatalogs,
     handleGetRegions,
+    handleGetCodegenModels,
     handleGetRunningJobs,
     fetchDataprocClusters,
     fetchSessionTemplates,
@@ -387,6 +408,7 @@ export {
     fetchSubnetworks,
     fetchRegions,
     fetchSecrets,
+    fetchCodegenModels,
 } from './ipc/handlers/discoveryHandlers';
 export {
     handleReady,

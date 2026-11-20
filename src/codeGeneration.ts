@@ -46,6 +46,7 @@ import {
 import { parseOrRepairJson } from './codegen/jsonRepair';
 import { buildPromptFromPipelineYaml, PipelinePrompt } from './codegen/CodegenPromptBuilder';
 import { CODEGEN_MODEL_SETTINGS, CODEGEN_RESOURCE_PATHS, buildCodegenModelConfig } from './codegen/codegenConfig';
+import { resolveSelectedCodegenModel } from './codegen/modelDiscovery';
 import { isReviewerEnabled, runReviewerPass } from './codegen/reviewerPass';
 import { getGcloudProject } from './cli/gcloudClient';
 import {
@@ -320,6 +321,8 @@ export interface ExecuteCodeGenerationOptions {
     enableReviewer?: boolean;
     /** Optional Apache Spark runtime version override. */
     sparkVersion?: string;
+    /** Optional Gemini model identifier override for generation and review. */
+    model?: string;
 }
 
 /** Filename of the per-generation request/response log written into the output folder. */
@@ -507,11 +510,16 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         abortSignal,
         enableReviewer,
         sparkVersion: requestedSparkVersion,
+        model: requestedModel,
     } = options;
 
     let promptText = '';
     let selectedSkills: string[] = [];
+    let activeModelForLog = DEFAULT_GEMINI_MODEL;
     try {
+        const resolvedModel = resolveSelectedCodegenModel(requestedModel);
+        activeModelForLog = resolvedModel;
+
         ensureSystemCaBundle();
 
         const resolveProject = getGcloudProjectFn || getGcloudProject;
@@ -557,12 +565,13 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         for (const warning of built.detection.warnings) {
             outputChannel?.appendLine(`[codegen] Warning: ${warning}`);
         }
+        outputChannel?.appendLine(`[codegen] model: ${resolvedModel}`);
         outputChannel?.appendLine(`[codegen] selected skills (${selectedSkills.length}): ${selectedSkills.join(', ')}`);
 
         const responseSchema = JSON.parse(readResourceFile(context, CODEGEN_RESOURCE_PATHS.responseSchema));
 
         const response = await ai.models.generateContent({
-            model: DEFAULT_GEMINI_MODEL,
+            model: resolvedModel,
             contents: promptText,
             config: { ...buildCodegenModelConfig(responseSchema), abortSignal },
         });
@@ -577,7 +586,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         const logFilePath = path.join(targetFolderPath, GEMINI_LOG_FILENAME);
         const logData: Record<string, unknown> = {
             timestamp: new Date().toISOString(),
-            model: DEFAULT_GEMINI_MODEL,
+            model: resolvedModel,
             selectedSkills,
             prompt: promptText,
             responseSchema: responseSchema,
@@ -628,6 +637,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
                     language,
                     baseName,
                     sparkVersion,
+                    model: resolvedModel,
                     skillsRoot,
                     reviewerTemplate: readResourceFile(context, path.join(CODEGEN_RESOURCE_PATHS.promptsDir, CODEGEN_RESOURCE_PATHS.reviewerPrompt)),
                     fixTemplate: readResourceFile(context, path.join(CODEGEN_RESOURCE_PATHS.promptsDir, CODEGEN_RESOURCE_PATHS.fixPrompt)),
@@ -837,7 +847,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
             const logFilePath = path.join(targetFolderPath, GEMINI_LOG_FILENAME);
             const logData = {
                 timestamp: new Date().toISOString(),
-                model: DEFAULT_GEMINI_MODEL,
+                model: activeModelForLog,
                 selectedSkills,
                 prompt: promptText,
                 error: cancelled ? 'Cancelled by user.' : err.message,
@@ -1008,14 +1018,19 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
     // A wrong-language generation is destructive -- it overwrites the previous project's
     // build files -- so the language in effect must be visible BEFORE the model is called,
     // not inferred afterwards from whatever landed on disk.
+    const requestedModel =
+        typeof message.model === 'string' && message.model.trim()
+            ? message.model.trim()
+            : undefined;
+    const modelLabel = requestedModel ?? DEFAULT_GEMINI_MODEL;
     const resolvedLanguage = resolveLanguageStrategy(languageVal).langSubfolder === 'java' ? 'Java' : 'Python';
     outputChannel?.appendLine(
-        `[codegen] target language: ${resolvedLanguage} (requested: ${JSON.stringify(languageVal)}) -> ${targetFolderPath}`
+        `[codegen] target language: ${resolvedLanguage} (requested: ${JSON.stringify(languageVal)}), model: ${modelLabel} -> ${targetFolderPath}`
     );
 
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `Generating ${resolvedLanguage} code using Gemini...`,
+        title: `Generating ${resolvedLanguage} code using Gemini (${modelLabel})...`,
         cancellable: true,
     }, async (_progress, token) => {
         // Merge the two cancellation sources (webview Stop button and the notification's
@@ -1042,6 +1057,7 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
                 abortSignal: controller.signal,
                 enableReviewer: typeof message.enableReviewer === 'boolean' ? message.enableReviewer : undefined,
                 sparkVersion: typeof message.sparkVersion === 'string' ? message.sparkVersion : undefined,
+                model: requestedModel,
             });
         } finally {
             abortSignal?.removeEventListener('abort', abort);

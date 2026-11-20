@@ -19,7 +19,6 @@
  * - The model client is a narrow interface (`ReviewerModelClient`), so tests inject a fake.
  */
 
-import { DEFAULT_GEMINI_MODEL } from '../constants';
 import type { SupportedLanguage } from '../shared/types';
 import { buildPromptFromPipelineYaml } from './CodegenPromptBuilder';
 import { ReviewOutcome, REVIEW_REPORT_SCHEMA, reviewAndFix } from './CodeReviewer';
@@ -30,6 +29,7 @@ import {
     SKILL_CALLERS,
     toSkillLanguage,
 } from './codegenConfig';
+import { resolveSelectedCodegenModel } from './modelDiscovery';
 import { GeneratedFile, ReadOnlyCheckRunner } from './ReadOnlyCheckRunner';
 
 /** The one SDK method that the reviewer needs (subset of `GoogleGenAI.models`). */
@@ -75,6 +75,8 @@ export interface ReviewerPassOptions {
     abortSignal?: AbortSignal;
     /** Check runner (tests inject one with a fake executor). */
     checkRunner?: ReadOnlyCheckRunner;
+    /** Optional Gemini model identifier override for review and fix passes. */
+    model?: string;
 }
 
 /**
@@ -100,6 +102,7 @@ export function isReviewerEnabled(
  * @returns The review outcome (files, reports, unresolved findings, error).
  */
 export async function runReviewerPass(options: ReviewerPassOptions): Promise<ReviewOutcome> {
+    const resolvedModel = resolveSelectedCodegenModel(options.model);
     // 1. Reviewer context: the reviewer-selected skills with the pipeline YAML.
     const { sparkVersion: explicitSparkVersion, beamVersion: legacyRuntimeVersion } = options;
     const reviewerPrompt = buildPromptFromPipelineYaml({
@@ -120,7 +123,7 @@ export async function runReviewerPass(options: ReviewerPassOptions): Promise<Rev
      */
     const call = async (prompt: string, schema: unknown): Promise<string> => {
         const response = await options.ai.models.generateContent({
-            model: DEFAULT_GEMINI_MODEL,
+            model: resolvedModel,
             contents: prompt,
             config: { ...buildCodegenModelConfig(schema), abortSignal: options.abortSignal },
         });

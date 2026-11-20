@@ -186,3 +186,27 @@ export interface SdpJobConfigFields {
     /** True when standalone runners execute CREATE NAMESPACE IF NOT EXISTS before running. */
     sdpCreateNamespace?: boolean;
 }
+
+/**
+ * Tier classification for dynamically discovered Gemini code-generation models.
+ */
+export type CodegenModelTier = 'flash' | 'pro' | 'flash-lite' | 'other';
+
+/**
+ * Metadata for an available Gemini code-generation model discovered at runtime.
+ */
+export interface CodegenModelOption {
+    /** Short canonical model identifier passed to Gemini (for example 'gemini-4-hydrogen' or 'gemini-3.8-flash'). */
+    id: string;
+    /** Human-readable display label (for example 'Gemini 4 Hydrogen' or 'Gemini 3.8 Flash'). */
+    displayName: string;
+    /** Optional model description from the provider catalog. */
+    description?: string;
+    /** Model tier classification used for Flash-default ranking. */
+    tier: CodegenModelTier;
+    /** Optional parsed version label (for example '4.0' or '3.8'). */
+    version?: string;
+    /** True when this model is the highest-ranked Flash-class default. */
+    isDefault?: boolean;
+}
+

@@ -13,7 +13,7 @@
  *   elements (`tokenize`) to prevent XSS from untrusted model output.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -34,11 +34,28 @@ import { CodeViewer } from './sourceCode/CodeViewer';
 import { FindInFilesBar } from './sourceCode/FindInFilesBar';
 import { tokenize } from './sourceCode/syntaxTokenizer';
 import { useBottomPanel } from './BottomPanelContext';
+import { useAssetLoader } from '../../hooks/useAssetLoader';
+import type { CodegenModelOption } from '../../utils/sharedTypes';
 
 export type { TokenUsage };
 
 /** Default Gemini model displayed in the code preview header badge. */
 export const DEFAULT_CODEGEN_MODEL = 'gemini-4-hydrogen';
+
+/**
+ * Resolves the highest-ranked Flash-class default model ID from discovered catalog options.
+ */
+function resolveDefaultModelFromCatalog(options: CodegenModelOption[]): string {
+  if (options.length === 0) {
+    return DEFAULT_CODEGEN_MODEL;
+  }
+  return (
+    options.find((m) => m.isDefault)?.id ??
+    options.find((m) => m.tier === 'flash')?.id ??
+    options[0]?.id ??
+    DEFAULT_CODEGEN_MODEL
+  );
+}
 
 /**
  * Props for the SourceCodeTab component.
@@ -141,7 +158,7 @@ export const highlightCode = (
  * Renders the code generation settings, vertical generated files list, and single-file code preview pane.
  */
 export const SourceCodeTab: React.FC<SourceCodeTabProps> = ({ highlighter }) => {
-  const { codegen, pipelineConfig } = useBottomPanel();
+  const { codegen, pipelineConfig, jobConfig } = useBottomPanel();
 
   const generatedCode = codegen.generatedCode;
   const language = pipelineConfig.config.language;
@@ -173,6 +190,90 @@ export const SourceCodeTab: React.FC<SourceCodeTabProps> = ({ highlighter }) => 
     setLocalEnableReviewer(enabled);
     codegen.setEnableReviewer?.(enabled);
   };
+
+  // Resolve optional GCP project parameter for Vertex AI model discovery
+  const rawValueProjectId =
+    typeof jobConfig?.value?.projectId === 'string' ? jobConfig.value.projectId.trim() : '';
+  const rawSliceProjectId =
+    typeof jobConfig?.projectId === 'string' ? jobConfig.projectId.trim() : '';
+  const rawProjectId =
+    rawValueProjectId && rawValueProjectId !== 'YOUR_PROJECT_ID'
+      ? rawValueProjectId
+      : rawSliceProjectId;
+  const validProjectParam =
+    rawProjectId && rawProjectId !== 'YOUR_PROJECT_ID'
+      ? { projectId: rawProjectId }
+      : undefined;
+
+  const [localSelectedModel, setLocalSelectedModel] = useState<string | undefined>(undefined);
+  const userSelectedModelRef = useRef<boolean>(false);
+  const currentSelectedModelRef = useRef<string>(
+    codegen.selectedModel?.trim() || DEFAULT_CODEGEN_MODEL,
+  );
+  const setSelectedModelRef = useRef(codegen.setSelectedModel);
+
+  const {
+    items: discoveredModels,
+    loading: discoveredModelsLoading,
+    error: discoveredModelsError,
+    refresh: refreshDiscoveredModels,
+  } = useAssetLoader<CodegenModelOption>('codegenModels', {
+    ...(validProjectParam ? { params: validProjectParam } : {}),
+    enabled: codegen.models === undefined,
+    onLoaded: (loadedItems) => {
+      if (loadedItems.length === 0) {
+        return;
+      }
+      const nextDefault = resolveDefaultModelFromCatalog(loadedItems);
+      const currentModel = currentSelectedModelRef.current;
+      const existsInCatalog = loadedItems.some((m) => m.id === currentModel);
+      if (!userSelectedModelRef.current || !existsInCatalog) {
+        userSelectedModelRef.current = false;
+        currentSelectedModelRef.current = nextDefault;
+        setLocalSelectedModel(nextDefault);
+        setSelectedModelRef.current?.(nextDefault);
+      }
+    },
+  });
+
+  const activeModels = codegen.models ?? discoveredModels;
+  const effectiveModelsLoading =
+    codegen.modelsLoading ?? (codegen.models === undefined ? discoveredModelsLoading : false);
+  const effectiveModelsError =
+    codegen.modelsError !== undefined ? codegen.modelsError : discoveredModelsError;
+
+  const catalogDefaultModel = useMemo(
+    () => resolveDefaultModelFromCatalog(activeModels),
+    [activeModels],
+  );
+
+  const effectiveSelectedModel =
+    (codegen.selectedModel && codegen.selectedModel.trim()) ||
+    localSelectedModel ||
+    catalogDefaultModel;
+
+  useEffect(() => {
+    currentSelectedModelRef.current = effectiveSelectedModel;
+    setSelectedModelRef.current = codegen.setSelectedModel;
+  }, [effectiveSelectedModel, codegen.setSelectedModel]);
+
+  const handleSelectedModelChange = useCallback(
+    (nextModel: string): void => {
+      userSelectedModelRef.current = true;
+      currentSelectedModelRef.current = nextModel;
+      setLocalSelectedModel(nextModel);
+      codegen.setSelectedModel?.(nextModel);
+    },
+    [codegen],
+  );
+
+  const handleRefreshModels = useCallback((): void => {
+    if (codegen.refreshModels) {
+      codegen.refreshModels();
+      return;
+    }
+    refreshDiscoveredModels();
+  }, [codegen, refreshDiscoveredModels]);
 
   const [copied, setCopied] = useState(false);
   const [isFindOpen, setIsFindOpen] = useState(false);
@@ -314,6 +415,12 @@ export const SourceCodeTab: React.FC<SourceCodeTabProps> = ({ highlighter }) => 
         onEnableReviewerChange={handleEnableReviewerChange}
         packageDisplayName={packageDisplayName}
         tokenUsage={tokenUsage}
+        selectedModel={effectiveSelectedModel}
+        onSelectedModelChange={handleSelectedModelChange}
+        models={activeModels}
+        modelsLoading={effectiveModelsLoading}
+        modelsError={effectiveModelsError}
+        onRefreshModels={handleRefreshModels}
       />
 
       {/* Right Column: File List Sidebar & Single-File Code Preview */}
@@ -393,7 +500,7 @@ export const SourceCodeTab: React.FC<SourceCodeTabProps> = ({ highlighter }) => 
                   data-testid="active-model-badge"
                   className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-950/60 border border-blue-800/50 text-blue-300 shrink-0"
                 >
-                  Model: {DEFAULT_CODEGEN_MODEL}
+                  Model: {effectiveSelectedModel}
                 </span>
               </div>
 

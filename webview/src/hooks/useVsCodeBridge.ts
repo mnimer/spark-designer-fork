@@ -246,7 +246,7 @@ export function useVsCodeBridge({
     }
   }, []);
 
-  const handleRegenerate = useCallback((graphState: { nodes: any[]; edges: any[]; runtimeVariables: any[]; jobConfig: any; enableReviewer?: boolean }) => {
+  const handleRegenerate = useCallback((graphState: { nodes: any[]; edges: any[]; runtimeVariables: any[]; jobConfig: any; enableReviewer?: boolean; model?: string }) => {
     const vs = vsCodeRef.current;
     if (vs) {
       setIsGenerating(true);
@@ -271,6 +271,7 @@ export function useVsCodeBridge({
         language: pipelineConfigRef.current.language,
         outputFolder: pipelineConfigRef.current.outputFolder,
         ...(typeof graphState.enableReviewer === 'boolean' ? { enableReviewer: graphState.enableReviewer } : {}),
+        ...(typeof graphState.model === 'string' && graphState.model.trim() ? { model: graphState.model.trim() } : {}),
       });
     }
   }, []);

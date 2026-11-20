@@ -15,7 +15,7 @@ The Apache Spark / Managed Spark Pipeline Builder is a visual VS Code extension 
 
 The extension executes across two isolated runtime contexts connected over an asynchronous IPC bridge:
 
-- **VS Code Extension Host (`src/`)**: Runs in Node.js on the workstation. It manages `.spark` custom editors, workspace file safety gates, local Google Cloud CLI discovery (`gcloud`, `bq`), runner execution, and Vertex AI requests (`@google/genai`, `gemini-4-hydrogen` on `location: 'global'`).
+- **VS Code Extension Host (`src/`)**: Runs in Node.js on the workstation. It manages `.spark` custom editors, workspace file safety gates, local Google Cloud CLI discovery (`gcloud`, `bq`), and runner execution. It discovers Gemini 3.x+/4.x models dynamically (`modelDiscovery.ts`, `gemini-4-hydrogen` default) and runs `@google/genai` requests on Vertex AI `location: 'global'` or Gemini Developer API.
 - **Webview Canvas (`webview/src/`)**: Runs inside a sandboxed browser context. Built with React 19, React Flow, and Tailwind CSS, it renders the DAG canvas, node palette, property inspectors, code preview tabs, and deployment controls.
 
 ```mermaid
@@ -23,7 +23,7 @@ flowchart TD
     subgraph Host["VS Code Extension Host (Node.js)"]
         Ext["extension.ts (Activation & Commands)"]
         Prov["SparkEditorProvider (Custom .spark Editor)"]
-        Gen["codeGeneration.ts + CodegenPromptBuilder"]
+        Gen["codeGeneration.ts + modelDiscovery.ts + CodegenPromptBuilder"]
         Runner["PipelineRunner.ts (Script Execution)"]
         Tree["SparkTreeProvider (sparkExplorer Sidebar)"]
     end
@@ -47,7 +47,7 @@ flowchart TD
     subgraph Cloud["Workstation & Google Cloud"]
         Disk["Workspace (.spark & Generated Project)"]
         CLI["gcloud / bq / spark-pipelines CLIs"]
-        Vertex["Vertex AI Global (gemini-4-hydrogen)"]
+        Vertex["Vertex AI Global / Gemini API (gemini-4-hydrogen Flash Default)"]
         Managed["Serverless Spark 4.0 / Dataproc 4.0"]
     end
 
@@ -157,29 +157,40 @@ sequenceDiagram
     autonumber
     actor User
     participant Webview as Webview (React 19)
-    participant Host as Extension Host
+    participant Host as Extension Host (codeGeneration + modelDiscovery)
     participant Planner as executionPlanner / sdpPlanner
     participant Builder as CodegenPromptBuilder
-    participant Gemini as Vertex AI (gemini-4-hydrogen)
+    participant Gemini as Vertex AI Global / Gemini API (Gemini 3.x+/4.x)
     participant Checks as ReadOnlyCheckRunner
 
-    User->>Webview: Design .spark DAG & select paradigm (Imperative or SDP)
+    Webview->>Host: getCodegenModels (optional projectId)
+    Host->>Gemini: ai.models.list (queryBase: true)
+    Gemini-->>Host: Available base models (or offline fallback)
+    Host-->>Webview: codegenModelsLoaded (ranked models, Flash default)
+    User->>Webview: Design .spark DAG, select paradigm & codegen model
     Webview->>Host: savePipeline (YAML with paradigm, nodes, edges, jobConfig)
     User->>Webview: Click GENERATE CODE
-    Webview->>Host: regenerateCode (yamlContent, outputFolder, enableReviewer)
+    Webview->>Host: regenerateCode (yamlContent, outputFolder, enableReviewer, model)
     Host->>Builder: buildPromptFromPipelineYaml (redact credentials first)
     Builder->>Planner: buildExecutionPlan OR buildSdpPlan
     Planner-->>Builder: Deterministic Plan + Runtime Artifacts
     Note over Builder: Select paradigm-filtered skills from resources/codegen-skills/
     Builder-->>Host: Single prompt + template list
-    Host->>Gemini: generateContent (structured JSON schema)
+    Host->>Gemini: executeCodeGeneration (selected model, structured JSON schema)
     Gemini-->>Host: Generated files array
-    opt Optional AI Code Reviewer Pass
+    opt Optional AI Code Reviewer Pass (runReviewerPass)
         Host->>Checks: py_compile, contract/SDP purity checks, pytest --collect-only, optional spark-pipelines dry-run
-        Host->>Gemini: Review & fix blocking findings (up to 2 rounds)
+        Host->>Gemini: Review & fix blocking findings with selected model (up to 2 rounds)
     end
     Host-->>Webview: Stage files, update .sparkgen.json manifest, refresh preview
 ```
+
+### 4.1 Dynamic Gemini Model Discovery & Routing (`src/codegen/modelDiscovery.ts`)
+1. **Runtime Catalog Query**: On load or refresh, the webview dispatches `getCodegenModels` (with an optional validated `projectId`) through the four-registry IPC discovery pipeline.
+2. **Dual-Provider SDK Lookup**: `discoverCodegenModels` queries `@google/genai` `ai.models.list({ config: { queryBase: true } })` on Vertex AI (`location: 'global'`) or the Gemini Developer API.
+3. **Filtering & Flash-Default Ranking**: `filterAndRankCodegenModels` excludes deprecated `gemini-1.*`/`gemini-2.*`, tuned, embedding, media, and live-only models, then ranks Gemini 3.x+/4.x models by descending version. It selects the highest-ranked Flash-class release (such as `gemini-4-hydrogen` over `gemini-3.8-flash`) as `defaultModel` and posts `codegenModelsLoaded` to the webview.
+4. **Offline Fallback**: If credentials are absent or network requests fail, discovery falls back without throwing to `DEFAULT_GEMINI_MODEL` (`gemini-4-hydrogen`).
+5. **End-to-End Model Forwarding**: `regenerateCode` forwards the selected `model` into `handleRegenerateCode`, which validates and passes it to both `executeCodeGeneration` and `runReviewerPass`.
 
 ---
 
