@@ -45,6 +45,14 @@ import { usePipelineExecution } from './hooks/usePipelineExecution';
 import { usePanelResize } from './hooks/usePanelResize';
 import { useUndoRedoHistory, isEditableTarget } from './hooks/useUndoRedoHistory';
 import { getVsCodeApi, postToHost } from './bridge/vscodeApi';
+import {
+  evaluateSdpCompatibility,
+  normalizeSdpJobConfig,
+  type SdpBlockingIssue,
+} from './utils/sdpPlanner';
+import { isRuntimeSdpCapable } from './utils/versionMatrix';
+import type { PipelineParadigm, SdpJobConfigFields } from './utils/sharedTypes';
+import { AlertTriangle, X } from 'lucide-react';
 
 export { findMainPipelineFile };
 export type { PipelineNodeData };
@@ -162,7 +170,8 @@ function App() {
     jobId?: string;
     region?: string;
     projectId?: string;
-  }>({
+    [key: string]: unknown;
+  } & SdpJobConfigFields>({
     runner: 'Local',
     useSparkConnect: false,
     sessionTemplate: '',
@@ -192,7 +201,13 @@ function App() {
     language: 'Python',
     outputFolder: '',
     needsRebuild: false,
+    paradigm: 'imperative',
   });
+  const [sdpCompatibilityIssues, setSdpCompatibilityIssues] = useState<SdpBlockingIssue[] | null>(
+    null
+  );
+  const activeParadigm: PipelineParadigm =
+    pipelineConfig.paradigm === 'sdp' ? 'sdp' : 'imperative';
 
   // Snapshot ref for useUndoRedoHistory (finding F10)
   const snapshotRef = useRef<PipelineSnapshot>({
@@ -256,6 +271,7 @@ function App() {
     project,
     fitView,
     jobConfig,
+    paradigm: activeParadigm,
   });
 
   // Keep snapshotRef and restoreRef synchronised with latest graph and config state
@@ -355,6 +371,12 @@ function App() {
         return;
       }
 
+      if (event.key === 'Escape' && sdpCompatibilityIssues && sdpCompatibilityIssues.length > 0) {
+        event.preventDefault();
+        setSdpCompatibilityIssues(null);
+        return;
+      }
+
       const modifier = event.ctrlKey || event.metaKey;
 
       if (modifier && event.key === 'z') {
@@ -375,7 +397,64 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, deleteSelected]);
+  }, [undo, redo, deleteSelected, sdpCompatibilityIssues]);
+
+  useEffect(() => {
+    setSdpCompatibilityIssues(null);
+  }, [loadRevision]);
+
+  const handleParadigmChange = useCallback(
+    (nextParadigm: PipelineParadigm) => {
+      if (nextParadigm === activeParadigm) {
+        return;
+      }
+      if (nextParadigm === 'imperative') {
+        setSdpCompatibilityIssues(null);
+        takeSnapshot();
+        setJobConfig((prev) => {
+          if (prev.runtimeVersion === '4.2-connect') {
+            const { runtimeVersion: _staleConnectVersion, ...rest } = prev;
+            return { ...rest, useSparkConnect: false };
+          }
+          return prev;
+        });
+        setPipelineConfig((prev) =>
+          pipelineConfigReducer(prev, { type: 'setParadigm', paradigm: 'imperative' })
+        );
+        return;
+      }
+
+      const compatibility = evaluateSdpCompatibility(nodes, edges, jobConfig, {
+        enforceRuntimeVersion: false,
+      });
+      if (!compatibility.isCompatible || compatibility.blockingIssues.length > 0) {
+        setSdpCompatibilityIssues(compatibility.blockingIssues);
+        return;
+      }
+
+      setSdpCompatibilityIssues(null);
+      takeSnapshot();
+      setJobConfig((prev) => {
+        const normalized = normalizeSdpJobConfig(prev);
+        if (!isRuntimeSdpCapable(normalized.runner, normalized.runtimeVersion)) {
+          const lowerRunner = String(normalized.runner ?? '').trim().toLowerCase();
+          return lowerRunner === '' || lowerRunner === 'local' || lowerRunner === 'directrunner'
+            ? {
+                ...normalized,
+                runner: normalized.runner || 'Local',
+                runtimeVersion: '4.2-connect',
+                useSparkConnect: true,
+              }
+            : { ...normalized, runtimeVersion: '4.0' };
+        }
+        return normalized;
+      });
+      setPipelineConfig((prev) =>
+        pipelineConfigReducer(prev, { type: 'setParadigm', paradigm: 'sdp' })
+      );
+    },
+    [activeParadigm, nodes, edges, jobConfig, takeSnapshot]
+  );
 
   /**
    * Job config update wrapper that records an undo snapshot and flags needsRebuild on a
@@ -416,7 +495,17 @@ function App() {
           prev.minInstances !== config.minInstances ||
           prev.maxInstances !== config.maxInstances ||
           prev.network !== config.network ||
-          prev.subnetwork !== config.subnetwork;
+          prev.subnetwork !== config.subnetwork ||
+          prev.sdpStorage !== config.sdpStorage ||
+          prev.sdpCatalog !== config.sdpCatalog ||
+          prev.sdpDatabase !== config.sdpDatabase ||
+          prev.sdpBigLakeMode !== config.sdpBigLakeMode ||
+          prev.sdpBigLakeProject !== config.sdpBigLakeProject ||
+          prev.sdpBigLakeCatalogId !== config.sdpBigLakeCatalogId ||
+          prev.sdpBigLakeWarehouseBucket !== config.sdpBigLakeWarehouseBucket ||
+          prev.sdpCreateNamespace !== config.sdpCreateNamespace ||
+          JSON.stringify(prev.sdpStaticSparkConf ?? '') !==
+            JSON.stringify(config.sdpStaticSparkConf ?? '');
 
         if (configChanged) {
           setPipelineConfig((p) => pipelineConfigReducer(p, { type: 'markDirty' }));
@@ -464,11 +553,21 @@ function App() {
       console.warn('Blocked regenerateCode: validation failed', combinedValidationErrors);
       return;
     }
+    const effectiveJobConfig =
+      activeParadigm === 'sdp' ? normalizeSdpJobConfig(jobConfig) : jobConfig;
+    if (
+      activeParadigm === 'sdp' &&
+      (effectiveJobConfig.runner !== jobConfig.runner ||
+        effectiveJobConfig.runtimeVersion !== jobConfig.runtimeVersion ||
+        effectiveJobConfig.useSparkConnect !== jobConfig.useSparkConnect)
+    ) {
+      setJobConfig(effectiveJobConfig);
+    }
     lastSavedYamlRef.current = serializePipeline({
       nodes,
       edges,
       runtimeVariables,
-      jobConfig,
+      jobConfig: effectiveJobConfig,
       pipelineConfig,
     });
     const resolvedEnableReviewer =
@@ -477,10 +576,10 @@ function App() {
       nodes,
       edges,
       runtimeVariables,
-      jobConfig,
+      jobConfig: effectiveJobConfig,
       enableReviewer: resolvedEnableReviewer,
     });
-  }, [ipcRegenerate, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, isCodegenValid, combinedValidationErrors, lastSavedYamlRef, serializePipeline, enableReviewer]);
+  }, [ipcRegenerate, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, activeParadigm, isCodegenValid, combinedValidationErrors, lastSavedYamlRef, serializePipeline, enableReviewer]);
 
   // Resize state for Bottom Panel (minimized to 40px tab header by default; expands to 80% on tab click or toggle)
   const [isBottomPanelExpanded, setIsBottomPanelExpanded] = useState(false);
@@ -654,7 +753,7 @@ function App() {
         selectFile: handleSelectFile,
         isGraphValid: isCodegenValid,
         validationErrors: combinedValidationErrors,
-        nodes,
+        nodes: displayNodes,
         tokenUsage,
         useSdkForUnsupportedNodes,
         setUseSdkForUnsupportedNodes,
@@ -694,7 +793,7 @@ function App() {
       handleSelectFile,
       isCodegenValid,
       combinedValidationErrors,
-      nodes,
+      displayNodes,
       tokenUsage,
       useSdkForUnsupportedNodes,
       enableReviewer,
@@ -725,6 +824,7 @@ function App() {
               onAddNode={handleAddNode}
               samples={samples}
               onOpenSample={handleOpenSample}
+              paradigm={activeParadigm}
             />
 
             <LabelChangeContext.Provider value={handleNodeLabelChange}>
@@ -761,12 +861,96 @@ function App() {
                   onRedo={redo}
                   onAutoLayout={onLayout}
                   pipelineMode={pipelineMode}
+                  paradigm={activeParadigm}
+                  onParadigmChange={handleParadigmChange}
                 />
                 <Background gap={12} size={1} />
               </ReactFlow>
             </LabelChangeContext.Provider>
           </div>
         </div>
+
+        {/* SDP Compatibility Gate Modal */}
+        {sdpCompatibilityIssues && sdpCompatibilityIssues.length > 0 && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setSdpCompatibilityIssues(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sdp-compatibility-modal-title"
+              data-testid="sdp-compatibility-modal"
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-xl bg-[var(--vscode-workbench-bg,#151722)] border border-[var(--vscode-border,#334155)] rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--vscode-border,#334155)] bg-[var(--vscode-subcard-bg,#1e202a)]">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <h2
+                    id="sdp-compatibility-modal-title"
+                    className="text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-primary,#ffffff)]"
+                  >
+                    Cannot Switch to Spark Declarative Pipelines (SDP)
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSdpCompatibilityIssues(null)}
+                  data-testid="sdp-compatibility-modal-close"
+                  aria-label="Close compatibility dialog"
+                  className="p-1 rounded text-[var(--vscode-text-muted,#94a3b8)] hover:text-[var(--vscode-text-primary,#ffffff)] hover:bg-[var(--vscode-hover,rgba(255,255,255,0.06))] transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+                <p className="text-xs text-[var(--vscode-text-secondary,#cbd5e1)]">
+                  Spark Declarative Pipelines (Apache Spark 4.2+) cannot express {sdpCompatibilityIssues.length}{' '}
+                  {sdpCompatibilityIssues.length === 1 ? 'item' : 'items'} in the current pipeline graph.
+                  Update or remove the blocking nodes below before switching paradigms.
+                </p>
+                <ul className="flex flex-col gap-2">
+                  {sdpCompatibilityIssues.map((issue, idx) => (
+                    <li
+                      key={`${issue.code}-${issue.nodeId ?? idx}`}
+                      data-testid="sdp-blocking-issue-item"
+                      className="p-3 rounded-lg bg-[var(--vscode-card-bg,#1e293b)] border border-rose-500/30 flex flex-col gap-1"
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-[var(--vscode-text-primary,#ffffff)]">
+                          {issue.nodeLabel || issue.nodeId || 'Pipeline Configuration'}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {issue.sparkTransform && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-500/15 border border-blue-500/30 text-blue-300">
+                              {issue.sparkTransform}
+                            </span>
+                          )}
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/15 border border-rose-500/30 text-rose-300">
+                            {issue.code}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-[var(--vscode-text-muted,#94a3b8)]">
+                        {issue.message}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="px-4 py-3 border-t border-[var(--vscode-border,#334155)] bg-[var(--vscode-subcard-bg,#1e202a)] flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSdpCompatibilityIssues(null)}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--vscode-button-secondary,#334155)] text-[var(--vscode-text-primary,#ffffff)] hover:bg-[var(--vscode-hover,#475569)] transition-colors cursor-pointer"
+                >
+                  Keep Imperative Mode
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Resizable Divider */}
         <div
@@ -810,6 +994,7 @@ function App() {
                 width={propertyPanelWidth}
                 onResizeStart={handlePropertyPanelResizeStart}
                 onClose={() => setSelectedNodeId(null)}
+                paradigm={activeParadigm}
               />
             </ErrorBoundary>
           </div>

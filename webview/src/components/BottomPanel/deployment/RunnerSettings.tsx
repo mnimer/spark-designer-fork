@@ -42,6 +42,8 @@ export interface RunnerSettingsProps {
   runner: string;
   /** State updater callback for modifying the parent job configuration. */
   setJobConfig: (update: React.SetStateAction<any>) => void;
+  /** Optional pipeline paradigm ('imperative' | 'sdp'). */
+  paradigm?: 'imperative' | 'sdp';
 }
 
 /**
@@ -50,8 +52,10 @@ export interface RunnerSettingsProps {
 export const RunnerSettings: React.FC<RunnerSettingsProps> = ({
   runner,
   setJobConfig,
+  paradigm = 'imperative',
 }) => {
   const effectiveRunner = normalizeSparkRunner(runner);
+  const isSdp = paradigm === 'sdp';
   return (
     <div className="flex flex-col gap-1.5">
       <label
@@ -65,13 +69,39 @@ export const RunnerSettings: React.FC<RunnerSettingsProps> = ({
         value={effectiveRunner}
         onChange={(e) => {
           const nextValue = e.target.value;
-          setJobConfig((prev: any) => ({ ...prev, runner: nextValue }));
+          setJobConfig((prev: any) => {
+            if (isSdp) {
+              const nextRuntimeVersion =
+                nextValue === 'Local'
+                  ? '4.2-connect'
+                  : prev?.runtimeVersion === '3.0' ||
+                      prev?.runtimeVersion === '4.2-connect' ||
+                      !prev?.runtimeVersion
+                    ? '4.0'
+                    : prev.runtimeVersion;
+              return {
+                ...prev,
+                runner: nextValue,
+                runtimeVersion: nextRuntimeVersion,
+                ...(nextValue === 'Local' ? { useSparkConnect: true } : {}),
+              };
+            }
+            return { ...prev, runner: nextValue };
+          });
         }}
         className="bg-[#0d1017] text-white px-3 py-2 rounded-lg border border-slate-800 focus:outline-none focus:border-blue-500 text-xs shadow-inner transition cursor-pointer"
       >
-        <option value="Local">Local PySpark / Spark Connect</option>
-        <option value="DataprocCluster">Dataproc Cluster (GCE/GKE)</option>
-        <option value="ServerlessSpark">GCP Serverless Spark (Batch)</option>
+        <option value="Local">
+          {isSdp ? 'Local Spark 4.2 Connect (4.2-connect)' : 'Local PySpark / Spark Connect'}
+        </option>
+        <option value="DataprocCluster">
+          {isSdp ? 'Dataproc Cluster 4.0 (Spark 4.2)' : 'Dataproc Cluster (GCE/GKE)'}
+        </option>
+        <option value="ServerlessSpark">
+          {isSdp
+            ? 'GCP Serverless Spark 4.0 / Managed SDP'
+            : 'GCP Serverless Spark (Batch)'}
+        </option>
       </select>
     </div>
   );

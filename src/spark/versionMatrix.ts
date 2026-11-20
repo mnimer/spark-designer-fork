@@ -29,7 +29,9 @@
 export type SparkRuntimeTarget =
   | 'serverless_4.0'
   | 'serverless_3.0'
+  | 'cluster_4.0'
   | 'cluster_3.0'
+  | 'local_4.2_connect'
   | 'local';
 
 /**
@@ -69,6 +71,16 @@ export interface RuntimeProfile {
   defaultTier?: ServerlessTier;
   /** Connector artifacts already present on the runtime classpath. */
   preinstalledConnectors: string[];
+  /** True when the runtime supports Spark Declarative Pipelines on Spark 4.2 or newer. */
+  sdpSupported: boolean;
+  /** Operational guidance describing SDP support or runtime constraints. */
+  sdpNotes?: string;
+  /** Dataproc cluster optional components required for SDP execution. */
+  optionalComponents?: string[];
+  /** Python packages required on the Spark driver for SDP execution. */
+  driverPipRequirements?: string[];
+  /** True when Maven Central lacks an Iceberg runtime JAR for this local Spark version. */
+  missingLocalIcebergRuntime?: boolean;
 }
 
 /**
@@ -102,6 +114,8 @@ export interface ConnectorResolution {
   preinstalledArtifact?: string;
   /** Spark 4.0 Python DataSource class name when backed by Python DataSource API. */
   pythonDataSourceClass?: string;
+  /** True when the target local Spark version lacks a published Iceberg runtime JAR. */
+  missingLocalIcebergRuntime?: boolean;
   /** Operational guidance for code generation and execution planning. */
   notes?: string;
 }
@@ -144,6 +158,8 @@ export interface PipelineRuntimeArtifacts {
   pythonDataSources: string[];
   /** Deduplicated Managed Spark pre-installed connector names used by the pipeline. */
   preinstalledConnectors: string[];
+  /** True when the pipeline uses Iceberg on a local Spark 4.2 profile without a published runtime JAR. */
+  missingLocalIcebergRuntime?: boolean;
 }
 
 const MANAGED_SPARK_PREINSTALLED_CONNECTORS: readonly string[] = [
@@ -180,6 +196,9 @@ export const RUNTIME_PROFILES: Readonly<Record<SparkRuntimeTarget, RuntimeProfil
     scalaVersion: '2.13',
     defaultTier: DEFAULT_SERVERLESS_TIER,
     preinstalledConnectors: [...MANAGED_SPARK_PREINSTALLED_CONNECTORS],
+    sdpSupported: true,
+    sdpNotes:
+      'Supports Spark Declarative Pipelines via Managed Data Pipelines sdp stages or Serverless Spark 4.0.',
   },
   'serverless_3.0': {
     id: 'serverless_3.0',
@@ -191,6 +210,23 @@ export const RUNTIME_PROFILES: Readonly<Record<SparkRuntimeTarget, RuntimeProfil
     scalaVersion: '2.13',
     defaultTier: DEFAULT_SERVERLESS_TIER,
     preinstalledConnectors: [...MANAGED_SPARK_PREINSTALLED_CONNECTORS],
+    sdpSupported: false,
+    sdpNotes: 'Spark Declarative Pipelines requires Apache Spark 4.2+ (Serverless Runtime 4.0+).',
+  },
+  'cluster_4.0': {
+    id: 'cluster_4.0',
+    runner: 'DataprocCluster',
+    runtimeVersion: '4.0',
+    sparkVersion: '4.2.0',
+    pythonVersion: '3.13',
+    javaVersion: '25',
+    scalaVersion: '2.13',
+    preinstalledConnectors: [...MANAGED_SPARK_PREINSTALLED_CONNECTORS],
+    sdpSupported: true,
+    optionalComponents: ['ICEBERG'],
+    driverPipRequirements: ['zstandard>=0.25.0'],
+    sdpNotes:
+      'Dataproc Compute Engine image 4.0 (Spark 4.2) requires --optional-components=ICEBERG and driver package zstandard>=0.25.0.',
   },
   'cluster_3.0': {
     id: 'cluster_3.0',
@@ -201,6 +237,21 @@ export const RUNTIME_PROFILES: Readonly<Record<SparkRuntimeTarget, RuntimeProfil
     javaVersion: '21',
     scalaVersion: '2.13',
     preinstalledConnectors: [...MANAGED_SPARK_PREINSTALLED_CONNECTORS],
+    sdpSupported: false,
+  },
+  'local_4.2_connect': {
+    id: 'local_4.2_connect',
+    runner: 'Local',
+    runtimeVersion: '4.2-connect',
+    sparkVersion: '4.2.0',
+    pythonVersion: '3.13',
+    javaVersion: '21',
+    scalaVersion: '2.13',
+    preinstalledConnectors: [],
+    sdpSupported: true,
+    missingLocalIcebergRuntime: true,
+    sdpNotes:
+      'Local Spark 4.2 Spark Connect profile supports spark-pipelines dry-run and run, but Maven Central lacks iceberg-spark-runtime-4.2_2.13.',
   },
   local: {
     id: 'local',
@@ -213,6 +264,7 @@ export const RUNTIME_PROFILES: Readonly<Record<SparkRuntimeTarget, RuntimeProfil
     javaVersion: '21',
     scalaVersion: '2.13',
     preinstalledConnectors: [],
+    sdpSupported: false,
   },
 };
 
@@ -406,6 +458,12 @@ function cloneRuntimeProfile(profile: RuntimeProfile): RuntimeProfile {
   return {
     ...profile,
     preinstalledConnectors: [...profile.preinstalledConnectors],
+    ...(profile.optionalComponents
+      ? { optionalComponents: [...profile.optionalComponents] }
+      : {}),
+    ...(profile.driverPipRequirements
+      ? { driverPipRequirements: [...profile.driverPipRequirements] }
+      : {}),
   };
 }
 
@@ -419,8 +477,27 @@ export function isManagedSparkRuntime(target: SparkRuntimeTarget): boolean {
   return (
     target === 'serverless_4.0' ||
     target === 'serverless_3.0' ||
+    target === 'cluster_4.0' ||
     target === 'cluster_3.0'
   );
+}
+
+/**
+ * Checks whether a resolved runtime profile or runner selection supports Spark Declarative Pipelines.
+ *
+ * @param profileOrRunner Optional resolved runtime profile or runner identifier.
+ * @param runtimeVersion Optional runtime or image version string when passing a runner name.
+ * @returns True when the resolved runtime ships Apache Spark 4.2 or newer with SDP support.
+ */
+export function isRuntimeSdpCapable(
+  profileOrRunner?: RuntimeProfile | string,
+  runtimeVersion?: string
+): boolean {
+  if (profileOrRunner && typeof profileOrRunner === 'object') {
+    return profileOrRunner.sdpSupported === true;
+  }
+  const profile = resolveRuntimeProfile(profileOrRunner, runtimeVersion);
+  return profile.sdpSupported === true;
 }
 
 /**
@@ -461,10 +538,27 @@ export function resolveRuntimeProfile(
   if (lowerRunner === 'serverless_3.0') {
     return cloneRuntimeProfile(RUNTIME_PROFILES['serverless_3.0']);
   }
+  if (lowerRunner === 'cluster_4.0') {
+    return cloneRuntimeProfile(RUNTIME_PROFILES['cluster_4.0']);
+  }
   if (lowerRunner === 'cluster_3.0') {
     return cloneRuntimeProfile(RUNTIME_PROFILES['cluster_3.0']);
   }
+  if (lowerRunner === 'local_4.2_connect') {
+    return cloneRuntimeProfile(RUNTIME_PROFILES['local_4.2_connect']);
+  }
   if (lowerRunner === 'local' || lowerRunner === 'directrunner' || lowerRunner === '') {
+    if (
+      normalizedVersion === '4.2-connect' ||
+      normalizedVersion === '4.2_connect' ||
+      normalizedVersion === '4.2' ||
+      normalizedVersion.startsWith('4.2 ') ||
+      normalizedVersion.startsWith('4.2(') ||
+      normalizedVersion.startsWith('4.2.') ||
+      normalizedVersion === 'local_4.2_connect'
+    ) {
+      return cloneRuntimeProfile(RUNTIME_PROFILES['local_4.2_connect']);
+    }
     return cloneRuntimeProfile(RUNTIME_PROFILES.local);
   }
 
@@ -492,6 +586,12 @@ export function resolveRuntimeProfile(
     lowerRunner === 'dataproc' ||
     lowerRunner === 'cluster'
   ) {
+    if (
+      normalizedVersion.startsWith('4.0') ||
+      normalizedVersion === 'cluster_4.0'
+    ) {
+      return cloneRuntimeProfile(RUNTIME_PROFILES['cluster_4.0']);
+    }
     return cloneRuntimeProfile(RUNTIME_PROFILES['cluster_3.0']);
   }
 
@@ -941,6 +1041,23 @@ export function resolveConnectorForRuntime(
           : 'Pre-installed iceberg-spark-runtime on Dataproc Cluster.',
       };
     }
+    if (profile.missingLocalIcebergRuntime) {
+      const localMaven: string[] = [];
+      if (backend) {
+        localMaven.push(getStorageBackendArtifacts(backend).localMavenCoordinate);
+      }
+      return {
+        sparkTransform: cleanTransform,
+        mechanism: 'maven_package',
+        gcsJarUris: [],
+        mavenCoordinates: localMaven,
+        pipPackages: [],
+        sparkProperties: {},
+        missingLocalIcebergRuntime: true,
+        notes:
+          'Missing local Iceberg runtime for Spark 4.2 because Maven Central lacks iceberg-spark-runtime-4.2_2.13.',
+      };
+    }
     const localMaven = [LOCAL_ICEBERG_MAVEN];
     if (backend) {
       localMaven.push(getStorageBackendArtifacts(backend).localMavenCoordinate);
@@ -1251,6 +1368,7 @@ export function resolvePipelineRuntimeArtifacts(
   const seenPreinstalled = new Set<string>();
 
   const sparkProperties: Record<string, string> = {};
+  let missingLocalIcebergRuntime = false;
 
   for (const rawNode of nodes as PipelineRuntimeNodeInput[]) {
     const transform =
@@ -1268,6 +1386,10 @@ export function resolvePipelineRuntimeArtifacts(
     pushUnique(gcsJars, seenGcsJars, resolution.gcsJarUris);
     pushUnique(mavenPackages, seenMaven, resolution.mavenCoordinates);
     pushUnique(pipPackages, seenPip, resolution.pipPackages);
+
+    if (resolution.missingLocalIcebergRuntime) {
+      missingLocalIcebergRuntime = true;
+    }
 
     if (resolution.pythonDataSourceClass) {
       pushUnique(pythonDataSources, seenPythonDataSources, [
@@ -1288,8 +1410,16 @@ export function resolvePipelineRuntimeArtifacts(
   // Include pipeline-level custom GCS JARs if configured.
   pushUnique(gcsJars, seenGcsJars, extractJobConfigJars(jobConfig));
 
+  // Include driver pip packages required by SDP runtimes when running in SDP mode.
+  if (jobConfig?.paradigm === 'sdp' && profile.driverPipRequirements) {
+    pushUnique(pipPackages, seenPip, profile.driverPipRequirements);
+  }
+
   // Include google-cloud-spark-connect when Local mode enables Spark Connect.
-  if (profile.id === 'local' && jobConfig?.useSparkConnect === true) {
+  if (
+    (profile.id === 'local' || profile.id === 'local_4.2_connect') &&
+    jobConfig?.useSparkConnect === true
+  ) {
     pushUnique(pipPackages, seenPip, ['google-cloud-spark-connect']);
   }
 
@@ -1302,5 +1432,6 @@ export function resolvePipelineRuntimeArtifacts(
     sparkProperties,
     pythonDataSources,
     preinstalledConnectors,
+    ...(missingLocalIcebergRuntime ? { missingLocalIcebergRuntime: true } : {}),
   };
 }

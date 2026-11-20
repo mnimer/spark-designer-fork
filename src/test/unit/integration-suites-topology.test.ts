@@ -23,6 +23,7 @@ import { validateDagTopology, DagNode, DagEdge } from '../../dagValidator';
 import { PIPELINE_FILE_EXT } from '../../core/constants';
 
 interface SparkFileContent {
+    paradigm?: 'imperative' | 'sdp';
     nodes: DagNode[];
     edges: DagEdge[];
     runtimeVariables?: { key: string; value: string }[];
@@ -82,9 +83,9 @@ describe('Integration Suites DAG Topology and Pattern Verification', () => {
         ...sampleFiles,
     ];
 
-    it('discovers at least 6 E2E .spark pipelines and all 4 bundled sample .spark pipelines', () => {
+    it('discovers at least 6 E2E .spark pipelines and all 6 bundled sample .spark pipelines', () => {
         expect(e2eFiles.length).toBeGreaterThanOrEqual(6);
-        expect(sampleFiles.length).toBe(4);
+        expect(sampleFiles.length).toBe(6);
     });
 
     it('never ships unexpected non-Spark pipeline suites next to the Spark suites', () => {
@@ -113,6 +114,7 @@ describe('Integration Suites DAG Topology and Pattern Verification', () => {
 
             const result = validateDagTopology(parsed.nodes, parsed.edges, {
                 jobConfig: parsed.jobConfig,
+                paradigm: parsed.paradigm === 'sdp' ? 'sdp' : 'imperative',
             });
             expect(result.isValid, `DAG invalid in ${filePath}: ${result.errors.join(', ')}`).toBe(true);
             expect(result.errors, `DAG errors in ${filePath}`).toEqual([]);

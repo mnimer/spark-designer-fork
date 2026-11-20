@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [dataproc-cluster]
+  paradigms: [imperative]
   transforms: []
   preloadWhen: []
   sources:

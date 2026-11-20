@@ -22,6 +22,9 @@ import {
   Box
 } from 'lucide-react';
 import { getNodeIcon } from './common/nodeIcons';
+import { InfoTooltip } from './InfoTooltip';
+import { checkNodeSdpCompatibility } from '../utils/sdpPlanner';
+import type { PipelineParadigm } from '../utils/sharedTypes';
 
 /**
  * Props for the {@link SidebarItem} component.
@@ -33,12 +36,18 @@ export interface SidebarItemProps {
   type: 'SOURCE' | 'STEP' | 'SINK' | string;
   /** Name of the Lucide icon */
   iconName: string;
-  /** Optional Apache Beam transform identifier */
+  /** Optional Apache Spark transform identifier */
   sparkTransform?: string;
   /** Optional badge text indicating subtype or feature (e.g., Streaming, Database) */
   badge?: string;
   /** Short summary or description of the node function */
   description?: string;
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp') */
+  paradigm?: PipelineParadigm;
+  /** Explicit disabled override flag */
+  disabled?: boolean;
+  /** Explanatory tooltip message when disabled */
+  disabledReason?: string;
   /** Drag start handler */
   onDragStart: (event: React.DragEvent, nodeType: string, label: string, type: string, iconName: string, sparkTransform?: string) => void;
   /** Optional click handler to add node directly to canvas */
@@ -88,25 +97,42 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   sparkTransform,
   badge,
   description,
+  paradigm = 'imperative',
+  disabled,
+  disabledReason,
   onDragStart,
   onAddNode
 }) => {
   // Retrieve the matching Lucide icon component
   const IconComponent = getNodeIcon(iconName, Box);
   const theme = getThemeClasses(type);
+  const sdpCompatibility =
+    paradigm === 'sdp' ? checkNodeSdpCompatibility(sparkTransform, type) : undefined;
+  const isDisabled = Boolean(disabled || (sdpCompatibility && !sdpCompatibility.supported));
+  const effectiveDisabledReason =
+    disabledReason ||
+    (sdpCompatibility && !sdpCompatibility.supported ? sdpCompatibility.reason : undefined);
 
   /**
-   * Handle drag start event by forwarding node payload to parent handler.
+   * Handle drag start event by forwarding node payload to parent handler unless disabled.
    */
   const handleDragStart = (e: React.DragEvent) => {
+    if (isDisabled) {
+      e.preventDefault();
+      return;
+    }
     onDragStart(e, 'pipeline', label, type, iconName, sparkTransform);
   };
 
   /**
-   * Handle add button click event.
+   * Handle add button click event unless disabled.
    */
   const handleAddClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isDisabled) {
+      e.preventDefault();
+      return;
+    }
     if (onAddNode) {
       onAddNode(label, type, iconName, sparkTransform);
     }
@@ -114,8 +140,13 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
 
   return (
     <div
-      className={`group relative flex items-center justify-between p-2 rounded-lg bg-[var(--vscode-card-bg)] hover:bg-[var(--vscode-hover)] border ${theme.cardBorder} transition-all cursor-grab active:cursor-grabbing shadow-sm select-none`}
-      draggable
+      className={`group relative flex items-center justify-between p-2 rounded-lg bg-[var(--vscode-card-bg)] border transition-all shadow-sm select-none ${
+        isDisabled
+          ? 'opacity-45 cursor-not-allowed border-[var(--vscode-border-light,#334155)]'
+          : `hover:bg-[var(--vscode-hover)] ${theme.cardBorder} cursor-grab active:cursor-grabbing`
+      }`}
+      draggable={!isDisabled}
+      aria-disabled={isDisabled ? 'true' : undefined}
       onDragStart={handleDragStart}
       data-testid={`sidebar-item-${label.replace(/\s+/g, '-').toLowerCase()}`}
     >
@@ -155,18 +186,28 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
         </div>
       </div>
 
-      {/* Add Button */}
-      {onAddNode && (
-        <button
-          type="button"
-          onClick={handleAddClick}
-          title={`Add ${label} to canvas`}
-          aria-label={`Add ${label}`}
-          className="w-6 h-6 rounded flex items-center justify-center bg-[var(--vscode-button-secondary)] hover:bg-[var(--vscode-hover)] text-[var(--vscode-text-secondary)] hover:text-[var(--vscode-text-primary)] border border-[var(--vscode-border-light)] transition-colors shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5" />
-        </button>
-      )}
+      {/* Disabled Reason Tooltip & Add Button */}
+      <div className="flex items-center gap-1 shrink-0">
+        {isDisabled && effectiveDisabledReason && (
+          <InfoTooltip text={effectiveDisabledReason} />
+        )}
+        {onAddNode && (
+          <button
+            type="button"
+            disabled={isDisabled}
+            onClick={handleAddClick}
+            title={isDisabled ? effectiveDisabledReason || `${label} is not supported in SDP mode` : `Add ${label} to canvas`}
+            aria-label={`Add ${label}`}
+            className={`w-6 h-6 rounded flex items-center justify-center bg-[var(--vscode-button-secondary)] text-[var(--vscode-text-secondary)] border border-[var(--vscode-border-light)] transition-colors shrink-0 ${
+              isDisabled
+                ? 'cursor-not-allowed opacity-50'
+                : 'hover:bg-[var(--vscode-hover)] hover:text-[var(--vscode-text-primary)]'
+            }`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 };

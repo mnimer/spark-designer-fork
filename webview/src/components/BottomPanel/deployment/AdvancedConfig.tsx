@@ -7,8 +7,11 @@
 import React from 'react';
 import { InfoTooltip } from '../../InfoTooltip';
 import { normalizeSparkRunner } from './RunnerSettings';
+import { SdpSettingsPanel } from './SdpSettingsPanel';
+import { hasIcebergGraphNodes } from '../../../utils/sdpConfigValidation';
 import { useAssetLoader } from '../../../hooks/useAssetLoader';
 import type {
+  SdpJobConfigFields,
   SparkPipelineStreamingDefaults,
   SparkStreamingTriggerType,
 } from '../../../utils/sharedTypes';
@@ -49,7 +52,9 @@ export type SessionTemplateOption =
 /**
  * Structure of job configuration fields used in advanced runner and streaming settings.
  */
-export interface AdvancedJobConfig extends SparkPipelineStreamingDefaults {
+export interface AdvancedJobConfig
+  extends SparkPipelineStreamingDefaults,
+    SdpJobConfigFields {
   runner: string;
   useSparkConnect?: boolean;
   sessionTemplate?: string;
@@ -87,6 +92,12 @@ export interface AdvancedConfigProps {
   sessionTemplates?: SessionTemplateOption[];
   /** Optional list of discovered GCP regions for DataprocCluster mode. */
   regions?: string[];
+  /** Optional pipeline paradigm ('imperative' | 'sdp'). */
+  paradigm?: 'imperative' | 'sdp';
+  /** Optional graph nodes for SDP Iceberg runtime and storage path checks. */
+  nodes?: readonly unknown[];
+  /** Optional resolved GCP project identifier fallback. */
+  projectId?: string;
 }
 
 const STREAMING_TRIGGER_OPTIONS: Array<{ value: SparkStreamingTriggerType; label: string }> = [
@@ -161,8 +172,15 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
   clusters = [],
   sessionTemplates = [],
   regions = [],
+  paradigm,
+  nodes = [],
+  projectId,
 }) => {
   const effectiveRunner = normalizeSparkRunner(jobConfig.runner);
+  const isSdpMode = paradigm === 'sdp' || jobConfig.paradigm === 'sdp';
+  const hasIcebergNodes = React.useMemo(() => hasIcebergGraphNodes(nodes), [nodes]);
+  const clusterRuntimeVersion =
+    jobConfig.runtimeVersion === '3.0' ? '3.0' : '4.0';
 
   const effectiveTriggerType: SparkStreamingTriggerType =
     jobConfig.defaultTriggerType === 'availableNow' ||
@@ -370,6 +388,34 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
             Local &amp; Spark Connect Options
           </div>
 
+          {isSdpMode && (
+            <div
+              data-testid="sdp-local-connect-info"
+              className="p-2 rounded bg-purple-950/30 border border-purple-700/50 text-[11px] text-purple-200 leading-snug"
+            >
+              Profile <code className="font-mono">4.2-connect</code> runs{' '}
+              <code className="font-mono">spark-pipelines</code> over Spark Connect (
+              <code className="font-mono">--remote &quot;local[*]&quot;</code>) on Apache Spark 4.2+.
+            </div>
+          )}
+
+          {isSdpMode && hasIcebergNodes && (
+            <div
+              role="alert"
+              data-testid="sdp-local-iceberg-warning"
+              className="p-2 rounded bg-amber-950/40 border border-amber-600/60 text-[11px] text-amber-200 leading-snug"
+            >
+              Local Spark 4.2 warning: Maven Central lacks{' '}
+              <code className="font-mono">iceberg-spark-runtime-4.2_2.13</code>, and local{' '}
+              <code className="font-mono">run</code> and <code className="font-mono">dry-run</code>{' '}
+              both load <code className="font-mono">org.apache.iceberg.spark.SparkCatalog</code>.
+              Run <code className="font-mono">./run_sdp_local.sh --test</code> for offline{' '}
+              <code className="font-mono">pytest</code>, supply{' '}
+              <code className="font-mono">SPARK_JARS</code>, or execute on Serverless Spark 4.0 or
+              Dataproc 4.0.
+            </div>
+          )}
+
           <label
             htmlFor="advancedUseSparkConnect"
             className="flex items-center gap-2 text-xs text-[var(--vscode-text-primary)] cursor-pointer select-none"
@@ -428,6 +474,52 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
           <div className="text-xs font-bold uppercase tracking-wider text-cyan-400">
             Dataproc Cluster Options
           </div>
+
+          {isSdpMode && (
+            <>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="advancedClusterImageVersion"
+                  className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+                >
+                  <span>Dataproc Image Version</span>
+                  <InfoTooltip text="Compute Engine release image. SDP requires image 4.0 (Spark 4.2+)." />
+                </label>
+                <select
+                  id="advancedClusterImageVersion"
+                  name="runtimeVersion"
+                  value={clusterRuntimeVersion}
+                  onChange={handleRuntimeVersionChange}
+                  className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
+                >
+                  <option value="4.0">4.0 (4.0-debian13 — Spark 4.2)</option>
+                  <option value="3.0" disabled>
+                    3.0 (Spark 4.1 — Unsupported in SDP)
+                  </option>
+                </select>
+              </div>
+
+              {clusterRuntimeVersion === '3.0' && (
+                <div
+                  role="alert"
+                  data-testid="sdp-runtime-version-warning"
+                  className="p-2 rounded bg-amber-950/40 border border-amber-600/60 text-[11px] text-amber-200 leading-snug"
+                >
+                  SDP_SPARK_42_REQUIRED: Spark Declarative Pipelines requires Dataproc image 4.0+
+                  (Apache Spark 4.2). Switch to image 4.0.
+                </div>
+              )}
+
+              <div
+                data-testid="sdp-dataproc-cluster-note"
+                className="p-2 rounded bg-cyan-950/30 border border-cyan-700/50 text-[11px] text-cyan-200 leading-snug"
+              >
+                Dataproc image <code className="font-mono">4.0</code> requires{' '}
+                <code className="font-mono">--optional-components=ICEBERG</code> and driver Python
+                package <code className="font-mono">zstandard&gt;=0.25.0</code>.
+              </div>
+            </>
+          )}
 
           <div className="flex flex-col gap-1">
             <label
@@ -556,7 +648,9 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
                 className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
               >
                 <option value="4.0">4.0 (Spark 4.2)</option>
-                <option value="3.0">3.0 (Spark 4.0)</option>
+                <option value="3.0" disabled={isSdpMode}>
+                  {isSdpMode ? '3.0 (Spark 4.0 — Unsupported in SDP)' : '3.0 (Spark 4.0)'}
+                </option>
               </select>
             </div>
 
@@ -580,6 +674,17 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
               </select>
             </div>
           </div>
+
+          {isSdpMode && runtimeVersionValue === '3.0' && (
+            <div
+              role="alert"
+              data-testid="sdp-runtime-version-warning"
+              className="p-2 rounded bg-amber-950/40 border border-amber-600/60 text-[11px] text-amber-200 leading-snug"
+            >
+              SDP_SPARK_42_REQUIRED: Spark Declarative Pipelines requires Serverless Runtime 4.0+
+              (Apache Spark 4.2+). Select Runtime Version 4.0.
+            </div>
+          )}
 
           <div className="flex flex-col gap-1">
             <label
@@ -690,78 +795,90 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
         </div>
       )}
 
-      {/* Pipeline-Level Structured Streaming Defaults (A9 & R4 Checkpoint Root URI) */}
-      <div
-        data-testid="pipeline-streaming-defaults"
-        className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]"
-      >
-        <div className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-          Streaming Defaults
-        </div>
+      {/* Spark Declarative Pipelines (SDP 4.2+) Spec & Catalog Settings (SDP3) */}
+      {isSdpMode && (
+        <SdpSettingsPanel
+          jobConfig={jobConfig}
+          setJobConfig={setJobConfig}
+          nodes={nodes}
+          projectId={projectId ?? jobConfig.projectId}
+        />
+      )}
 
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor="advancedCheckpointRoot"
-            className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
-          >
-            <span>Checkpoint Root URI</span>
-            <InfoTooltip text="Base storage URI for Spark Structured Streaming checkpoints (such as gs://bucket/checkpoints or /tmp/checkpoints). Streaming sinks inherit <checkpointRoot>/<nodeId> when no override is set." />
-          </label>
-          <input
-            id="advancedCheckpointRoot"
-            name="checkpointRoot"
-            type="text"
-            value={checkpointRootValue}
-            onChange={handleCheckpointRootChange}
-            placeholder="gs://<bucket>/checkpoints"
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
-          />
-        </div>
+      {/* Pipeline-Level Structured Streaming Defaults (Imperative mode only. SDP uses sdpStorage and Trigger.AvailableNow) */}
+      {!isSdpMode && (
+        <div
+          data-testid="pipeline-streaming-defaults"
+          className="flex flex-col gap-3 p-3 bg-[var(--vscode-subcard-bg)] rounded-lg border border-[var(--vscode-border)]"
+        >
+          <div className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+            Streaming Defaults
+          </div>
 
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor="advancedDefaultTriggerType"
-            className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
-          >
-            <span>Default Trigger Type</span>
-            <InfoTooltip text="Default Structured Streaming trigger mode inherited by streaming sinks unless overridden on a specific sink." />
-          </label>
-          <select
-            id="advancedDefaultTriggerType"
-            name="defaultTriggerType"
-            value={effectiveTriggerType}
-            onChange={handleDefaultTriggerTypeChange}
-            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
-          >
-            {STREAMING_TRIGGER_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {showTriggerInterval && (
           <div className="flex flex-col gap-1">
             <label
-              htmlFor="advancedDefaultTriggerInterval"
+              htmlFor="advancedCheckpointRoot"
               className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
             >
-              <span>Default Trigger Interval</span>
-              <InfoTooltip text="Default micro-batch or continuous checkpoint interval string, such as 10 seconds or 1 minute." />
+              <span>Checkpoint Root URI</span>
+              <InfoTooltip text="Base storage URI for Spark Structured Streaming checkpoints (such as gs://bucket/checkpoints or /tmp/checkpoints). Streaming sinks inherit <checkpointRoot>/<nodeId> when no override is set." />
             </label>
             <input
-              id="advancedDefaultTriggerInterval"
-              name="defaultTriggerInterval"
+              id="advancedCheckpointRoot"
+              name="checkpointRoot"
               type="text"
-              value={triggerIntervalValue}
-              onChange={handleDefaultTriggerIntervalChange}
-              placeholder="10 seconds"
+              value={checkpointRootValue}
+              onChange={handleCheckpointRootChange}
+              placeholder="gs://<bucket>/checkpoints"
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
             />
           </div>
-        )}
-      </div>
+
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="advancedDefaultTriggerType"
+              className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+            >
+              <span>Default Trigger Type</span>
+              <InfoTooltip text="Default Structured Streaming trigger mode inherited by streaming sinks unless overridden on a specific sink." />
+            </label>
+            <select
+              id="advancedDefaultTriggerType"
+              name="defaultTriggerType"
+              value={effectiveTriggerType}
+              onChange={handleDefaultTriggerTypeChange}
+              className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
+            >
+              {STREAMING_TRIGGER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {showTriggerInterval && (
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="advancedDefaultTriggerInterval"
+                className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+              >
+                <span>Default Trigger Interval</span>
+                <InfoTooltip text="Default micro-batch or continuous checkpoint interval string, such as 10 seconds or 1 minute." />
+              </label>
+              <input
+                id="advancedDefaultTriggerInterval"
+                name="defaultTriggerInterval"
+                type="text"
+                value={triggerIntervalValue}
+                onChange={handleDefaultTriggerIntervalChange}
+                placeholder="10 seconds"
+                className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
+              />
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 };

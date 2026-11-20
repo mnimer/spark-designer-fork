@@ -36,11 +36,19 @@ describe('usePipelinePersistence (P6 autosave)', () => {
     pipelineConfig: { language: 'Python', outputFolder: 'test', needsRebuild: false },
   };
 
-  it('serializes pipeline state into valid YAML', () => {
+  it('serializes pipeline state into valid YAML with paradigm as the first top-level key (SDP1)', () => {
     const yaml = serializePipeline(sampleState);
+    expect(yaml.startsWith('paradigm: imperative\n')).toBe(true);
     expect(yaml).toContain('Node 1');
     expect(yaml).toContain('LOG_LEVEL');
     expect(yaml).toContain('DirectRunner');
+
+    const sdpYaml = serializePipeline({
+      ...sampleState,
+      pipelineConfig: { ...sampleState.pipelineConfig, paradigm: 'sdp' },
+    });
+    expect(sdpYaml.startsWith('paradigm: sdp\n')).toBe(true);
+    expect(sdpYaml).not.toContain('  paradigm:');
   });
 
   it('does not post save message when isLoaded is false', () => {

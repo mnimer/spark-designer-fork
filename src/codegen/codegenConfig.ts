@@ -68,8 +68,17 @@ export const CROSSCUTTING_KIND: SkillKind = 'crosscutting';
 /** Kinds that own catalog `sparkTransform` values (1:1 invariant). */
 export const TRANSFORM_OWNER_KINDS: ReadonlySet<SkillKind> = new Set<SkillKind>(['io', 'transform']);
 
-/** Wildcard value for `metadata.languages` and `metadata.runners`. */
+/** Wildcard value for `metadata.languages`, `metadata.runners`, and `metadata.paradigms`. */
 export const SKILL_WILDCARD = 'all';
+
+/** Pipeline paradigms used in skill `metadata.paradigms`. */
+export const SKILL_PARADIGMS = {
+    imperative: 'imperative',
+    sdp: 'sdp',
+} as const;
+
+/** A skill paradigm (`imperative` | `sdp`). */
+export type SkillParadigm = (typeof SKILL_PARADIGMS)[keyof typeof SKILL_PARADIGMS];
 
 /** Skill language ids, one per `SupportedLanguage`. */
 export const SKILL_LANGUAGE_IDS: Readonly<Record<SupportedLanguage, string>> = {
@@ -87,14 +96,25 @@ export const SKILL_RUNNERS = {
     local: 'local',
     dataprocCluster: 'dataproc-cluster',
     serverlessSpark: 'serverless-spark',
+    sdp: 'sdp',
 } as const;
 
 /** A runner id. */
 export type SkillRunner = (typeof SKILL_RUNNERS)[keyof typeof SKILL_RUNNERS];
 
-/** Runners that each language supports. Every project gets every runner script (parity). */
+/** Runners that each language supports in imperative mode. Every project gets every runner script (parity). */
 export const LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly SkillRunner[]>> = {
     python: [SKILL_RUNNERS.local, SKILL_RUNNERS.dataprocCluster, SKILL_RUNNERS.serverlessSpark],
+};
+
+/** Runners that each language supports in Spark Declarative Pipelines (`sdp`) mode. */
+export const SDP_LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly SkillRunner[]>> = {
+    python: [SKILL_RUNNERS.sdp],
+};
+
+/** Every runner supported across imperative and SDP modes per language. */
+export const ALL_LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly SkillRunner[]>> = {
+    python: [...LANGUAGE_RUNNERS.python, ...SDP_LANGUAGE_RUNNERS.python],
 };
 
 /** Pipeline features that gate skills (skill frontmatter `metadata.preloadWhen`). */
@@ -105,6 +125,8 @@ export const PIPELINE_FEATURES = {
     customInstructions: 'custom_instructions',
     pythonDatasource: 'python_datasource',
     xlang: 'xlang',
+    sdpAutoCdc: 'sdp_auto_cdc',
+    sdpQuarantine: 'sdp_quarantine',
 } as const;
 
 /** A pipeline feature. */
@@ -233,6 +255,11 @@ export const PROMPT_SECTIONS = {
     /** Instruction line above the ExecutionPlan summary and JSON fence. */
     executionPlanIntro:
         'Follow this deterministic pre-computed execution plan for node topological order, batch vs. streaming execution, fan-out `.cache()` / `.unpersist()` insertion, `foreachBatch` sink grouping, dead-letter queue (`_corrupt_record` / `_error`) splits, and runtime artifacts:',
+    /** Heading of the deterministic Spark Declarative Pipelines (`sdp`) Execution Plan section. */
+    sdpExecutionPlanHeading: '## SDP Execution Plan',
+    /** Instruction line above the SDP Execution Plan summary and JSON fence. */
+    sdpExecutionPlanIntro:
+        'Follow this deterministic pre-computed Spark Declarative Pipelines (Apache Spark 4.2+) execution plan for dataset names, `pyspark.pipelines` decorators, `spark-pipeline.yml` specification fields, pure `src/transforms.py` helpers, offline `tests/test_transforms.py` tests, quarantine datasets, Auto CDC SCD Type 1 flows, and static runner configuration:',
     /** Prefix of every skill heading (`## Skill: core-pyspark`). */
     skillHeadingPrefix: '## Skill: ',
     /** Suffix of the language reference heading (`### PySpark specifics`). */

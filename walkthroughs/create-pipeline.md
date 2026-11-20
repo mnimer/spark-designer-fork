@@ -1,15 +1,16 @@
-# Create your first Apache Beam Pipeline
+# Create Your First Apache Spark Pipeline
 
-Apache Beam pipelines are stored as `.beam` visual definition files.
+Apache Spark pipelines save as human-readable `.spark` YAML definition files.
 
 ### Getting Started
 
-You can create a new pipeline at any time:
+Create a new pipeline at any time:
 
-1. Click the **Create New Pipeline** button below, or use the **`+`** icon at the top of the **DataFlow Designer** sidebar.
-2. An untitled pipeline editor will open immediately with a canvas ready for your nodes.
-3. Save the file (`Cmd+S` or `Ctrl+S`) to your workspace directory as `<name>.beam`.
+1. Click **Create New Pipeline** below, or click the **`+`** icon in the **Spark Designer** sidebar.
+2. Select **Imperative PySpark (Default)** or **Spark Declarative Pipelines (SDP)** when prompted.
+3. Choose a folder in your workspace and save the file as `<name>.spark`.
+4. The visual canvas editor opens automatically, ready for your Sources, Steps, and Sinks.
 
 ***
 
-[Create New Pipeline](command:dataflow-pipeline-builder.createNewPipeline)
+[Create New Pipeline](command:spark-pipeline-builder.createNewPipeline)

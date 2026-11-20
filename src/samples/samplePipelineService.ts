@@ -321,13 +321,18 @@ export async function getSamplePipelines(context: vscode.ExtensionContext): Prom
                     ? `Pipeline flow: ${flow}`
                     : `Pre-configured ${language} sample pipeline for ${runner} runner`;
 
+                const badge =
+                    parsedYaml?.paradigm === 'sdp' || parsedYaml?.pipelineConfig?.paradigm === 'sdp'
+                        ? 'SDP (4.2+)'
+                        : language;
+
                 results.push({
                     id: baseName,
                     filename: file,
                     title,
                     description,
                     category: 'Samples',
-                    badge: language,
+                    badge,
                     language,
                     runner,
                     nodesCount,

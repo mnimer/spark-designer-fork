@@ -26,9 +26,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { Suspense } from 'react';
 import { NodeDocsCard } from './common/NodeDocsCard';
+import { SdpSinkSettingsField } from './common/SdpSinkSettingsField';
 import { StepExecutionSettingsField } from './common/StepExecutionSettingsField';
 import { StreamingSinkSettingsField } from './common/StreamingSinkSettingsField';
 import { hasInlineNodeDocsCard } from '../utils/nodeDocumentation';
+import type { PipelineParadigm } from '../utils/sharedTypes';
 import {
   PROPERTY_FORM_REGISTRY,
   loadPropertyForm,
@@ -38,6 +40,14 @@ import {
 
 export { PROPERTY_FORM_REGISTRY, loadPropertyForm };
 export type { PropertyFormComponent, PropertyFormProps };
+
+/**
+ * Props accepted by the top-level {@link PropertyForm} dispatcher container.
+ */
+export interface PropertyFormContainerProps extends PropertyFormProps {
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
+  paradigm?: PipelineParadigm;
+}
 
 /**
  * Resolves a property form component from the registry using the node's immutable metadata.
@@ -103,11 +113,12 @@ const PropertyFormLoading: React.FC = () => (
  * Container component that dispatches specific node property sheets based on immutable node metadata.
  * Renders an explicit unregistered message when no matching registry entry is found.
  */
-export const PropertyForm: React.FC<PropertyFormProps> = ({
+export const PropertyForm: React.FC<PropertyFormContainerProps> = ({
   node,
   onChange,
   onAddKVMapper,
-  onAddPubSubSource
+  onAddPubSubSource,
+  paradigm,
 }) => {
   const Component = getPropertyFormComponent(node);
 
@@ -121,11 +132,27 @@ export const PropertyForm: React.FC<PropertyFormProps> = ({
     );
   }
 
+  const effectiveParadigm: PipelineParadigm =
+    paradigm ?? (node?.data?.paradigm === 'sdp' ? 'sdp' : 'imperative');
+
   return (
     <div className="flex-1 flex flex-col gap-4">
       {!hasInlineNodeDocsCard(node) && <NodeDocsCard node={node} />}
-      <StepExecutionSettingsField node={node} onChange={onChange} />
-      <StreamingSinkSettingsField node={node} onChange={onChange} />
+      <StepExecutionSettingsField
+        node={node}
+        onChange={onChange}
+        paradigm={effectiveParadigm}
+      />
+      <SdpSinkSettingsField
+        node={node}
+        onChange={onChange}
+        paradigm={effectiveParadigm}
+      />
+      <StreamingSinkSettingsField
+        node={node}
+        onChange={onChange}
+        paradigm={effectiveParadigm}
+      />
       <Suspense fallback={<PropertyFormLoading />}>
         {/* eslint-disable-next-line react-hooks/static-components */}
         <Component

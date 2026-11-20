@@ -1,0 +1,202 @@
+paradigm: sdp
+
+pipelineConfig:
+  language: PySpark
+
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  projectId: my-gcp-project
+  region: us-central1
+  jobId: sdp-biglake-iceberg-medallion
+  depsBucket: gs://my-spark-deps-bucket
+  sdpStorage: gs://my-sdp-checkpoints/medallion
+  sdpCatalog: lake
+  sdpDatabase: retail_medallion
+  sdpBigLakeMode: lakehouse
+  sdpBigLakeProject: my-gcp-project
+  sdpBigLakeCatalogId: retail_lakehouse
+
+runtimeVariables:
+  - key: ORDERS_SOURCE_URI
+    value: gs://my-retail-landing/orders/incoming/
+  - key: SDP_STORAGE
+    value: gs://my-sdp-checkpoints/medallion
+  - key: SDP_CATALOG
+    value: lake
+  - key: SDP_DATABASE
+    value: retail_medallion
+  - key: BIGLAKE_WAREHOUSE
+    value: bl://projects/my-gcp-project/catalogs/retail_lakehouse
+
+nodes:
+  - id: src_orders_csv
+    type: pipeline
+    position:
+      x: 80
+      y: 180
+    data:
+      label: Raw Orders CSV Stream
+      type: SOURCE
+      iconName: FileText
+      spark_transform: CsvSource
+      supportedReadModes:
+        - batch
+        - streaming
+      defaultReadMode: streaming
+      properties:
+        readMode: streaming
+        storageBackend: gcs
+        path: gs://my-retail-landing/orders/incoming/
+        pathGlobFilter: orders-*.csv
+        header: true
+        inferSchema: false
+        mode: PERMISSIVE
+        sdpDatasetName: bronze_orders
+        schemaString: order_id STRING, customer_id STRING, store_id STRING, gross_amount STRING, discount_amount STRING, created_at STRING
+        schemaFields:
+          - name: order_id
+            type: STRING
+            nullable: false
+          - name: customer_id
+            type: STRING
+            nullable: true
+          - name: store_id
+            type: STRING
+            nullable: false
+          - name: gross_amount
+            type: STRING
+            nullable: false
+          - name: discount_amount
+            type: STRING
+            nullable: true
+          - name: created_at
+            type: STRING
+            nullable: false
+
+  - id: step_bronze_clean
+    type: pipeline
+    position:
+      x: 380
+      y: 180
+    data:
+      label: Bronze Order Projections
+      type: STEP
+      iconName: Wrench
+      spark_transform: WithColumns
+      properties:
+        sdpDatasetName: bronze_cleaned_orders
+        columns:
+          - name: event_timestamp
+            expression: to_timestamp(created_at)
+            castType: TIMESTAMP
+          - name: net_amount
+            expression: CAST(gross_amount AS DOUBLE) - COALESCE(CAST(discount_amount AS DOUBLE), 0.0)
+            castType: DOUBLE
+          - name: order_day
+            expression: to_date(to_timestamp(created_at))
+            castType: DATE
+
+  - id: step_silver_watermark
+    type: pipeline
+    position:
+      x: 680
+      y: 180
+    data:
+      label: Silver Event Watermark
+      type: STEP
+      iconName: Clock
+      spark_transform: Watermark
+      properties:
+        sdpDatasetName: silver_watermarked_orders
+        eventTimeColumn: event_timestamp
+        delayThreshold: 10 minutes
+        sourceTimestampType: timestamp
+
+  - id: step_silver_validate
+    type: pipeline
+    position:
+      x: 980
+      y: 180
+    data:
+      label: Silver Order Validation
+      type: STEP
+      iconName: Filter
+      spark_transform: Filter
+      errorOutput: true
+      properties:
+        sdpDatasetName: silver_orders
+        mode: sql
+        condition: order_id IS NOT NULL AND store_id IS NOT NULL AND net_amount > 0
+
+  - id: step_gold_agg
+    type: pipeline
+    position:
+      x: 1280
+      y: 180
+    data:
+      label: Gold Daily Store Revenue
+      type: STEP
+      iconName: BarChart
+      spark_transform: GroupByAgg
+      properties:
+        sdpDatasetName: gold_store_daily_metrics
+        groupByColumns:
+          - store_id
+          - order_day
+        windowType: None
+        aggregations:
+          - column: "*"
+            fn: count
+            alias: order_count
+          - column: net_amount
+            fn: sum
+            alias: net_revenue
+
+  - id: sink_gold_iceberg
+    type: pipeline
+    position:
+      x: 1580
+      y: 180
+    data:
+      label: Gold BigLake Iceberg Table
+      type: SINK
+      iconName: Database
+      spark_transform: IcebergSink
+      streamingSinkMode: native
+      properties:
+        catalogName: lake
+        catalogType: biglake
+        catalogUri: https://biglake.googleapis.com/iceberg/v1/restcatalog
+        namespace: retail_medallion
+        table: retail_medallion.gold_store_revenue
+        warehouse: gs://my-retail-lakehouse-warehouse
+        warehouseLocation: gs://my-retail-lakehouse-warehouse
+        writeOperation: append
+        authMode: default
+        sdpTableName: gold_store_revenue
+        sdpFormat: iceberg
+        sdpPartitionCols:
+          - order_day
+
+edges:
+  - id: e_csv_to_bronze
+    source: src_orders_csv
+    target: step_bronze_clean
+  - id: e_bronze_to_watermark
+    source: step_bronze_clean
+    sourceHandle: valid
+    target: step_silver_watermark
+  - id: e_watermark_to_validate
+    source: step_silver_watermark
+    sourceHandle: valid
+    target: step_silver_validate
+  - id: e_validate_to_gold
+    source: step_silver_validate
+    sourceHandle: valid
+    target: step_gold_agg
+  - id: e_gold_to_iceberg
+    source: step_gold_agg
+    sourceHandle: valid
+    target: sink_gold_iceberg

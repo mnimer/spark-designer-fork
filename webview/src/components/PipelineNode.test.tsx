@@ -573,6 +573,81 @@ describe('PipelineNode', () => {
     expect(screen.getByTestId('handle-source-right-valid')).toHaveStyle({ top: '50%' });
     expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
   });
+
+  it('renders SDP dataset badges (VIEW, MV, TABLE, CDC, SINK) instead of CACHE/foreachBatch and adjusts SDP handles (SDP2)', () => {
+    const badges = ['VIEW', 'MV', 'TABLE', 'CDC', 'SINK'] as const;
+    for (const badge of badges) {
+      const { unmount } = render(
+        <PipelineNode
+          id={`sdp-${badge}`}
+          data={{
+            label: `Dataset ${badge}`,
+            type: badge === 'SINK' ? 'SINK' : 'STEP',
+            iconName: 'Database',
+            spark_transform: badge === 'SINK' ? 'KafkaSink' : 'WithColumns',
+            paradigm: 'sdp',
+            sdpBadge: badge,
+            sdpDatasetName: `ds_${badge.toLowerCase()}`,
+            isCached: true,
+            isForeachBatchSink: true,
+          }}
+        />
+      );
+
+      expect(screen.getByTestId('node-sdp-badge')).toHaveTextContent(badge);
+      expect(screen.queryByTestId('node-cache-badge')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('node-foreachbatch-badge')).not.toBeInTheDocument();
+      unmount();
+    }
+
+    // ParsePayload hides red error DLQ handle in SDP mode, while DataQualityAssert retains it
+    const { rerender } = render(
+      <PipelineNode
+        id="sdp-parse"
+        data={{
+          label: 'Parse JSON',
+          type: 'STEP',
+          iconName: 'FileCode',
+          spark_transform: 'ParsePayload',
+          paradigm: 'sdp',
+          sdpBadge: 'TABLE',
+        }}
+      />
+    );
+    expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
+
+    rerender(
+      <PipelineNode
+        id="sdp-dq"
+        data={{
+          label: 'Assert Quality',
+          type: 'STEP',
+          iconName: 'ShieldCheck',
+          spark_transform: 'DataQualityAssert',
+          paradigm: 'sdp',
+          sdpBadge: 'TABLE',
+        }}
+      />
+    );
+    expect(screen.getByTestId('handle-source-right-error')).toBeInTheDocument();
+
+    // MergeCdcScd in SDP mode exposes single left handle without right snapshot handle
+    rerender(
+      <PipelineNode
+        id="sdp-merge"
+        data={{
+          label: 'Auto CDC',
+          type: 'STEP',
+          iconName: 'GitMerge',
+          spark_transform: 'MergeCdcScd',
+          paradigm: 'sdp',
+          sdpBadge: 'CDC',
+        }}
+      />
+    );
+    expect(screen.getByTestId('handle-target-left-left')).toBeInTheDocument();
+    expect(screen.queryByTestId('handle-target-left-right')).not.toBeInTheDocument();
+  });
 });
 
 

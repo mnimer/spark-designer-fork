@@ -360,17 +360,20 @@ nodes:
     }
   });
 
-  it('loads all 4 bundled .spark sample files and resolves every node without unregistered warnings', async () => {
+  it('loads all bundled .spark sample files and resolves every node without unregistered warnings', async () => {
     const samplesDir = path.resolve(__dirname, '../../../resources/samples');
     expect(fs.existsSync(samplesDir)).toBe(true);
     const sampleFiles = fs.readdirSync(samplesDir).filter((f) => f.endsWith('.spark')).sort();
-    expect(sampleFiles).toHaveLength(4);
+    expect(sampleFiles.length).toBeGreaterThanOrEqual(4);
     for (const sampleFile of sampleFiles) {
       const content = fs.readFileSync(path.join(samplesDir, sampleFile), 'utf8');
       const parsed = YAML.parse(content);
+      const sampleParadigm = parsed?.paradigm === 'sdp' ? 'sdp' : 'imperative';
       const migratedNodes = migrateLegacyNodes(parsed.nodes || []);
       for (const node of migratedNodes) {
-        const { container, unmount } = render(<PropertyForm node={node} onChange={vi.fn()} />);
+        const { container, unmount } = render(
+          <PropertyForm node={node} paradigm={sampleParadigm} onChange={vi.fn()} />
+        );
         await waitForPanelToLoad();
         expect(screen.queryByText(/No property form registered for type/i)).not.toBeInTheDocument();
         await waitFor(() => expect(container.querySelectorAll('input, select, textarea').length).toBeGreaterThan(0));
@@ -611,6 +614,33 @@ describe('PropertyForm shared execution & streaming controls (A9 / A11)', () => 
     expect(readModeSelect).toHaveValue('streaming');
     fireEvent.change(readModeSelect, { target: { value: 'batch' } });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ readMode: 'batch' }));
+  });
+
+  it('swaps StreamingSinkSettingsField for SdpSinkSettingsField on SINK nodes when paradigm is sdp (SDP2)', async () => {
+    const onChange = vi.fn();
+    render(
+      <PropertyForm
+        node={{
+          id: 'iceberg-sdp-1',
+          data: {
+            label: 'Silver Orders',
+            type: 'SINK',
+            spark_transform: 'IcebergSink',
+            executionMode: 'streaming',
+            properties: {},
+          },
+        }}
+        paradigm="sdp"
+        onChange={onChange}
+      />
+    );
+    await waitForPanelToLoad();
+
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+    expect(screen.getByText('SDP Target Dataset & Sink Settings')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/SDP Target Mode/i, { selector: 'select' })
+    ).toHaveValue('catalog_table');
   });
 });
 

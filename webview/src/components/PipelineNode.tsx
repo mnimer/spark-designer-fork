@@ -22,6 +22,11 @@ import {
   isMergeCdcScdNode,
   type ReadMode,
 } from '../utils/sparkDagRules';
+import type {
+  PipelineParadigm,
+  SdpDatasetBadge,
+  SdpDatasetKind,
+} from '../utils/sharedTypes';
 
 /**
  * React Flow custom node properties representing an Apache Spark pipeline transform.
@@ -44,6 +49,10 @@ export interface PipelineNodeProps {
     executionMode?: ReadMode;
     isCached?: boolean;
     isForeachBatchSink?: boolean;
+    paradigm?: PipelineParadigm;
+    sdpBadge?: SdpDatasetBadge;
+    sdpDatasetName?: string;
+    sdpKind?: SdpDatasetKind;
     supportedReadModes?: ReadMode[];
     defaultReadMode?: ReadMode;
     errorOutput?: boolean;
@@ -54,17 +63,57 @@ export interface PipelineNodeProps {
 }
 
 /**
+ * Resolves Tailwind color classes and descriptive tooltip text for an SDP dataset badge.
+ */
+function getSdpBadgeMeta(
+  badge: SdpDatasetBadge,
+  datasetName?: string
+): { classes: string; title: string } {
+  const suffix = datasetName ? ` (${datasetName})` : '';
+  switch (badge) {
+    case 'VIEW':
+      return {
+        classes: 'bg-slate-500/20 border-slate-400/40 text-slate-200',
+        title: `SDP Temporary View @dp.temporary_view${suffix}`,
+      };
+    case 'MV':
+      return {
+        classes: 'bg-purple-500/15 border-purple-500/40 text-purple-300',
+        title: `SDP Materialized View @dp.materialized_view${suffix}`,
+      };
+    case 'CDC':
+      return {
+        classes: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+        title: `SDP Auto CDC Flow dp.create_auto_cdc_flow${suffix}`,
+      };
+    case 'SINK':
+      return {
+        classes: 'bg-rose-500/15 border-rose-500/40 text-rose-300',
+        title: `SDP External Streaming Sink dp.create_sink${suffix}`,
+      };
+    case 'TABLE':
+    default:
+      return {
+        classes: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300',
+        title: `SDP Streaming Table @dp.table${suffix}`,
+      };
+  }
+}
+
+/**
  * Renders a pipeline node card on the React Flow canvas.
  */
 export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }) => {
   const isSource = data.type === 'SOURCE';
   const isSink = data.type === 'SINK';
   const isStep = data.type === 'STEP';
+  const isSdpMode = data.paradigm === 'sdp';
   const dagNode = { id: id || '', data };
   const showTargetHandle = !isSource;
   const isJoin = isStep && isJoinNode(dagNode);
   const isMergeCdcScd = isStep && isMergeCdcScdNode(dagNode);
-  const isDualInput = isJoin || isMergeCdcScd;
+  const isSdpMergeCdcLeftOnly = isMergeCdcScd && isSdpMode;
+  const isDualInput = isJoin || (isMergeCdcScd && !isSdpMode);
   const isConditionalSplit = isStep && isConditionalSplitNode(dagNode);
   const splitHandles = isConditionalSplit ? getConditionalSplitHandles(dagNode) : [];
   const splitMinHeight = isConditionalSplit
@@ -73,7 +122,14 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
   const inputArity = !isSource ? getNodeInputArity(dagNode) : 1;
   const isMultiInput = isStep && inputArity === 'n';
   const isBroadcastJoin = isJoin && data.properties?.broadcastRight === true;
-  const hasErrorHandle = isStep && !isConditionalSplit && isErrorCapableStep(dagNode);
+  const hasErrorHandle =
+    isStep &&
+    !isConditionalSplit &&
+    (isSdpMode
+      ? data.spark_transform === 'DataQualityAssert'
+      : isErrorCapableStep(dagNode));
+  const sdpBadgeMeta =
+    isSdpMode && data.sdpBadge ? getSdpBadgeMeta(data.sdpBadge, data.sdpDatasetName) : null;
 
   const effectiveExecutionMode: ReadMode = isSource
     ? (data.executionMode ?? getEffectiveSourceReadMode(dagNode))
@@ -275,7 +331,34 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
           </span>
         </>
       )}
-      {showTargetHandle && !isDualInput && (
+      {showTargetHandle && isSdpMergeCdcLeftOnly && (
+        <>
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="left"
+            style={{
+              top: '50%',
+              left: -7,
+              width: 14,
+              height: 14,
+              backgroundColor: data.hasValidationError ? '#ef4444' : '#3b82f6',
+            }}
+            className={`w-3.5 h-3.5 border-none ${
+              data.hasValidationError ? 'bg-red-500' : 'bg-blue-500'
+            }`}
+            title="CDC Source Stream Input (left)"
+          />
+          <span
+            data-testid="join-left-handle-label"
+            style={{ top: '50%' }}
+            className="pointer-events-none select-none absolute -left-6 -translate-y-1/2 text-[10px] font-bold leading-none uppercase text-blue-300 bg-[var(--vscode-canvas-bg,#0d1117)]/90 px-1 py-0.5 rounded border border-blue-500/30"
+          >
+            L
+          </span>
+        </>
+      )}
+      {showTargetHandle && !isDualInput && !isSdpMergeCdcLeftOnly && (
         <Handle
           type="target"
           position={Position.Left}
@@ -364,7 +447,16 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
                 N-IN
               </span>
             )}
-            {data.isCached && (
+            {sdpBadgeMeta && data.sdpBadge && (
+              <span
+                data-testid="node-sdp-badge"
+                title={sdpBadgeMeta.title}
+                className={`px-1 py-0.5 rounded text-[10px] font-bold leading-none tracking-wider uppercase border ${sdpBadgeMeta.classes}`}
+              >
+                {data.sdpBadge}
+              </span>
+            )}
+            {!isSdpMode && data.isCached && (
               <span
                 data-testid="node-cache-badge"
                 title="Output DataFrame is cached before downstream fan-out and unpersisted after terminal writes"
@@ -373,7 +465,7 @@ export const PipelineNode: React.FC<PipelineNodeProps> = ({ id, data, selected }
                 CACHE
               </span>
             )}
-            {isSink && data.isForeachBatchSink && (
+            {!isSdpMode && isSink && data.isForeachBatchSink && (
               <span
                 data-testid="node-foreachbatch-badge"
                 title="Written via Structured Streaming foreachBatch micro-batch callback"

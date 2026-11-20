@@ -34,6 +34,12 @@ export type PipelineStatus = 'idle' | 'running' | 'completed' | 'failed' | 'stop
 export const MAX_EXECUTION_LOG_LINES = 5000;
 
 /**
+ * Error message emitted when a second Spark Declarative Pipeline run is requested while another run is active.
+ */
+export const SDP_OVERLAPPING_RUN_GUARD_MESSAGE =
+  'Cannot start an overlapping Spark Declarative Pipeline run while another run is active on shared checkpoint storage. Stop or wait for the current run first.';
+
+/**
  * Appends a new log entry to the log array, capping the result at `maxLines` by dropping oldest entries.
  *
  * @param prev Current log entries.
@@ -128,16 +134,31 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
   vscode,
 }: UsePipelineExecutionOptions<TConfig>): UsePipelineExecutionResult {
   const [pipelineLogs, setPipelineLogs] = useState<LogEntry[]>([]);
-  const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>('idle');
+  const [pipelineStatus, setPipelineStatusRaw] = useState<PipelineStatus>('idle');
   const [runnerCommand, setRunnerCommand] = useState<string>('');
 
-  // Refs for freshest configs to prevent stale closures without reattaching event listeners
+  // Refs for freshest configs and status to prevent stale closures and overlapping SDP runs
+  const pipelineStatusRef = useRef<PipelineStatus>('idle');
   const jobConfigRef = useRef(jobConfig);
   const runtimeVariablesRef = useRef(runtimeVariables);
   const pipelineConfigRef = useRef(pipelineConfig);
   const setJobConfigRef = useRef(setJobConfig);
   const projectIdRef = useRef(projectId);
   const vscodeRef = useRef(vscode);
+
+  const setPipelineStatus: React.Dispatch<React.SetStateAction<PipelineStatus>> = useCallback(
+    (action) => {
+      setPipelineStatusRaw((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        pipelineStatusRef.current = next;
+        return next;
+      });
+      if (typeof action !== 'function') {
+        pipelineStatusRef.current = action;
+      }
+    },
+    []
+  );
 
   // Synchronise refs in effect to avoid accessing/updating refs during render
   useEffect(() => {
@@ -158,8 +179,22 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
     }
   }, []);
 
-  // Outbound run handler: clears logs, sets status to running, posts runPipeline command
+  // Outbound run handler: guards SDP overlapping runs, clears logs, sets status to running, posts runPipeline
   const handleRunNow = useCallback(() => {
+    const activeParadigm =
+      (pipelineConfigRef.current as { paradigm?: string } | undefined)?.paradigm ??
+      (jobConfigRef.current as Record<string, unknown> | undefined)?.paradigm;
+    if (activeParadigm === 'sdp' && pipelineStatusRef.current === 'running') {
+      const overlapEntry: LogEntry = {
+        id: `sdp-overlap-${Date.now()}`,
+        text: `[Error]: ${SDP_OVERLAPPING_RUN_GUARD_MESSAGE}\n`,
+        stream: 'stderr',
+        timestamp: new Date().toLocaleTimeString(),
+      };
+      setPipelineLogs((prev) => appendLog(prev, overlapEntry));
+      return;
+    }
+
     console.log('[@usePipelineExecution] handleRunNow called');
     setPipelineLogs([]);
     setPipelineStatus('running');
@@ -169,7 +204,7 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
       runtimeVariables: runtimeVariablesRef.current,
       pipelineConfig: pipelineConfigRef.current,
     });
-  }, [post]);
+  }, [post, setPipelineStatus]);
 
   // Outbound stop handler: posts stopPipeline command including jobConfig and remote cancel option
   const handleStopPipeline = useCallback((options?: StopPipelineOptions) => {
@@ -248,7 +283,7 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
 
     window.addEventListener('message', handleExecutionMessage);
     return () => window.removeEventListener('message', handleExecutionMessage);
-  }, []);
+  }, [setPipelineStatus]);
 
   return {
     pipelineLogs,

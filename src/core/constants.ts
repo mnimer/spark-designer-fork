@@ -5,6 +5,7 @@
 
 import YAML from 'yaml';
 import { DEFAULT_IGNORE_PATTERNS } from '../resources/resourceLoader';
+import { DEFAULT_PIPELINE_PARADIGM, type PipelineParadigm } from '../shared/types';
 
 /**
  * File extension for Apache Spark pipeline design files.
@@ -14,41 +15,48 @@ export const PIPELINE_FILE_EXT = '.spark';
 /**
  * View type of the custom Spark pipeline editor.
  *
- * MUST stay in sync with `contributes.customEditors[0].viewType` in package.json and with
- * the `onCustomEditor:` activation event. Centralised here because a typo in any one of
- * the call sites fails silently -- VS Code simply opens the file in the plain text editor
- * instead of the designer, with no error.
+ * Keep this value synchronized with `contributes.customEditors[0].viewType` and
+ * `onCustomEditor:` in package.json so VS Code opens pipeline files in the visual designer.
  */
 export const SPARK_EDITOR_VIEW_TYPE = 'spark-pipeline-builder.sparkEditor';
 
 /**
  * Generates initial starter pipeline document content serialized in YAML format.
- * Ensures that newly created .spark pipeline files are byte-consistent with
- * pipelines saved from the designer.
- * 
- * @returns YAML-serialized starter pipeline content
+ * Keeps newly created .spark pipeline files byte-identical to pipelines saved from the webview.
+ *
+ * @param paradigm Target pipeline authoring paradigm ('imperative' default or 'sdp').
+ * @returns YAML-serialized starter pipeline content.
  */
-export function getInitialPipelineContent(): string {
-    // NOTE: key order and key set deliberately mirror the webview's `PipelineState`
-    // (webview/src/hooks/usePipelinePersistence.ts), which serializes with a plain
-    // YAML.stringify. Matching both means a brand new pipeline is structurally
-    // indistinguishable from one that has been saved once -- which is the entire point
-    // of this fix. `runtimeVariables` in particular is part of every saved document;
-    // the loader tolerates its absence by defaulting to [], but omitting it here would
-    // leave new files subtly different from saved ones.
+export function getInitialPipelineContent(paradigm: PipelineParadigm = DEFAULT_PIPELINE_PARADIGM): string {
+    const resolvedParadigm: PipelineParadigm = paradigm === 'sdp' ? 'sdp' : 'imperative';
+    // NOTE: Key order and key set match the webview PipelineState serializer in usePipelinePersistence.ts.
+    // Matching both keeps a newly created pipeline structurally identical to a saved document.
     return YAML.stringify({
+        paradigm: resolvedParadigm,
         nodes: [],
         edges: [],
         runtimeVariables: [],
-        jobConfig: {
-            runner: 'Local',
-            machineType: 'n1-standard-1',
-            minInstances: 1,
-            maxInstances: 10,
-            gcsStagingPath: '',
-            network: '',
-            subnetwork: ''
-        },
+        jobConfig:
+            resolvedParadigm === 'sdp'
+                ? {
+                    runner: 'ServerlessSpark',
+                    runtimeVersion: '4.0',
+                    machineType: 'n1-standard-1',
+                    minInstances: 1,
+                    maxInstances: 10,
+                    gcsStagingPath: '',
+                    network: '',
+                    subnetwork: ''
+                }
+                : {
+                    runner: 'Local',
+                    machineType: 'n1-standard-1',
+                    minInstances: 1,
+                    maxInstances: 10,
+                    gcsStagingPath: '',
+                    network: '',
+                    subnetwork: ''
+                },
         pipelineConfig: {
             language: 'PySpark',
             outputFolder: '',

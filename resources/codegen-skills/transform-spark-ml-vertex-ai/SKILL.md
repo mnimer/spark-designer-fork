@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative]
   transforms: [SparkMlAndVertexAi, SparkMlInference, VertexAiInference]
   preloadWhen: []
   sources:

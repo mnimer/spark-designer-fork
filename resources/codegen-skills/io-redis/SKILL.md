@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative, sdp]
   transforms: [RedisSource, RedisSink]
   preloadWhen: []
   sources:
@@ -15,6 +16,7 @@ metadata:
   validated: true
 ---
 
+> **SDP Mode Note (`paradigm: sdp`)**: In Spark Declarative Pipelines mode, only the source reader from this skill applies inside `@dp.table` or `@dp.materialized_view` dataset functions. Imperative `write_sinks` and `foreachBatch` sink patterns are unsupported in SDP.
 # Redis Source and Sink (`RedisSource`, `RedisSink`)
 
 Use these rules when generating PySpark 4.x code for `RedisSource` and `RedisSink` nodes.

@@ -143,4 +143,39 @@ describe('StepExecutionSettingsField', () => {
       readMode: 'streaming',
     });
   });
+
+  it('hides manual Cache Output toggle in SDP mode and exposes SDP Dataset Persistence selector (SDP2)', () => {
+    expect(
+      shouldShowStepCacheToggle({ data: { type: 'STEP', executionMode: 'batch' } }, 'sdp')
+    ).toBe(false);
+
+    const handleChange = vi.fn();
+    render(
+      <StepExecutionSettingsField
+        node={{
+          id: 'step-sdp-1',
+          data: {
+            type: 'STEP',
+            spark_transform: 'Filter',
+            executionMode: 'batch',
+            paradigm: 'sdp',
+            properties: {},
+          },
+        }}
+        paradigm="sdp"
+        onChange={handleChange}
+      />
+    );
+
+    expect(screen.queryByLabelText(/Cache Output/i)).not.toBeInTheDocument();
+    const sdpPersistenceSelect = screen.getByLabelText(/SDP Dataset Persistence/i, {
+      selector: 'select',
+    });
+    expect(sdpPersistenceSelect).toHaveValue('auto');
+
+    fireEvent.change(sdpPersistenceSelect, { target: { value: 'temporary_view' } });
+    expect(handleChange).toHaveBeenCalledWith({
+      sdpDatasetType: 'temporary_view',
+    });
+  });
 });

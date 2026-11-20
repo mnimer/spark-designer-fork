@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative]
   transforms: [VectorStoreSink]
   preloadWhen: []
   sources:

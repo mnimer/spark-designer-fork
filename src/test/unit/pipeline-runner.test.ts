@@ -509,8 +509,15 @@ describe('PipelineRunner boundary and failure cases (T5)', () => {
             expect(env.BATCH_TTL).toBe('2h');
         });
 
-        it('omits USE_SPARK_CONNECT unless the flag is exactly true', () => {
-            for (const flag of [false, undefined, 'true' as unknown as boolean]) {
+        it('exports USE_SPARK_CONNECT for explicit booleans and omits it otherwise', () => {
+            const explicitFalse = buildRunnerEnvironment({
+                baseEnv: {},
+                exists: () => false,
+                jobConfig: { useSparkConnect: false },
+            });
+            expect(explicitFalse.env.USE_SPARK_CONNECT).toBe('false');
+
+            for (const flag of [undefined, 'true' as unknown as boolean]) {
                 const { env } = buildRunnerEnvironment({ baseEnv: {}, exists: () => false, jobConfig: { useSparkConnect: flag } });
                 expect(env.USE_SPARK_CONNECT).toBeUndefined();
             }

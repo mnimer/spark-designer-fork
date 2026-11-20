@@ -1,9 +1,9 @@
-# Generate Production Beam Code
+# Generate Production PySpark & SDP Code
 
-Transform your visual design into production-grade Apache Beam pipeline code with Gemini AI.
+Transform your `.spark` visual graph into a complete Apache Spark 4.x repository with Gemini AI.
 
 ### Features
 
-- **Multi-Language Support**: Generate clean Java or Python Beam pipelines.
-- **Complete Project Scaffolding**: Automatically generates `pom.xml`, `requirements.txt`, Dockerfiles, unit tests, and runner execution scripts (`run_directrunner.sh`, `run_dataflowrunner.sh`).
-- **One-Click Regeneration**: Tweak your visual canvas or node instructions and regenerate your code artifacts instantly.
+- **Dual Paradigm Output**: Synthesize Imperative PySpark (`src/pipeline.py` with `read_sources`, `transform`, and `write_sinks`) or Spark Declarative Pipelines (`spark-pipeline.yml` and `transformations/*.py`).
+- **Offline Testable Helpers**: Generates pure DataFrame helpers and `pytest` unit test suites (`tests/test_pipeline.py` or `tests/test_transforms.py`).
+- **Ready-to-Run Packaging**: Emits `requirements.txt`, container definitions, and launch scripts for Local Spark, Dataproc Clusters, Serverless Spark, and Managed Data Pipelines.

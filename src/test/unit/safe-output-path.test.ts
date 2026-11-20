@@ -102,10 +102,13 @@ describe('resolveSafeOutputPath - Path Traversal Containment', () => {
 
 describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
     it('accepts all expected runner script templates and execution scripts', () => {
-        // Direct basenames (Spark 4.x and legacy aliases)
+        // Direct basenames (Spark 4.x, SDP 4.2+, and legacy aliases)
         expect(isAllowedExecutableScript('run_local.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_dataproc_cluster.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_serverless_spark.sh')).toBe(true);
+        expect(isAllowedExecutableScript('run_sdp_local.sh')).toBe(true);
+        expect(isAllowedExecutableScript('run_sdp_dataproc.sh')).toBe(true);
+        expect(isAllowedExecutableScript('run_sdp_serverless.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_directrunner.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_dataflowrunner.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_dataflow.sh')).toBe(true);
@@ -151,11 +154,14 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_local.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataproc_cluster.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_serverless_spark.sh')).toBe(true);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_local.sh')).toBe(true);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_dataproc.sh')).toBe(true);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_serverless.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_directrunner.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataflowrunner.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataflow.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sparkrunner.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_spark.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(8);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(11);
     });
 });

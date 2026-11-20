@@ -484,4 +484,69 @@ describe('getCodegenSkillCatalog', () => {
         expect(common.body).toContain('def write_sinks(dfs: dict[str, DataFrame], config: dict[str, Any]) -> None:');
         expect(common.body).toContain('tests/test_pipeline.py');
     });
+
+    it('filters skills by paradigm so imperative runs omit sdp-* skills and sdp runs omit imperative-only skills (SDP6)', () => {
+        const bundledRoot = path.join(__dirname, '..', '..', '..', '..', 'resources', 'codegen-skills');
+        clearCodegenSkillCatalogCache();
+        const catalog = getCodegenSkillCatalog(bundledRoot);
+
+        const imperativeSelected = catalog
+            .select({
+                caller: 'generator',
+                language: 'python',
+                paradigm: 'imperative',
+                runners: new Set<SkillRunner>(['local', 'dataproc-cluster', 'serverless-spark']),
+                transforms: new Set(['IcebergSource', 'ForeachBatchSink', 'MergeCdcScd', 'DataQualityAssert', 'CachePersist']),
+                features: new Set(['streaming', 'sdp_auto_cdc', 'sdp_quarantine']),
+            })
+            .map((s) => s.skill.name);
+
+        expect(imperativeSelected).toContain('core-pyspark');
+        expect(imperativeSelected).toContain('core-streaming');
+        expect(imperativeSelected).toContain('runner-local');
+        expect(imperativeSelected).toContain('io-foreach-batch');
+        expect(imperativeSelected).toContain('transform-cache-persist');
+        expect(imperativeSelected).not.toContain('sdp-core');
+        expect(imperativeSelected).not.toContain('sdp-spec');
+        expect(imperativeSelected).not.toContain('sdp-auto-cdc');
+        expect(imperativeSelected).not.toContain('sdp-quality-quarantine');
+
+        const sdpSelected = catalog
+            .select({
+                caller: 'generator',
+                language: 'python',
+                paradigm: 'sdp',
+                runners: new Set<SkillRunner>(['sdp']),
+                transforms: new Set(['IcebergSource', 'IcebergSink', 'MergeCdcScd', 'DataQualityAssert', 'ForeachBatchSink', 'CachePersist', 'SparkMlAndVertexAi']),
+                features: new Set(['streaming', 'sdp_auto_cdc', 'sdp_quarantine']),
+            })
+            .map((s) => s.skill.name);
+
+        expect(sdpSelected).toContain('codegen-common');
+        expect(sdpSelected).toContain('core-pyspark');
+        expect(sdpSelected).toContain('sdp-core');
+        expect(sdpSelected).toContain('sdp-spec');
+        expect(sdpSelected).toContain('sdp-auto-cdc');
+        expect(sdpSelected).toContain('sdp-quality-quarantine');
+        expect(sdpSelected).toContain('io-iceberg');
+        expect(sdpSelected).toContain('verification-gate');
+        expect(sdpSelected).not.toContain('core-streaming');
+        expect(sdpSelected).not.toContain('runner-local');
+        expect(sdpSelected).not.toContain('runner-dataproc-cluster');
+        expect(sdpSelected).not.toContain('runner-serverless-spark');
+        expect(sdpSelected).not.toContain('io-foreach-batch');
+        expect(sdpSelected).not.toContain('io-vector-store');
+        expect(sdpSelected).not.toContain('transform-cache-persist');
+        expect(sdpSelected).not.toContain('transform-feature-prep');
+        expect(sdpSelected).not.toContain('transform-spark-ml-vertex-ai');
+    });
+
+    it('rejects unknown or empty paradigms in buildSkill metadata (SDP6)', () => {
+        expect(() => buildSkill(skillMd({ name: 'a', kind: 'io', extra: '  paradigms: [dlt]' }), 'a')).toThrow(
+            /paradigms has unknown value/
+        );
+        expect(() => buildSkill(skillMd({ name: 'a', kind: 'io', extra: '  paradigms: []' }), 'a')).toThrow(
+            /paradigms is required and must not be empty/
+        );
+    });
 });

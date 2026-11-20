@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [local]
+  paradigms: [imperative]
   transforms: []
   preloadWhen: []
   sources:
@@ -31,6 +32,7 @@ Copy the template below verbatim. Change only the `SPARK_PACKAGES`, `SPARK_JARS`
    - Running `./run_local.sh --test` (or `./run_local.sh --test <pytest-args>`) MUST execute `pytest tests/ -v` with the venv Python and `PYTHONPATH` rooted at the project directory.
    - Unit tests in `tests/test_pipeline.py` test `transform(dfs, config)` offline using a local in-memory `SparkSession` without requiring cloud credentials or network access.
 3. **Optional Spark Connect Mode (`ManagedSparkSession`)**:
+   - Keep `export USE_SPARK_CONNECT="${USE_SPARK_CONNECT:-false}"` by default. Never change the script default to `true` unless `jobConfig.useSparkConnect` is explicitly `true`.
    - Triggered when `USE_SPARK_CONNECT=true` or `SPARK_CONNECT_SESSION_TEMPLATE` is non-empty.
    - Exports `USE_SPARK_CONNECT=true` and `SPARK_CONNECT_SESSION_TEMPLATE` (plus `PROJECT_ID` and `REGION`) so `src/pipeline.py` initializes its session via `google.cloud.managed_spark_connect.ManagedSparkSession` (or `SparkSession.builder.remote(...)` when `SPARK_REMOTE` is set) instead of spawning a local JVM driver.
    - Executes `"${PYTHON}" -m src.pipeline "$@"` with the venv Python.

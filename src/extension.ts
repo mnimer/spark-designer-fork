@@ -7,6 +7,7 @@ import { SparkTreeProvider, type SparkJob } from './tree/sparkTree';
 import { SparkEditorProvider } from './editor/SparkEditorProvider';
 import { promptForSparkSaveLocation } from './editor/sparkSaveDialog';
 import { upgradeRestoredSparkTextTabs } from './editor/restoredTabUpgrade';
+import type { PipelineParadigm } from './shared/types';
 
 export type { WebviewHtmlOptions } from './webviewHtml';
 export {
@@ -97,13 +98,41 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('spark-pipeline-builder.createNewPipeline', async () => {
+            interface ParadigmPickItem extends vscode.QuickPickItem {
+                readonly paradigm: PipelineParadigm;
+            }
+
+            const paradigmItems: ParadigmPickItem[] = [
+                {
+                    label: 'Imperative PySpark (Default)',
+                    description: 'PySpark 4.x',
+                    detail: 'PySpark 4.x DataFrame & Structured Streaming (read_sources / transform / write_sinks)',
+                    paradigm: 'imperative'
+                },
+                {
+                    label: 'Spark Declarative Pipelines (SDP)',
+                    description: 'Apache Spark 4.2+',
+                    detail: 'Apache Spark 4.2+ pyspark.pipelines (spark-pipeline.yml, Streaming Tables & Materialized Views)',
+                    paradigm: 'sdp'
+                }
+            ];
+
+            const selectedParadigm = await vscode.window.showQuickPick(paradigmItems, {
+                title: 'Select Pipeline Paradigm',
+                placeHolder: 'Choose Imperative PySpark or Spark Declarative Pipelines (SDP)'
+            });
+
+            if (!selectedParadigm) {
+                return;
+            }
+
             const fileUri = await promptForSparkSaveLocation('Create New Apache Spark Pipeline', 'pipeline');
 
             if (!fileUri) {
-                return; // User cancelled
+                return;
             }
 
-            const initialContent = getInitialPipelineContent();
+            const initialContent = getInitialPipelineContent(selectedParadigm.paradigm);
 
             fs.writeFileSync(fileUri.fsPath, initialContent, 'utf-8');
             treeDataProvider.refresh();

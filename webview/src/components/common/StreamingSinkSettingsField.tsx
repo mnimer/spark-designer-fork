@@ -11,6 +11,7 @@ import { CollapsibleSection } from './CollapsibleSection';
 import { PropertyField } from './PropertyField';
 import { SelectField, type SelectFieldOption } from './SelectField';
 import type {
+  PipelineParadigm,
   SparkSinkTriggerSelection,
   SparkStreamingOutputMode,
 } from '../../utils/sharedTypes';
@@ -23,6 +24,8 @@ export interface StreamingSinkSettingsFieldProps {
   node: any;
   /** Callback invoked with the merged sink properties object. */
   onChange: (properties: any) => void;
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
+  paradigm?: PipelineParadigm;
 }
 
 const OUTPUT_MODE_OPTIONS: SelectFieldOption[] = [
@@ -45,7 +48,13 @@ const SINK_TRIGGER_OPTIONS: SelectFieldOption[] = [
  * @param node React Flow node inspected in PropertyForm.
  * @returns True when the node is a streaming sink or already defines streaming sink overrides.
  */
-export function shouldShowStreamingSinkSettings(node: any): boolean {
+export function shouldShowStreamingSinkSettings(
+  node: any,
+  paradigm?: PipelineParadigm
+): boolean {
+  if (paradigm === 'sdp' || node?.data?.paradigm === 'sdp') {
+    return false;
+  }
   const nodeType = String(node?.data?.type || '').toUpperCase();
   if (nodeType !== 'SINK') {
     return false;
@@ -66,15 +75,16 @@ export function shouldShowStreamingSinkSettings(node: any): boolean {
  * `triggerInterval`, and `checkpointLocation`) inside Sink property panels.
  *
  * @param props Sink node and property update callback.
- * @returns Collapsible streaming sink configuration section, or null for batch sinks.
+ * @returns Collapsible streaming sink configuration section, or null for batch or SDP sinks.
  */
 export const StreamingSinkSettingsField: React.FC<StreamingSinkSettingsFieldProps> = ({
   node,
   onChange,
+  paradigm,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(true);
 
-  if (!shouldShowStreamingSinkSettings(node)) {
+  if (!shouldShowStreamingSinkSettings(node, paradigm)) {
     return null;
   }
 

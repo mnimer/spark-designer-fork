@@ -533,4 +533,89 @@ describe('usePipelineGraph', () => {
     expect(result.current.isValidConnection({ source: 'extra', target: 'merge', sourceHandle: null, targetHandle: 'left' })).toBe(false);
     expect(result.current.isValidConnection({ source: 'extra', target: 'merge', sourceHandle: null, targetHandle: 'right' })).toBe(false);
   });
+
+  it('decorates SDP dataset badges, blocks unsupported palette additions, and allows left-only MergeCdcScd in SDP mode (SDP2)', () => {
+    const takeSnapshot = vi.fn();
+    const setPipelineConfig = vi.fn();
+
+    const { result } = renderHook(() =>
+      usePipelineGraph({
+        takeSnapshot,
+        setPipelineConfig,
+        paradigm: 'sdp',
+        jobConfig: { runner: 'ServerlessSpark', runtimeVersion: '4.0', checkpointRoot: '' },
+      })
+    );
+
+    // 1. Unsupported nodes (SpannerSink, FeaturePrep) are ignored by handleAddNode in SDP mode
+    act(() => {
+      result.current.handleAddNode('Cloud Spanner', 'SINK', 'Database', 'SpannerSink');
+      result.current.handleAddNode('Feature Prep', 'STEP', 'Cpu', 'FeaturePrep');
+    });
+    expect(result.current.nodes).toHaveLength(0);
+
+    // 2. Medallion + Auto CDC SDP graph: streaming source -> MergeCdcScd (left only) -> IcebergSink
+    act(() => {
+      result.current.setNodes([
+        {
+          id: 'cdc_src',
+          type: 'pipeline',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'Customer CDC',
+            type: 'SOURCE',
+            iconName: 'Radio',
+            spark_transform: 'KafkaSource',
+          },
+        },
+        {
+          id: 'cdc_merge',
+          type: 'pipeline',
+          position: { x: 260, y: 0 },
+          data: {
+            label: 'Apply Customer CDC',
+            type: 'STEP',
+            iconName: 'GitMerge',
+            spark_transform: 'MergeCdcScd',
+            properties: {
+              scdType: 'scd1',
+              keyColumns: ['customer_id'],
+              sequenceColumn: 'updated_at',
+            },
+          },
+        },
+        {
+          id: 'iceberg_tgt',
+          type: 'pipeline',
+          position: { x: 520, y: 0 },
+          data: {
+            label: 'Silver Customers',
+            type: 'SINK',
+            iconName: 'Database',
+            spark_transform: 'IcebergSink',
+          },
+        },
+      ]);
+      result.current.setEdges([
+        { id: 'e-cdc-1', source: 'cdc_src', target: 'cdc_merge', targetHandle: 'left' },
+        { id: 'e-cdc-2', source: 'cdc_merge', sourceHandle: 'valid', target: 'iceberg_tgt' },
+      ]);
+    });
+
+    // No missing "right" error and no imperative missing checkpointLocation error!
+    expect(result.current.dagValidation.isValid).toBe(true);
+    expect(result.current.dagValidation.errors).toEqual([]);
+
+    const srcDisplay = result.current.displayNodes.find((n) => n.id === 'cdc_src')!;
+    const mergeDisplay = result.current.displayNodes.find((n) => n.id === 'cdc_merge')!;
+    const tgtDisplay = result.current.displayNodes.find((n) => n.id === 'iceberg_tgt')!;
+
+    expect(srcDisplay.data.paradigm).toBe('sdp');
+    expect(srcDisplay.data.sdpBadge).toBeDefined();
+    expect(srcDisplay.data.isCached).toBe(false);
+
+    expect(mergeDisplay.data.sdpBadge).toBe('CDC');
+    expect(tgtDisplay.data.isForeachBatchSink).toBe(false);
+    expect(tgtDisplay.data.sdpDatasetName).toBe('silver_customers');
+  });
 });

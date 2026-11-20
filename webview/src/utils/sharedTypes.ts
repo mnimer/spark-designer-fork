@@ -5,4 +5,21 @@
  */
 
 export * from '../../../src/shared/types';
-export type { TokenUsage, SamplePipeline, LogStream } from '../../../src/shared/types';
+export type {
+    TokenUsage,
+    SamplePipeline,
+    LogStream,
+    SupportedLanguage,
+    SparkStreamingTriggerType,
+    SparkSinkTriggerSelection,
+    SparkStreamingOutputMode,
+    SparkStreamingSinkOverrides,
+    SparkPipelineStreamingDefaults,
+    PipelineParadigm,
+    SdpDatasetBadge,
+    SdpDatasetKind,
+    SdpBigLakeMode,
+    SdpRefreshMode,
+    SdpCommandMode,
+    SdpJobConfigFields,
+} from '../../../src/shared/types';

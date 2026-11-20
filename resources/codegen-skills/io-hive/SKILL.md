@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative, sdp]
   transforms: [HiveSource, HiveSink]
   preloadWhen: []
   sources:
@@ -14,6 +15,7 @@ metadata:
   validated: true
 ---
 
+> **SDP Mode Note (`paradigm: sdp`)**: In Spark Declarative Pipelines mode, only the source reader from this skill applies inside `@dp.table` or `@dp.materialized_view` dataset functions. Imperative `write_sinks` and `foreachBatch` sink patterns are unsupported in SDP.
 # Apache Hive & Dataproc Metastore Connector (`HiveSource`, `HiveSink`)
 
 Use these rules when generating PySpark {{spark_version}} code for Apache Hive or Google Cloud Dataproc Metastore source (`HiveSource`, `HCatalogIO`) and sink (`HiveSink`, `SINK:HCatalogIO`) nodes.

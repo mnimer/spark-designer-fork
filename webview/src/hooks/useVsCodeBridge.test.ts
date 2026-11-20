@@ -47,6 +47,30 @@ describe('findMainPipelineFile', () => {
     expect(findMainPipelineFile(files, 'Python', 'gcs-parquet-etl.spark')).toBe('src/gcs-parquet-etl.py');
     expect(findMainPipelineFile(files, 'Python', 'GCS-PARQUET-ETL.SPARK')).toBe('src/gcs-parquet-etl.py');
   });
+
+  it('selects spark-pipeline.yml or first transformations/*.py for SDP projects (SDP1)', () => {
+    const sdpWithSpec = [
+      'README.md',
+      'src/transforms.py',
+      'spark-pipeline.yml',
+      'transformations/medallion.py',
+    ];
+    expect(findMainPipelineFile(sdpWithSpec, 'Python', 'medallion.spark', 'sdp')).toBe(
+      'spark-pipeline.yml'
+    );
+    expect(findMainPipelineFile(sdpWithSpec, 'Python', 'medallion.spark')).toBe(
+      'spark-pipeline.yml'
+    );
+
+    const sdpTransformsOnly = [
+      'src/transforms.py',
+      'transformations/bronze_orders.py',
+      'tests/test_transforms.py',
+    ];
+    expect(findMainPipelineFile(sdpTransformsOnly, 'Python', 'orders.spark', 'sdp')).toBe(
+      'transformations/bronze_orders.py'
+    );
+  });
 });
 
 describe('isPlaceholderProjectId', () => {
@@ -1077,6 +1101,176 @@ pipelineConfig:
     expect(setRuntimeVariables).toHaveBeenCalledWith([
       { key: 'JOB_ID', value: 'rate_stream_delta' },
     ]);
+  });
+
+  it('hydrates paradigm sdp and defaults missing paradigm to imperative on loadPipeline (SDP1)', () => {
+    const setPipelineConfig = vi.fn();
+    const setJobConfig = vi.fn();
+
+    renderHook(() =>
+      useVsCodeBridge({
+        setNodes: vi.fn(),
+        setEdges: vi.fn(),
+        setRuntimeVariables: vi.fn(),
+        setJobConfig,
+        pipelineConfig: { language: 'Python', outputFolder: '', needsRebuild: false },
+        setPipelineConfig,
+        filename: 'default_job',
+        setFilename: vi.fn(),
+        projectId: 'proj',
+        setProjectId: vi.fn(),
+      })
+    );
+
+    // 1. Missing paradigm defaults to imperative
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'loadPipeline',
+            filename: 'legacy.spark',
+            data: 'nodes: []\nedges: []\n',
+          },
+        })
+      );
+    });
+
+    const legacyUpdater = setPipelineConfig.mock.calls[0][0] as (prev: PipelineConfig) => PipelineConfig;
+    const legacyHydrated = legacyUpdater({
+      language: 'Python',
+      outputFolder: '',
+      needsRebuild: false,
+    });
+    expect(legacyHydrated.paradigm).toBe('imperative');
+
+    // 2. Top-level paradigm: sdp hydrates pipelineConfig.paradigm = 'sdp'
+    setPipelineConfig.mockClear();
+    setJobConfig.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'loadPipeline',
+            filename: 'medallion.spark',
+            data: 'paradigm: sdp\nnodes: []\nedges: []\n',
+          },
+        })
+      );
+    });
+
+    const sdpUpdater = setPipelineConfig.mock.calls[0][0] as (prev: PipelineConfig) => PipelineConfig;
+    const sdpHydrated = sdpUpdater({
+      language: 'Python',
+      outputFolder: '',
+      needsRebuild: false,
+    });
+    expect(sdpHydrated.paradigm).toBe('sdp');
+    expect(setJobConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runner: 'ServerlessSpark',
+        runtimeVersion: '4.0',
+      })
+    );
+
+    // 3. SDP pipeline with runner: Local normalizes to 4.2-connect + useSparkConnect: true on load
+    setJobConfig.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'loadPipeline',
+            filename: 'local_sdp.spark',
+            data: 'paradigm: sdp\nnodes: []\nedges: []\njobConfig:\n  runner: Local\n',
+          },
+        })
+      );
+    });
+    expect(setJobConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runner: 'Local',
+        runtimeVersion: '4.2-connect',
+        useSparkConnect: true,
+      })
+    );
+
+    // 4. Legacy jobConfig.paradigm: sdp also hydrates paradigm = 'sdp' and normalizes Local runner
+    setPipelineConfig.mockClear();
+    setJobConfig.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            command: 'loadPipeline',
+            filename: 'jobconfig_sdp.spark',
+            data: 'nodes: []\nedges: []\njobConfig:\n  paradigm: sdp\n  runner: Local\n',
+          },
+        })
+      );
+    });
+    const jobConfigSdpUpdater = setPipelineConfig.mock.calls[0][0] as (
+      prev: PipelineConfig
+    ) => PipelineConfig;
+    expect(
+      jobConfigSdpUpdater({
+        language: 'Python',
+        outputFolder: '',
+        needsRebuild: false,
+      }).paradigm
+    ).toBe('sdp');
+    expect(setJobConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runner: 'Local',
+        runtimeVersion: '4.2-connect',
+        useSparkConnect: true,
+      })
+    );
+  });
+
+  it('normalizes default Local and DataprocCluster SDP jobConfig inside handleRegenerate', () => {
+    const postMessage = vi.fn();
+    const { result } = renderHook(() =>
+      useVsCodeBridge({
+        setNodes: vi.fn(),
+        setEdges: vi.fn(),
+        setRuntimeVariables: vi.fn(),
+        setJobConfig: vi.fn(),
+        pipelineConfig: {
+          language: 'Python',
+          outputFolder: 'out/medallion',
+          needsRebuild: true,
+          paradigm: 'sdp',
+        },
+        setPipelineConfig: vi.fn(),
+        filename: 'medallion.spark',
+        setFilename: vi.fn(),
+        projectId: 'proj',
+        setProjectId: vi.fn(),
+        vscode: { postMessage },
+      })
+    );
+
+    postMessage.mockClear();
+    act(() => {
+      result.current.handleRegenerate({
+        nodes: [],
+        edges: [],
+        runtimeVariables: [],
+        jobConfig: { runner: 'Local', runtimeVersion: '4.0' },
+      });
+    });
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'regenerateCode',
+        data: expect.stringContaining('runtimeVersion: 4.2-connect'),
+      })
+    );
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'regenerateCode',
+        data: expect.stringContaining('useSparkConnect: true'),
+      })
+    );
   });
 });
 

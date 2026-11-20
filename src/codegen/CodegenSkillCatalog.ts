@@ -13,9 +13,10 @@
  *
  * Selection rule (`select`): a skill is selected when ALL of these are true:
  * 1. `usedBy` contains the caller.
- * 2. `languages` contains `all` or the pipeline language.
- * 3. `runners` contains `all` or a runner that the project must support.
- * 4. One of: the kind is always on (`common`, `language`, `runner`, `review`, `gate`), the
+ * 2. `paradigms` contains `all` or the pipeline paradigm (`imperative` by default).
+ * 3. `languages` contains `all` or the pipeline language.
+ * 4. `runners` contains `all` or a runner that the project must support.
+ * 5. One of: the kind is always on (`common`, `language`, `runner`, `review`, `gate`), the
  *    skill is an always-on `crosscutting` skill (no `transforms` and no `preloadWhen`),
  *    `transforms` intersects the graph's `spark_transform` set, or `preloadWhen` intersects
  *    the features.
@@ -40,11 +41,13 @@ import {
     KNOWN_PIPELINE_FEATURES,
     SKILL_CALLERS,
     SKILL_KIND_ORDER,
+    SKILL_PARADIGMS,
     SKILL_RUNNERS,
     SKILL_WILDCARD,
     SkillCaller,
     SkillKind,
     SkillLanguage,
+    SkillParadigm,
     SkillRunner,
     TRANSFORM_ALIAS_PREFIXES,
 } from './codegenConfig';
@@ -73,6 +76,8 @@ export interface CodegenSkill {
     languages: string[];
     /** `all` or runner ids. */
     runners: string[];
+    /** `all` or pipeline paradigms (`imperative`, `sdp`). Defaults to `['imperative']`. */
+    paradigms: string[];
     /** Catalog `sparkTransform` values that select the skill. */
     transforms: string[];
     /** Pipeline features that select the skill. */
@@ -101,6 +106,8 @@ export interface SelectionRequest {
     caller: SkillCaller;
     /** Pipeline language. */
     language: SkillLanguage;
+    /** Pipeline paradigm (`imperative` by default). */
+    paradigm?: SkillParadigm;
     /** Every runner that the project must support. */
     runners: ReadonlySet<SkillRunner>;
     /** Every node `data.spark_transform` in the graph. */
@@ -152,6 +159,8 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set(SKILL_KIND_ORDER);
 const KNOWN_LANGUAGES: ReadonlySet<string> = new Set([SKILL_WILDCARD, ...ALL_SKILL_LANGUAGES]);
 /** Allowed `runners` values. */
 const KNOWN_RUNNERS: ReadonlySet<string> = new Set([SKILL_WILDCARD, ...Object.values(SKILL_RUNNERS)]);
+/** Allowed `paradigms` values. */
+const KNOWN_PARADIGMS: ReadonlySet<string> = new Set([SKILL_WILDCARD, ...Object.values(SKILL_PARADIGMS)]);
 /** Allowed `validated` values. */
 const BOOLEAN_VALUES: Readonly<Record<string, boolean>> = { true: true, false: false };
 
@@ -240,6 +249,11 @@ export function buildSkill(
         throw new Error(`Code generation skill '${name}': metadata.validated must be true or false.`);
     }
 
+    const parsedParadigms = readList(name, metadata, 'paradigms', KNOWN_PARADIGMS);
+    if (metadata.paradigms !== undefined && parsedParadigms.length === 0) {
+        throw new Error(`Code generation skill '${name}': metadata.paradigms is required and must not be empty when specified.`);
+    }
+
     // 2. List fields with allow-lists. `transforms` values are checked against the palette
     //    catalog by the invariant unit test, because the extension cannot import the catalog.
     return {
@@ -250,6 +264,7 @@ export function buildSkill(
         usedBy: readRequiredList(name, metadata, 'usedBy', KNOWN_CALLERS) as SkillCaller[],
         languages: readRequiredList(name, metadata, 'languages', KNOWN_LANGUAGES),
         runners: readRequiredList(name, metadata, 'runners', KNOWN_RUNNERS),
+        paradigms: parsedParadigms.length > 0 ? parsedParadigms : [SKILL_PARADIGMS.imperative],
         transforms: readList(name, metadata, 'transforms'),
         preloadWhen: readList(name, metadata, 'preloadWhen', KNOWN_PIPELINE_FEATURES),
         sources: readList(name, metadata, 'sources'),
@@ -450,18 +465,21 @@ export class CodegenSkillCatalog {
      * @returns Selected skills with the language-specific parts attached.
      */
     public select(request: SelectionRequest): SelectedSkill[] {
+        const paradigm = request.paradigm ?? SKILL_PARADIGMS.imperative;
         return this.skills
             // 1. The caller must load this skill.
             .filter((skill) => skill.usedBy.includes(request.caller))
-            // 2. The skill must apply to the pipeline language.
+            // 2. The skill must apply to the pipeline paradigm.
+            .filter((skill) => skill.paradigms.includes(SKILL_WILDCARD) || skill.paradigms.includes(paradigm))
+            // 3. The skill must apply to the pipeline language.
             .filter((skill) => skill.languages.includes(SKILL_WILDCARD) || skill.languages.includes(request.language))
-            // 3. The skill must apply to at least one runner that the project supports.
+            // 4. The skill must apply to at least one runner that the project supports.
             .filter(
                 (skill) =>
                     skill.runners.includes(SKILL_WILDCARD) ||
                     skill.runners.some((runner) => request.runners.has(runner as SkillRunner))
             )
-            // 4. The skill must be always on, or match a transform or a feature.
+            // 5. The skill must be always on, or match a transform or a feature.
             .filter(
                 (skill) =>
                     ALWAYS_ON_KINDS.has(skill.kind) ||

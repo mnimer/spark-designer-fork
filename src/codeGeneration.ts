@@ -22,6 +22,7 @@ import YAML from 'yaml';
 import { GoogleGenAI } from '@google/genai';
 import { DEFAULT_GEMINI_MODEL } from './constants';
 import { validateDagTopology } from './dagValidator';
+import { buildSdpPlan, normalizeSdpJobConfig } from './shared/sdpPlanner';
 import { DEFAULT_LANGUAGE, DEFAULT_SPARK_VERSION, type SupportedLanguage, type TokenUsage } from './shared/types';
 import { resolveOutputFolder } from './editor/outputFolder';
 import type { HostToWebviewMessage } from './shared/protocol';
@@ -112,18 +113,28 @@ export const PYTHON_STRATEGY: LanguageStrategy = {
 
     routeFilename(normalizedFilename: string, fileNameOnly: string, dirNameOnly: string, baseName: string): string {
         const lowerName = fileNameOnly.toLowerCase();
-        if (lowerName === 'pipeline.py') {
+        const isTopLevelDir = dirNameOnly === '.' || dirNameOnly === '';
+        if (
+            normalizedFilename === 'spark-pipeline.yml' ||
+            normalizedFilename === 'spark-pipeline.yaml' ||
+            normalizedFilename === 'sdp_stage.pipeline.yaml' ||
+            normalizedFilename.startsWith('transformations/') ||
+            normalizedFilename.startsWith('pipelines/')
+        ) {
+            return normalizedFilename;
+        }
+        if (lowerName === 'pipeline.py' && (isTopLevelDir || dirNameOnly === 'src')) {
             return 'src/pipeline.py';
-        } else if (lowerName === `${baseName.toLowerCase()}.py`) {
+        } else if (lowerName === `${baseName.toLowerCase()}.py` && (isTopLevelDir || dirNameOnly === 'src')) {
             return `src/${baseName}.py`;
-        } else if (lowerName === 'test_pipeline.py') {
+        } else if (lowerName === 'test_pipeline.py' && (isTopLevelDir || dirNameOnly === 'tests')) {
             return 'tests/test_pipeline.py';
-        } else if (lowerName === 'pipeline_test.py' || lowerName === `${baseName.toLowerCase()}_test.py`) {
+        } else if (lowerName === 'test_transforms.py' && (isTopLevelDir || dirNameOnly === 'tests')) {
+            return 'tests/test_transforms.py';
+        } else if ((lowerName === 'pipeline_test.py' || lowerName === `${baseName.toLowerCase()}_test.py`) && isTopLevelDir) {
             return `src/${baseName}_test.py`;
-        } else if (fileNameOnly.endsWith('.py')) {
-            if (dirNameOnly === '.' || dirNameOnly === '') {
-                return lowerName.startsWith('test_') ? `tests/${fileNameOnly}` : `src/${fileNameOnly}`;
-            }
+        } else if (fileNameOnly.endsWith('.py') && isTopLevelDir) {
+            return lowerName.startsWith('test_') ? `tests/${fileNameOnly}` : `src/${fileNameOnly}`;
         }
         return normalizedFilename;
     },
@@ -131,7 +142,13 @@ export const PYTHON_STRATEGY: LanguageStrategy = {
     isMainPipelineFile(normalizedFilename: string, baseName: string, currentMain: string): boolean {
         const lowerNorm = normalizedFilename.toLowerCase();
         const lowerBase = path.basename(normalizedFilename).toLowerCase();
+        if (lowerNorm.startsWith('transformations/') && lowerNorm.endsWith('.py') && !lowerBase.endsWith('__init__.py')) {
+            return true;
+        }
         if (lowerNorm.endsWith('.py') && !lowerNorm.includes('test') && !lowerBase.endsWith('__init__.py')) {
+            if (lowerBase === 'transforms.py' && currentMain) {
+                return false;
+            }
             return (
                 lowerBase === `${baseName.toLowerCase()}.py` ||
                 lowerBase === 'pipeline.py' ||
@@ -524,6 +541,12 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         const built = buildExtensionPrompt(context, yamlData, languageVal, sparkVersion);
         promptText = built.prompt;
         selectedSkills = built.selectedSkills;
+        if (built.sdpPlan && !built.sdpPlan.isCompatible) {
+            const sdpErrorMsg = built.sdpPlan.blockingIssues
+                .map((issue) => `[${issue.code}] ${issue.message}`)
+                .join(' | ');
+            throw new Error(`Cannot generate Spark Declarative Pipeline: ${sdpErrorMsg}`);
+        }
         if (built.redactedPaths.length > 0) {
             console.warn(
                 `Redacted ${built.redactedPaths.length} credential value(s) before code generation: ${built.redactedPaths.join(', ')}`
@@ -873,14 +896,34 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
     const { message, context, document, uri, postToWebview, outputChannel, getGcloudProjectFn, abortSignal } = options;
     const yamlData = message.data;
 
-    // Headless pre-flight validation: reject code generation if the pipeline DAG has cycles or invalid topology
+    // Headless pre-flight validation: reject code generation if the pipeline DAG has cycles, invalid topology, or SDP incompatibilities.
     if (yamlData) {
         try {
             const parsed = YAML.parse(yamlData);
             if (parsed && (Array.isArray(parsed.nodes) || Array.isArray(parsed.edges))) {
-                const validation = validateDagTopology(parsed.nodes || [], parsed.edges || []);
-                if (!validation.isValid) {
-                    const errorMsg = validation.errors.join('; ');
+                const isSdpParadigm =
+                    parsed.paradigm === 'sdp' ||
+                    parsed.pipelineConfig?.paradigm === 'sdp' ||
+                    parsed.jobConfig?.paradigm === 'sdp';
+                const normalizedSdpJobConfig = isSdpParadigm
+                    ? normalizeSdpJobConfig(
+                          parsed.jobConfig && typeof parsed.jobConfig === 'object' && !Array.isArray(parsed.jobConfig)
+                              ? (parsed.jobConfig as Record<string, unknown>)
+                              : undefined
+                      )
+                    : parsed.jobConfig;
+                const validation = validateDagTopology(
+                    parsed.nodes || [],
+                    parsed.edges || [],
+                    isSdpParadigm ? ({ paradigm: 'sdp', jobConfig: normalizedSdpJobConfig } as never) : undefined
+                );
+                const imperativeMergeRightPattern =
+                    /^MergeCdcScd node .* requires 1 "left" input and 1 "right" input \(missing "right"\)\.$/;
+                const fatalTopologyErrors = isSdpParadigm
+                    ? validation.errors.filter((err) => !imperativeMergeRightPattern.test(err))
+                    : validation.errors;
+                if (fatalTopologyErrors.length > 0) {
+                    const errorMsg = fatalTopologyErrors.join(' | ');
                     vscode.window.showErrorMessage(`Cannot generate code: ${errorMsg}`);
                     await postToWebview({
                         command: 'codeRegenerated',
@@ -888,6 +931,25 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
                         error: errorMsg,
                     });
                     return;
+                }
+                if (isSdpParadigm) {
+                    const sdpPlan = buildSdpPlan(
+                        parsed.nodes || [],
+                        parsed.edges || [],
+                        normalizedSdpJobConfig
+                    );
+                    if (!sdpPlan.isCompatible) {
+                        const sdpErrorMsg = sdpPlan.blockingIssues
+                            .map((issue) => `[${issue.code}] ${issue.message}`)
+                            .join(' | ');
+                        vscode.window.showErrorMessage(`Cannot generate Spark Declarative Pipeline: ${sdpErrorMsg}`);
+                        await postToWebview({
+                            command: 'codeRegenerated',
+                            success: false,
+                            error: sdpErrorMsg,
+                        });
+                        return;
+                    }
                 }
             }
         } catch {

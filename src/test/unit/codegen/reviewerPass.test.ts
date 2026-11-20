@@ -32,22 +32,32 @@ let skillsRoot: string;
  * @param kind Kind.
  * @param usedBy usedBy list.
  * @param runners runners list.
+ * @param paradigms paradigms list.
  */
-function writeSkill(name: string, kind: string, usedBy: string, runners = '[all]'): void {
+function writeSkill(
+    name: string,
+    kind: string,
+    usedBy: string,
+    runners = '[all]',
+    paradigms = '[imperative]'
+): void {
     fs.mkdirSync(path.join(skillsRoot, name), { recursive: true });
     fs.writeFileSync(
         path.join(skillsRoot, name, 'SKILL.md'),
-        `---\nname: ${name}\ndescription: d.\nmetadata:\n  kind: ${kind}\n  usedBy: ${usedBy}\n  languages: [all]\n  runners: ${runners}\n---\n${name.toUpperCase()} BODY`
+        `---\nname: ${name}\ndescription: d.\nmetadata:\n  kind: ${kind}\n  usedBy: ${usedBy}\n  languages: [all]\n  runners: ${runners}\n  paradigms: ${paradigms}\n---\n${name.toUpperCase()} BODY`
     );
 }
 
 beforeAll(() => {
     skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewer-pass-'));
-    writeSkill('codegen-common', 'common', '[generator, reviewer]');
-    writeSkill('codegen-review', 'review', '[reviewer]');
-    writeSkill('runner-local', 'runner', '[generator, reviewer]', '[local]');
+    writeSkill('codegen-common', 'common', '[generator, reviewer]', '[all]', '[imperative, sdp]');
+    writeSkill('codegen-review', 'review', '[reviewer]', '[all]', '[imperative, sdp]');
+    writeSkill('runner-local', 'runner', '[generator, reviewer]', '[local]', '[imperative]');
+    writeSkill('runner-sdp', 'runner', '[generator, reviewer]', '[sdp]', '[sdp]');
     fs.mkdirSync(path.join(skillsRoot, 'runner-local', 'templates', 'python'), { recursive: true });
     fs.writeFileSync(path.join(skillsRoot, 'runner-local', 'templates', 'python', 'run_local.sh'), '#!/bin/bash');
+    fs.mkdirSync(path.join(skillsRoot, 'runner-sdp', 'templates', 'python'), { recursive: true });
+    fs.writeFileSync(path.join(skillsRoot, 'runner-sdp', 'templates', 'python', 'run_sdp_local.sh'), '#!/bin/bash');
     clearCodegenSkillCatalogCache();
 });
 
@@ -144,5 +154,36 @@ describe('runReviewerPass', () => {
             // No checkRunner: the default runner is used. No file exists, so no process starts.
         });
         expect(outcome.error).toBe('Empty response from Gemini during review.');
+    });
+
+    it('forwards paradigm sdp and declarative runner files to ReadOnlyCheckRunner when reviewing SDP YAML', async () => {
+        const generateContent = vi.fn(async () => ({
+            text: JSON.stringify({ findings: [], summary: 'clean sdp review' }),
+        }));
+        const ai: ReviewerModelClient = { models: { generateContent } };
+        const executor = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+
+        const outcome = await runReviewerPass({
+            ai,
+            // Deliberately omit spark-pipeline.yml so only explicit paradigm forwarding triggers SDP required_files checks
+            files: [{ filename: 'src/pipeline.py', content: 'print(1)\n' }],
+            generationPrompt: 'GEN SDP',
+            yamlText: 'paradigm: sdp\nnodes: []\nedges: []\njobConfig:\n  runner: ServerlessSpark\n  runtimeVersion: "4.0"\n',
+            language: 'PySpark',
+            baseName: 'medallion',
+            skillsRoot,
+            reviewerTemplate: 'REVIEW TEMPLATE',
+            fixTemplate: 'FIX TEMPLATE',
+            responseSchema: { generator: true },
+            checkRunner: new ReadOnlyCheckRunner(executor),
+        });
+
+        expect(outcome.fixRounds).toBe(0);
+        const calls = generateContent.mock.calls as unknown as Array<[{ contents: string }]>;
+        expect(calls).toHaveLength(1);
+        expect(calls[0][0].contents).toContain('RUNNER-SDP BODY');
+        expect(calls[0][0].contents).not.toContain('RUNNER-LOCAL BODY');
+        expect(calls[0][0].contents).toContain('spark-pipeline.yml');
+        expect(calls[0][0].contents).toContain('run_sdp_local.sh');
     });
 });

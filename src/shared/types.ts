@@ -113,3 +113,76 @@ export interface SparkPipelineStreamingDefaults {
     /** Default trigger interval inherited when defaultTriggerType uses an interval. */
     defaultTriggerInterval?: string;
 }
+
+/**
+ * Pipeline authoring and code generation paradigm.
+ */
+export type PipelineParadigm = 'imperative' | 'sdp';
+
+/**
+ * Default pipeline paradigm for new and existing Spark pipelines.
+ */
+export const DEFAULT_PIPELINE_PARADIGM: PipelineParadigm = 'imperative';
+
+/**
+ * Dataset micro-badge rendered on canvas nodes in Spark Declarative Pipelines mode.
+ */
+export type SdpDatasetBadge = 'VIEW' | 'MV' | 'TABLE' | 'CDC' | 'SINK';
+
+/**
+ * Canonical Spark Declarative Pipelines dataset or flow registration kind.
+ */
+export type SdpDatasetKind =
+    | 'temporary_view'
+    | 'materialized_view'
+    | 'streaming_table'
+    | 'append_flow'
+    | 'auto_cdc'
+    | 'external_sink';
+
+/**
+ * BigLake Iceberg REST catalog integration mode for SDP pipelines.
+ */
+export type SdpBigLakeMode = 'lakehouse' | 'gcs_bucket' | 'custom' | 'none';
+
+/**
+ * Dataset refresh execution mode passed to the spark-pipelines CLI.
+ */
+export type SdpRefreshMode = 'incremental' | 'refresh' | 'full_refresh' | 'full_refresh_all';
+
+/**
+ * Subcommand mode executed by the spark-pipelines CLI.
+ */
+export type SdpCommandMode = 'run' | 'dry-run';
+
+/**
+ * Pipeline-level Spark Declarative Pipelines configuration fields stored in jobConfig.
+ */
+export interface SdpJobConfigFields {
+    /** Checkpoint and state root URI required by the SDP pipeline spec. */
+    sdpStorage?: string;
+    /** Plain Spark SQL catalog alias used by SDP datasets. */
+    sdpCatalog?: string;
+    /** Target database or namespace name inside the configured catalog. */
+    sdpDatabase?: string;
+    /** BigLake Iceberg REST catalog configuration mode. */
+    sdpBigLakeMode?: SdpBigLakeMode;
+    /** Google Cloud project ID hosting the BigLake catalog. */
+    sdpBigLakeProject?: string;
+    /** BigLake Lakehouse catalog identifier for downstream four-part references. */
+    sdpBigLakeCatalogId?: string;
+    /** Bucket-root URI for Cloud Storage BigLake REST catalogs. */
+    sdpBigLakeWarehouseBucket?: string;
+    /** Static Spark properties routed to runner config instead of the pipeline spec. */
+    sdpStaticSparkConf?: Record<string, string> | string;
+    /** CLI command mode ('run' or 'dry-run'). */
+    sdpCommand?: SdpCommandMode;
+    /** Dataset refresh strategy for triggered SDP runs. */
+    sdpRefreshMode?: SdpRefreshMode;
+    /** Persisted dataset names selected for targeted refresh. */
+    sdpRefreshDatasets?: string[];
+    /** Persisted dataset names selected for full reset and recomputation. */
+    sdpFullRefreshDatasets?: string[];
+    /** True when standalone runners execute CREATE NAMESPACE IF NOT EXISTS before running. */
+    sdpCreateNamespace?: boolean;
+}

@@ -69,4 +69,41 @@ describe('RunnerSettings (R1)', () => {
       region: 'us-central1',
     });
   });
+
+  it('aligns Spark 4.2+ runtimeVersion via functional updater when paradigm is sdp (SDP3)', () => {
+    let state: Record<string, unknown> = {
+      runner: 'ServerlessSpark',
+      runtimeVersion: '3.0',
+      projectId: 'proj-sdp',
+    };
+    const setJobConfig = vi.fn((updater) => {
+      state = typeof updater === 'function' ? updater(state) : updater;
+    });
+
+    const { rerender } = render(
+      <RunnerSettings runner="ServerlessSpark" setJobConfig={setJobConfig} paradigm="sdp" />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Target Environment/i), {
+      target: { value: 'DataprocCluster' },
+    });
+    expect(state).toEqual({
+      runner: 'DataprocCluster',
+      runtimeVersion: '4.0',
+      projectId: 'proj-sdp',
+    });
+
+    rerender(
+      <RunnerSettings runner="DataprocCluster" setJobConfig={setJobConfig} paradigm="sdp" />
+    );
+    fireEvent.change(screen.getByLabelText(/Target Environment/i), {
+      target: { value: 'Local' },
+    });
+    expect(state).toEqual({
+      runner: 'Local',
+      runtimeVersion: '4.2-connect',
+      useSparkConnect: true,
+      projectId: 'proj-sdp',
+    });
+  });
 });

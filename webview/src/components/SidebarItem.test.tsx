@@ -1,4 +1,10 @@
 
+/**
+ * Unit tests for SidebarItem component.
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -86,6 +92,41 @@ describe('SidebarItem', () => {
       <SidebarItem label="Sink Node" type="SINK" iconName="Database" badge="Sink" onDragStart={vi.fn()} />
     );
     expect(screen.getByText('Sink')).toHaveClass('text-rose-300');
+  });
+
+  it('greys out unsupported SDP nodes, disables drag and add, and renders explanatory tooltip (SDP2)', () => {
+    const onDragStart = vi.fn();
+    const onAddNode = vi.fn();
+
+    render(
+      <SidebarItem
+        label="Cloud Spanner"
+        type="SINK"
+        iconName="Database"
+        sparkTransform="SpannerSink"
+        paradigm="sdp"
+        onDragStart={onDragStart}
+        onAddNode={onAddNode}
+      />
+    );
+
+    const card = screen.getByTestId('sidebar-item-cloud-spanner');
+    expect(card).toHaveAttribute('aria-disabled', 'true');
+    expect(card).toHaveClass('opacity-45');
+    expect(card).toHaveClass('cursor-not-allowed');
+    expect(card).toHaveAttribute('draggable', 'false');
+
+    fireEvent.dragStart(card);
+    expect(onDragStart).not.toHaveBeenCalled();
+
+    const addBtn = screen.getByRole('button', { name: /Add Cloud Spanner/i });
+    expect(addBtn).toBeDisabled();
+    fireEvent.click(addBtn);
+    expect(onAddNode).not.toHaveBeenCalled();
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toBeInTheDocument();
+    expect(tooltip.getAttribute('aria-label')).toMatch(/foreachBatch|SDP/i);
   });
 });
 

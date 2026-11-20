@@ -188,6 +188,14 @@
             }
           },
           {
+            "id": "declarativePipelines",
+            "title": "Build Spark Declarative Pipelines (Spark 4.2+)",
+            "description": "Author BigLake Iceberg streaming tables, materialized views, and SCD Type 1 Auto CDC flows in SDP mode.",
+            "media": {
+              "markdown": "walkthroughs/declarative-pipelines.md"
+            }
+          },
+          {
             "id": "createPipeline",
             "title": "Create your first pipeline",
             "description": "Start designing a new data pipeline by creating a visual `.spark` pipeline file.\n[Create New Pipeline](command:spark-pipeline-builder.createNewPipeline)",

@@ -57,6 +57,7 @@ import {
   getPersistedGroupState,
   persistGroupState,
 } from '../catalog/paletteGroupState';
+import type { PipelineParadigm } from '../utils/sharedTypes';
 
 export type NodePaletteTab = 'SOURCES' | 'STEPS' | 'SINKS' | 'SAMPLES' | string;
 
@@ -89,6 +90,8 @@ interface NodesCardProps {
   isOpen?: boolean;
   /** Callback when panel open state changes */
   onToggleOpen?: (open: boolean) => void;
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp') */
+  paradigm?: PipelineParadigm;
 }
 
 /**
@@ -104,6 +107,7 @@ export const NodesCard: React.FC<NodesCardProps> = ({
   onOpenSample,
   isOpen: controlledIsOpen,
   onToggleOpen,
+  paradigm = 'imperative',
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -369,6 +373,7 @@ export const NodesCard: React.FC<NodesCardProps> = ({
                       isOpen={searchQuery.trim().length > 0 ? true : (groupOpenState[groupKey] ?? false)}
                       groupName={`palette-${(activeTab || 'sources').toLowerCase()}`}
                       activeTab={activeTab}
+                      paradigm={paradigm}
                       onToggle={(open) => handleToggleGroup(groupKey, open)}
                       onDragStart={onDragStart}
                       onAddNode={onAddNode}

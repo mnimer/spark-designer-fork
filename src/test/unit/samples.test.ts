@@ -219,17 +219,20 @@ describe('buildSampleReadmeMarkdown', () => {
     });
 });
 
-describe('bundled resources/samples catalog (Phase 9 I1-I4)', () => {
+describe('bundled resources/samples catalog (Phase 9 I1-I4 & Phase 12 SDP11)', () => {
     const repoRoot = path.resolve(__dirname, '../../../');
     const bundledSamplesDir = path.join(repoRoot, 'resources', 'samples');
     const expectedSlugs = [
         'bigquery-cloudsql-broadcast-join',
         'gcs-parquet-etl',
+        'generate-mock-data',
         'kafka-streaming-to-iceberg',
-        'rate-stream-to-delta',
+        'sdp-auto-cdc-scd1',
+        'sdp-biglake-iceberg-medallion',
     ];
+    const sdpSlugs = new Set(['sdp-auto-cdc-scd1', 'sdp-biglake-iceberg-medallion']);
 
-    it('ships all four bundled .spark and .md sample pairs and zero unexpected files', () => {
+    it('ships all six bundled .spark and .md sample pairs and zero unexpected files', () => {
         expect(fs.existsSync(bundledSamplesDir)).toBe(true);
         const entries = fs.readdirSync(bundledSamplesDir).sort();
 
@@ -242,16 +245,16 @@ describe('bundled resources/samples catalog (Phase 9 I1-I4)', () => {
         );
     });
 
-    it('discovers all four bundled samples cleanly through getSamplePipelines', async () => {
+    it('discovers all six bundled samples cleanly through getSamplePipelines', async () => {
         const samples = await getSamplePipelines({ extensionPath: repoRoot } as unknown as vscode.ExtensionContext);
         expect(samples.map((s) => s.id).sort()).toEqual(expectedSlugs);
 
         for (const sample of samples) {
             expect(sample.filename).toBe(`${sample.id}.spark`);
             expect(sample.language).toBe('PySpark');
-            expect(sample.badge).toBe('PySpark');
+            expect(sample.badge).toBe(sdpSlugs.has(sample.id) ? 'SDP (4.2+)' : 'PySpark');
             expect(['ServerlessSpark', 'Local']).toContain(sample.runner);
-            expect(sample.nodesCount).toBeGreaterThanOrEqual(5);
+            expect(sample.nodesCount).toBeGreaterThanOrEqual(3);
             expect(sample.description).toMatch(/^Pipeline flow: /);
             expect(sample.readmeContent).toContain('## Overview');
             expect(sample.readmeContent).toContain('## Pipeline Architecture & Data Flow');
