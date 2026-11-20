@@ -33,6 +33,7 @@ Detailed rules live in `.agents/rules/`. If your tool does not load that folder 
 
 ## Knowledge Graph (`graphify-out/`)
 
+- `graphify-out/` is gitignored and kept current locally by Git hooks. On a fresh clone, run `graphify extract . --code-only && graphify hook install`.
 - When `graphify-out/graph.json` exists, run `graphify query "<question>"` (or `graphify path "<A>" "<B>"` and `graphify explain "<concept>"`) before running broad `git grep` searches for architectural or cross-file questions.
 - Read `graphify-out/GRAPH_REPORT.md` for high-level architecture orientation when targeted graph queries do not provide enough context.
 - After editing code files, run `graphify update .` to refresh the AST graph without model calls. Git hooks also refresh `graphify-out/` after commit, checkout, merge, and rebase.
