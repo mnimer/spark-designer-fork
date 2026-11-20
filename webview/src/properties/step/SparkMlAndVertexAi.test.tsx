@@ -147,7 +147,7 @@ describe('SparkMlAndVertexAiProperties', () => {
     );
   });
 
-  it('enforces global location and gemini-3.8-flash rules in vertex_ai_gemini mode', () => {
+  it('enforces global location and gemini-4-hydrogen rules in vertex_ai_gemini mode', () => {
     const handleChange = vi.fn();
     const { rerender } = render(
       <SparkMlAndVertexAiProperties
@@ -156,7 +156,7 @@ describe('SparkMlAndVertexAiProperties', () => {
       />
     );
 
-    // Switching to vertex_ai_gemini resets location to global and model to gemini-3.8-flash
+    // Switching to vertex_ai_gemini resets location to global and model to gemini-4-hydrogen
     fireEvent.change(screen.getByLabelText(/Inference Engine/i, { selector: 'select' }), {
       target: { value: 'vertex_ai_gemini' },
     });
@@ -166,11 +166,28 @@ describe('SparkMlAndVertexAiProperties', () => {
         useVertexAi: true,
         useXgboost: false,
         location: 'global',
-        geminiModel: 'gemini-3.8-flash',
+        geminiModel: 'gemini-4-hydrogen',
       })
     );
 
-    // Regional us-central1 with gemini-3.8-flash shows 404 validation error
+    // Regional us-central1 with gemini-4-hydrogen shows 404 validation error
+    rerender(
+      <SparkMlAndVertexAiProperties
+        node={createNode({
+          engine: 'vertex_ai_gemini',
+          projectId: 'ai-proj',
+          location: 'us-central1',
+          geminiModel: 'gemini-4-hydrogen',
+          promptTemplate: 'Summarize: {body}',
+        })}
+        onChange={handleChange}
+      />
+    );
+    expect(
+      screen.getByText(/Location must be global for Gemini 3\.x\/4\.x models/i)
+    ).toBeInTheDocument();
+
+    // Regional us-central1 with gemini-3.8-flash also triggers global location error
     rerender(
       <SparkMlAndVertexAiProperties
         node={createNode({
@@ -184,24 +201,7 @@ describe('SparkMlAndVertexAiProperties', () => {
       />
     );
     expect(
-      screen.getByText(/Location must be global for Gemini 3\.x models/i)
-    ).toBeInTheDocument();
-
-    // Regional us-central1 with gemini-3.7-flash also triggers Gemini 3.x global location error
-    rerender(
-      <SparkMlAndVertexAiProperties
-        node={createNode({
-          engine: 'vertex_ai_gemini',
-          projectId: 'ai-proj',
-          location: 'us-central1',
-          geminiModel: 'gemini-3.7-flash',
-          promptTemplate: 'Summarize: {body}',
-        })}
-        onChange={handleChange}
-      />
-    );
-    expect(
-      screen.getByText(/Location must be global for Gemini 3\.x models/i)
+      screen.getByText(/Location must be global for Gemini 3\.x\/4\.x models/i)
     ).toBeInTheDocument();
 
     // Deprecated gemini-2.5* model shows forbidden validation error
@@ -221,14 +221,14 @@ describe('SparkMlAndVertexAiProperties', () => {
       screen.getByText(/Legacy Gemini 1.x, 2.0, and 2.5 models are deprecated/i)
     ).toBeInTheDocument();
 
-    // Valid global + gemini-3.8-flash updates instructions cleanly
+    // Valid global + gemini-4-hydrogen updates instructions cleanly
     rerender(
       <SparkMlAndVertexAiProperties
         node={createNode({
           engine: 'vertex_ai_gemini',
           projectId: 'ai-proj',
           location: 'global',
-          geminiModel: 'gemini-3.8-flash',
+          geminiModel: 'gemini-4-hydrogen',
           promptTemplate: 'Summarize: {body}',
         })}
         onChange={handleChange}

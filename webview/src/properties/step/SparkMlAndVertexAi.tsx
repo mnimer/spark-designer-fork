@@ -88,7 +88,7 @@ const XGBOOST_TASK_OPTIONS: SelectFieldOption[] = [
 ];
 
 const FORBIDDEN_LEGACY_GEMINI_PATTERN = /^gemini-(1\.|2\.0|2\.5)/i;
-const GEMINI_3_MODEL_PATTERN = /^gemini-3\./i;
+const GEMINI_GLOBAL_ONLY_MODEL_PATTERN = /^gemini-(3\.|4[-.])/i;
 
 /**
  * Normalizes raw input column definitions into a clean string array.
@@ -181,7 +181,7 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
   const geminiModel =
     typeof properties.geminiModel === 'string'
       ? properties.geminiModel
-      : 'gemini-3.8-flash';
+      : 'gemini-4-hydrogen';
   const promptTemplate =
     typeof properties.promptTemplate === 'string' ? properties.promptTemplate : '';
   const inputColumns = normalizeMlInputColumns(properties.inputColumns);
@@ -214,7 +214,7 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
     FORBIDDEN_LEGACY_GEMINI_PATTERN.test(geminiModel.trim());
   const isGeminiRegionalMismatch =
     engine === 'vertex_ai_gemini' &&
-    GEMINI_3_MODEL_PATTERN.test(geminiModel.trim()) &&
+    GEMINI_GLOBAL_ONLY_MODEL_PATTERN.test(geminiModel.trim()) &&
     location.trim() !== 'global';
   const isPromptTemplateInvalid =
     engine === 'vertex_ai_gemini' && promptTemplate.trim().length === 0;
@@ -237,7 +237,7 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
     const nextPatch: Partial<SparkMlAndVertexAiStepProperties> = {};
     if (nextEngine === 'vertex_ai_gemini') {
       nextPatch.location = 'global';
-      nextPatch.geminiModel = geminiModel || 'gemini-3.8-flash';
+      nextPatch.geminiModel = geminiModel || 'gemini-4-hydrogen';
       nextPatch.batchSize = resolvedBatchSize;
       nextPatch.outputColumn = outputColumn;
     } else if (nextEngine === 'vertex_ai_endpoint') {
@@ -325,7 +325,7 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
         <div className="flex items-center gap-2 font-bold uppercase text-[var(--vscode-text-primary)]">
           <BrainCircuit className="w-4 h-4 text-blue-400 shrink-0" />
           <span>Distributed ML & Vertex AI Scoring</span>
-          <InfoTooltip text="Supports in-JVM Spark MLlib PipelineModel, distributed xgboost.spark, and batched mapInPandas Vertex AI Endpoint or Gemini 3.8 Flash inference initialized once per partition." />
+          <InfoTooltip text="Supports in-JVM Spark MLlib PipelineModel, distributed xgboost.spark, and batched mapInPandas Vertex AI Endpoint or Gemini 4 Hydrogen inference initialized once per partition." />
         </div>
         <p className="text-[var(--vscode-text-muted)] leading-relaxed">
           {isLocalMlEngine
@@ -442,7 +442,7 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
             required="Required"
             tooltip={
               engine === 'vertex_ai_gemini'
-                ? 'Must be global when calling Gemini 3.x models such as gemini-3.8-flash via google-genai (regional us-central1 returns 404).'
+                ? 'Must be global when calling Gemini 3.x/4.x models such as gemini-4-hydrogen via google-genai (regional us-central1 returns 404).'
                 : 'GCP region hosting the Vertex AI Online Prediction Endpoint, such as us-central1.'
             }
             value={location}
@@ -451,7 +451,7 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
             invalid={isGeminiRegionalMismatch}
             error={
               isGeminiRegionalMismatch
-                ? 'Location must be global for Gemini 3.x models such as gemini-3.8-flash (regional endpoints return 404).'
+                ? 'Location must be global for Gemini 3.x/4.x models such as gemini-4-hydrogen (regional endpoints return 404).'
                 : null
             }
           />
@@ -478,16 +478,16 @@ export const SparkMlAndVertexAiProperties: React.FC<SparkMlAndVertexAiProperties
                 name="geminiModel"
                 label="Gemini Model"
                 required="Required"
-                tooltip="Enterprise Gemini model ID invoked via google-genai Client(vertexai=True, location='global'). Default is gemini-3.8-flash."
+                tooltip="Enterprise Gemini model ID invoked via google-genai Client(vertexai=True, location='global'). Default is gemini-4-hydrogen."
                 value={geminiModel}
                 onChange={handleTextFieldChange}
-                placeholder="gemini-3.8-flash"
+                placeholder="gemini-4-hydrogen"
                 invalid={isGeminiModelEmpty || isGeminiModelForbidden}
                 error={
                   isGeminiModelEmpty
                     ? 'Gemini model name is required.'
                     : isGeminiModelForbidden
-                      ? 'Legacy Gemini 1.x, 2.0, and 2.5 models are deprecated. Use gemini-3.8-flash.'
+                      ? 'Legacy Gemini 1.x, 2.0, and 2.5 models are deprecated. Use gemini-4-hydrogen.'
                       : null
                 }
               />

@@ -161,7 +161,7 @@ describe('Security Model Fallback (resolveSecurityModel)', () => {
         expect(model).toBe('gemini-3.8-flash-cyber');
     });
 
-    it('falls back to gemini-3.8-flash when cyber model throws 404/403', async () => {
+    it('falls back to gemini-4-hydrogen when cyber model throws 404/403', async () => {
         const mockAi: any = {
             models: {
                 generateContent: vi.fn()
@@ -170,7 +170,7 @@ describe('Security Model Fallback (resolveSecurityModel)', () => {
             }
         };
         const model = await resolveSecurityModel(mockAi);
-        expect(model).toBe('gemini-3.8-flash');
+        expect(model).toBe('gemini-4-hydrogen');
     });
 
     it('falls back to DEFAULT_GEMINI_MODEL when both cyber and flash fail', async () => {

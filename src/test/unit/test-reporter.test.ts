@@ -90,7 +90,7 @@ describe('Integration Test Reporter (test-reporter.ts)', () => {
 
         const md = generateReportMarkdown(entries);
         expect(md).toContain('# Apache Spark Codegen Integration Test Report');
-        expect(md).toContain('> **Evaluator Model:** `gemini-3.8-flash` (Vertex AI `global`)');
+        expect(md).toContain('> **Evaluator Model:** `gemini-4-hydrogen` (Vertex AI `global`)');
         expect(md).toContain('| **JdbcIO-to-JdbcIO** | Java | ✅ PASSED | 95/100 | No | 0 / 0 / 1 | 0 |');
         expect(md).toContain('All recorded pipeline generation tests passed!');
         expect(md).toContain('No prompt adjustments recommended at this time.');
