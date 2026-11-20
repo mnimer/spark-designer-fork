@@ -35,14 +35,14 @@ Pick a paradigm when creating a new `.spark` pipeline or toggle paradigms from t
 
 - **Comprehensive Spark 4.x Catalog**
   - **Sources**: Kafka, Pub/Sub, Kinesis, Pulsar, Event Hubs, MQTT, BigQuery, BigLake Iceberg, Delta Lake, Hudi, Hive, Parquet, ORC, Avro, CSV, JSON, Text, XML, BinaryFile, TFRecord, Spanner, Cloud SQL, AlloyDB, Generic JDBC, Snowflake, Redshift, ClickHouse, SingleStore, Bigtable, MongoDB, Firestore, Cassandra, Redis, Elasticsearch, Neo4j, REST API, SFTP, Rate, Socket, and in-memory DataFrames.
-  - **Steps**: Filter, Select, WithColumns, Rename/Drop, Enforce Schema & Cast, Handle Nulls, Parse Payload, Explode, Nested Struct/Array Ops, Conditional Split, Data Quality Assert, Watermark, GroupBy & Aggregate (with Tumbling, Sliding, and Session windows), Rollup/Cube, Window Over, Top-N, OrderBy, Deduplicate, Join (including Broadcast and Stream-Static), Merge CDC / SCD, UnionByName, Set Operations, Pivot/Unpivot, Repartition/Coalesce, Cache/Persist, Pandas UDF, Stateful Transform (`transformWithState`), Spark SQL, Feature Prep, Spark ML & Vertex AI (`gemini-3.8-flash`), and Text Chunk & Embed.
+  - **Steps**: Filter, Select, WithColumns, Rename/Drop, Enforce Schema & Cast, Handle Nulls, Parse Payload, Explode, Nested Struct/Array Ops, Conditional Split, Data Quality Assert, Watermark, GroupBy & Aggregate (with Tumbling, Sliding, and Session windows), Rollup/Cube, Window Over, Top-N, OrderBy, Deduplicate, Join (including Broadcast and Stream-Static), Merge CDC / SCD, UnionByName, Set Operations, Pivot/Unpivot, Repartition/Coalesce, Cache/Persist, Pandas UDF, Stateful Transform (`transformWithState`), Spark SQL, Feature Prep, Spark ML & Vertex AI (`gemini-4-hydrogen`), and Text Chunk & Embed.
   - **Sinks**: Lakehouse tables (Iceberg, Delta, Hudi), warehouses and databases, streaming brokers, cloud object storage formats, Vector Store, Console, Memory, and custom `ForeachBatch`.
 
 - **Live Cloud Asset Discovery & Credential Safety**
   - Queries local `gcloud` and `bq` CLIs using safe argument arrays to autocomplete BigQuery datasets and tables, Cloud Storage buckets, BigLake catalogs, Cloud SQL instances, Bigtable tables, VPC subnetworks, and Secret Manager secrets.
   - Redacts credentials automatically (`redactPipelineDocument`) before building prompts or writing `gemini.log`.
 
-- **Skill-Driven Gemini Code Generation (`gemini-3.8-flash`)**
+- **Skill-Driven Gemini Code Generation (`gemini-4-hydrogen`)**
   - Uses Vertex AI (`location: 'global'`) and modular skills under `resources/codegen-skills/` paired with deterministic execution plans (`executionPlanner.ts` and `sdpPlanner.ts`).
   - Separates pure DataFrame logic (`transform(dfs, config)` in Imperative mode and `src/transforms.py` in SDP mode) so generated `pytest` suites run offline with in-memory DataFrames.
   - Includes an optional AI Code Reviewer Pass (`sparkDesigner.codegen.enableReviewer`) backed by `ReadOnlyCheckRunner` (`py_compile`, contract and SDP purity checks, `pytest --collect-only`, and optional `spark-pipelines dry-run`).

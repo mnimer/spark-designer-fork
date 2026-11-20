@@ -38,7 +38,7 @@ import { useBottomPanel } from './BottomPanelContext';
 export type { TokenUsage };
 
 /** Default Gemini model displayed in the code preview header badge. */
-export const DEFAULT_CODEGEN_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_CODEGEN_MODEL = 'gemini-4-hydrogen';
 
 /**
  * Props for the SourceCodeTab component.

@@ -15,7 +15,7 @@ The Apache Spark / Managed Spark Pipeline Builder is a visual VS Code extension 
 
 The extension executes across two isolated runtime contexts connected over an asynchronous IPC bridge:
 
-- **VS Code Extension Host (`src/`)**: Runs in Node.js on the workstation. It manages `.spark` custom editors, workspace file safety gates, local Google Cloud CLI discovery (`gcloud`, `bq`), runner execution, and Vertex AI requests (`@google/genai`, `gemini-3.8-flash` on `location: 'global'`).
+- **VS Code Extension Host (`src/`)**: Runs in Node.js on the workstation. It manages `.spark` custom editors, workspace file safety gates, local Google Cloud CLI discovery (`gcloud`, `bq`), runner execution, and Vertex AI requests (`@google/genai`, `gemini-4-hydrogen` on `location: 'global'`).
 - **Webview Canvas (`webview/src/`)**: Runs inside a sandboxed browser context. Built with React 19, React Flow, and Tailwind CSS, it renders the DAG canvas, node palette, property inspectors, code preview tabs, and deployment controls.
 
 ```mermaid
@@ -47,7 +47,7 @@ flowchart TD
     subgraph Cloud["Workstation & Google Cloud"]
         Disk["Workspace (.spark & Generated Project)"]
         CLI["gcloud / bq / spark-pipelines CLIs"]
-        Vertex["Vertex AI Global (gemini-3.8-flash)"]
+        Vertex["Vertex AI Global (gemini-4-hydrogen)"]
         Managed["Serverless Spark 4.0 / Dataproc 4.0"]
     end
 
@@ -160,7 +160,7 @@ sequenceDiagram
     participant Host as Extension Host
     participant Planner as executionPlanner / sdpPlanner
     participant Builder as CodegenPromptBuilder
-    participant Gemini as Vertex AI (gemini-3.8-flash)
+    participant Gemini as Vertex AI (gemini-4-hydrogen)
     participant Checks as ReadOnlyCheckRunner
 
     User->>Webview: Design .spark DAG & select paradigm (Imperative or SDP)
@@ -185,7 +185,7 @@ sequenceDiagram
 
 ## 5. Multi-Agent Evaluation Harness & Verification Gate
 
-Integration tests (`src/test/integration/`) validate generated Imperative and SDP repositories offline and via multi-agent rubrics:
+Integration tests (`src/test/integration/`) validate generated Imperative and SDP repositories offline and via multi-agent rubrics using `gemini-4-hydrogen` on the global Vertex AI endpoint:
 
 1. **Deterministic Pre-Flight Gate (`deterministic-gate.ts`)**: Compiles Python files (`py_compile`), checks shell syntax (`bash -n`), parses JSON and YAML artifacts, audits Imperative D3 or SDP deliverables, enforces `spark-pipeline.yml` schema and static-config bans, scans for banned Spark/Databricks APIs and plaintext secrets, and runs `spark-pipelines dry-run` when installed.
 2. **Specialist Evaluators**:

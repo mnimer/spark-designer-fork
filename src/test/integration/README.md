@@ -3,7 +3,7 @@
 > **Author:** Mike Nimer <mikenimer@google.com>  
 > **Location:** `src/test/integration/`
 
-This directory holds **live end-to-end integration tests** for the extension's AI code generation. The tests call Gemini (`gemini-3.8-flash`) on Vertex AI with `location: 'global'`. Each test generates a complete PySpark 4.x repository from a `.spark` pipeline file. The multi-agent evaluation harness then audits the repository, and the offline pytest runner executes its generated tests.
+This directory holds **live end-to-end integration tests** for the extension's AI code generation. The tests call Gemini (`gemini-4-hydrogen`) on Vertex AI with `location: 'global'`. Each test generates a complete PySpark 4.x repository from a `.spark` pipeline file. The multi-agent evaluation harness then audits the repository, and the offline pytest runner executes its generated tests.
 
 ---
 
@@ -91,7 +91,7 @@ If PySpark 4.x, pytest, or a compatible JVM is missing, the test passes with a `
 [.spark Pipeline YAML]
          │
          ▼
-1. Code Generation (Gemini 3.8 Flash, global endpoint)
+1. Code Generation (Gemini 4 Hydrogen, global endpoint)
    Same prompt builder as the extension (buildPromptFromPipelineYaml + codegen skills)
          │
          ▼

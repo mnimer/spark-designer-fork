@@ -1,6 +1,6 @@
 ---
 name: transform-spark-ml-vertex-ai
-description: Run distributed Spark ML PipelineModel scoring, XGBoost Spark inference, or batched Vertex AI Endpoint and Gemini 3.8 Flash predictions in PySpark 4.x.
+description: Run distributed Spark ML PipelineModel scoring, XGBoost Spark inference, or batched Vertex AI Endpoint and Gemini 4 Hydrogen predictions in PySpark 4.x.
 metadata:
   kind: transform
   usedBy: [generator, reviewer]
@@ -41,8 +41,8 @@ Execute remote model calls inside executor partitions via `df.mapInPandas(predic
   - Initialize the SDK client **once at the top of `predict_batches(pdf_iter)` outside the `for pdf in pdf_iter:` loop** so executors reuse HTTP/gRPC connection pools across all Arrow batches in the partition. Never instantiate a client per row or per batch.
 - **Vertex AI Gemini (`engine == "vertex_ai_gemini"`)**:
   - Use the unified Google Gen AI SDK (`from google import genai`) and include `google-genai`, `pandas`, and `pyarrow` in `requirements.txt`.
-  - Initialize `client = genai.Client(vertexai=True, project=project_id, location="global")` and default `geminiModel` to `"gemini-3.8-flash"`.
-  - **Strict Model & Endpoint Rule**: Always use `location="global"` for Gemini 3.x models such as `"gemini-3.8-flash"` and `"gemini-3.7-flash"`. Never revert model names to `gemini-2.5*` or Gemini 1.x/2.x, and never point Gemini 3.x models at regional endpoints such as `us-central1` (`us-central1` returns HTTP 404).
+  - Initialize `client = genai.Client(vertexai=True, project=project_id, location="global")` and default `geminiModel` to `"gemini-4-hydrogen"`.
+  - **Strict Model & Endpoint Rule**: Always use `location="global"` for Gemini 3.x/4.x models such as `"gemini-4-hydrogen"` and `"gemini-3.8-flash"`. Never revert model names to `gemini-2.5*` or Gemini 1.x/2.x, and never point Gemini 3.x/4.x models at regional endpoints such as `us-central1` (`us-central1` returns HTTP 404).
   - Format prompts from `inputColumns` using single-brace Python templates (`prompt_template.format(**row_dict)`) and chunk requests according to `batchSize` with exponential backoff on HTTP `429` or `5xx` errors.
 - **Vertex AI Online Prediction Endpoint (`engine == "vertex_ai_endpoint"`)**:
   - Import `from google.cloud import aiplatform` and include `google-cloud-aiplatform`, `pandas`, and `pyarrow` in `requirements.txt`.
@@ -111,13 +111,13 @@ def score_vertex_ai_gemini(
     prompt_template: str,
     input_columns: list[str],
     output_column: str = "ai_response",
-    gemini_model: str = "gemini-3.8-flash",
+    gemini_model: str = "gemini-4-hydrogen",
     location: str = "global",
     batch_size: int = 32,
     enable_dlq: bool = False,
     cache_before_split: bool = True,
 ) -> DataFrame | tuple[DataFrame, DataFrame]:
-    """Runs batched Gemini 3.8 Flash inference via google-genai initialized once per partition."""
+    """Runs batched Gemini 4 Hydrogen inference via google-genai initialized once per partition."""
     existing_ddl = ", ".join(f"{field.name} {field.dataType.simpleString()}" for field in df.schema.fields)
     out_ddl = f"{existing_ddl}, {output_column} string, _error string"
 
@@ -271,7 +271,7 @@ def test_vertex_ai_gemini_mocked_offline(spark: SparkSession) -> None:
             prompt_template="Classify review: {review_text}",
             input_columns=["review_text"],
             output_column="sentiment",
-            gemini_model="gemini-3.8-flash",
+            gemini_model="gemini-4-hydrogen",
             location="global",
             enable_dlq=True,
             cache_before_split=False,

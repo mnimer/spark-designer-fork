@@ -300,7 +300,7 @@ export const CODEGEN_MODEL_SETTINGS = {
 export interface CodegenModelTuning {
     /** Sampling temperature. */
     temperature?: number;
-    /** Thinking depth for Gemini 3.x models (`thinkingConfig.thinkingLevel`). */
+    /** Thinking depth for Gemini 3.x/4.x models (`thinkingConfig.thinkingLevel`). */
     thinkingLevel?: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH';
 }
 

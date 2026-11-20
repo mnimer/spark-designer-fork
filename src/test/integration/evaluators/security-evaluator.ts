@@ -10,7 +10,7 @@
  *
  * Architectural decisions:
  * - Dynamically resolves the security model: attempts 'gemini-3.8-flash-cyber'
- *   (via Google's Fairwind Program) and transparently falls back to 'gemini-3.8-flash'
+ *   (via Google's Fairwind Program) and transparently falls back to 'gemini-4-hydrogen'
  *   (DEFAULT_GEMINI_MODEL) for non-allowlisted developer environments.
  * - Injects 1-indexed line numbers into generated code to ensure finding citations
  *   have verifiable, ground-truth line references and verbatim evidence.
@@ -36,7 +36,7 @@ export function resetResolvedSecurityModelForTesting(): void {
 /**
  * Resolves the optimal Gemini model for security code evaluation.
  * Probes 'gemini-3.8-flash-cyber' first; falls back gracefully to
- * DEFAULT_GEMINI_MODEL ('gemini-3.8-flash').
+ * DEFAULT_GEMINI_MODEL ('gemini-4-hydrogen').
  *
  * @param ai - Initialized GoogleGenAI client.
  * @returns Resolved model identifier string.
@@ -47,7 +47,7 @@ export async function resolveSecurityModel(ai: GoogleGenAI): Promise<string> {
     }
 
     const preferredModel = process.env.SECURITY_EVALUATOR_MODEL || 'gemini-3.8-flash-cyber';
-    const fallbackModel = 'gemini-3.8-flash';
+    const fallbackModel = 'gemini-4-hydrogen';
     const baseModel = DEFAULT_GEMINI_MODEL;
 
     // NOTE: Attempt preferred model (Fairwind program access)
@@ -60,7 +60,7 @@ export async function resolveSecurityModel(ai: GoogleGenAI): Promise<string> {
         cachedSecurityModel = preferredModel;
         return preferredModel;
     } catch (err: any) {
-        // Fallback to general gemini-3.8-flash or base model
+        // Fallback to general gemini-4-hydrogen or base model
         try {
             await ai.models.generateContent({
                 model: fallbackModel,
