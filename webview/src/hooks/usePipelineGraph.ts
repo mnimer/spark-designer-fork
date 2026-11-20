@@ -32,6 +32,16 @@ import {
   type ReadMode,
 } from '../utils/sparkDagRules';
 import { buildExecutionPlan, type ExecutionPlan } from '../utils/executionPlanner';
+import {
+  buildSdpPlan,
+  checkNodeSdpCompatibility,
+  type SdpExecutionPlan,
+} from '../utils/sdpPlanner';
+import type {
+  PipelineParadigm,
+  SdpDatasetBadge,
+  SdpDatasetKind,
+} from '../utils/sharedTypes';
 import { computeLayoutedNodes } from '../graph/layout';
 import { createNodesForPaletteItem } from '../graph/nodeFactory';
 import { isPubSubSourceNode } from '../graph/nodeKinds';
@@ -55,6 +65,10 @@ export interface PipelineNodeData {
   executionMode?: ReadMode;
   isCached?: boolean;
   isForeachBatchSink?: boolean;
+  paradigm?: PipelineParadigm;
+  sdpBadge?: SdpDatasetBadge;
+  sdpDatasetName?: string;
+  sdpKind?: SdpDatasetKind;
   supportedReadModes?: ReadMode[];
   defaultReadMode?: ReadMode;
   errorOutput?: boolean;
@@ -76,6 +90,7 @@ export interface UsePipelineGraphOptions {
   project?: (position: { x: number; y: number }) => { x: number; y: number };
   fitView?: (options?: any) => void;
   jobConfig?: Record<string, any>;
+  paradigm?: PipelineParadigm;
 }
 
 /**
@@ -96,7 +111,8 @@ function sameReadModes(a?: ReadMode[], b?: ReadMode[]): boolean {
 function canConnectEdge(
   connection: Connection,
   currentNodes: PipelineNode[],
-  currentEdges: Edge[]
+  currentEdges: Edge[],
+  paradigm: PipelineParadigm = 'imperative'
 ): boolean {
   if (!connection.source || !connection.target) {
     return false;
@@ -127,17 +143,23 @@ function canConnectEdge(
         return false;
       }
     }
-  } else if (
-    sourceNode.data?.type === 'STEP' &&
-    connection.sourceHandle === 'error' &&
-    !isErrorCapableStep(sourceNode as any)
-  ) {
-    return false;
+  } else if (sourceNode.data?.type === 'STEP' && connection.sourceHandle === 'error') {
+    if (paradigm === 'sdp') {
+      if (getNodeSparkTransform(sourceNode as any) !== 'DataQualityAssert') {
+        return false;
+      }
+    } else if (!isErrorCapableStep(sourceNode as any)) {
+      return false;
+    }
   }
 
   if (isJoinNode(targetNode as any) || isMergeCdcScdNode(targetNode as any)) {
     const targetHandle = connection.targetHandle;
-    if (targetHandle !== 'left' && targetHandle !== 'right') {
+    if (paradigm === 'sdp' && isMergeCdcScdNode(targetNode as any)) {
+      if (targetHandle !== 'left') {
+        return false;
+      }
+    } else if (targetHandle !== 'left' && targetHandle !== 'right') {
       return false;
     }
     const handleOccupied = currentEdges.some(
@@ -170,6 +192,7 @@ export function usePipelineGraph({
   project,
   fitView,
   jobConfig,
+  paradigm = 'imperative',
 }: UsePipelineGraphOptions) {
   const [nodes, setNodes, onNodesChange] = useNodesState<PipelineNodeData>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -201,8 +224,8 @@ export function usePipelineGraph({
   );
 
   const isValidConnection = useCallback(
-    (connection: Connection) => canConnectEdge(connection, nodes, edges),
-    [nodes, edges]
+    (connection: Connection) => canConnectEdge(connection, nodes, edges, paradigm),
+    [nodes, edges, paradigm]
   );
 
   const onConnect = useCallback(
@@ -216,16 +239,16 @@ export function usePipelineGraph({
         sourceHandle: params.sourceHandle ?? null,
         targetHandle: params.targetHandle ?? null,
       };
-      if (!canConnectEdge(normalizedConnection, nodes, edges)) {
+      if (!canConnectEdge(normalizedConnection, nodes, edges, paradigm)) {
         return;
       }
       takeSnapshot();
       setEdges((eds) =>
-        canConnectEdge(normalizedConnection, nodes, eds) ? addEdge(params, eds) : eds
+        canConnectEdge(normalizedConnection, nodes, eds, paradigm) ? addEdge(params, eds) : eds
       );
       setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
-    [nodes, edges, setEdges, takeSnapshot, setPipelineConfig]
+    [nodes, edges, paradigm, setEdges, takeSnapshot, setPipelineConfig]
   );
 
   const handleApplyProperties = useCallback(
@@ -329,6 +352,12 @@ export function usePipelineGraph({
       }
 
       const data = JSON.parse(dataStr);
+      if (paradigm === 'sdp') {
+        const compat = checkNodeSdpCompatibility(data.sparkTransform, data.type);
+        if (!compat.supported) {
+          return;
+        }
+      }
 
       const rawPos = {
         x: event.clientX - reactFlowBounds.left,
@@ -350,11 +379,18 @@ export function usePipelineGraph({
       }
       setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
-    [project, setNodes, setEdges, nodes, edges, takeSnapshot, setPipelineConfig]
+    [paradigm, project, setNodes, setEdges, nodes, edges, takeSnapshot, setPipelineConfig]
   );
 
   const handleAddNode = useCallback(
     (label: string, type: string, iconName: string, sparkTransform?: string) => {
+      if (paradigm === 'sdp') {
+        const compat = checkNodeSdpCompatibility(sparkTransform, type);
+        if (!compat.supported) {
+          return;
+        }
+      }
+
       const nodeCount = nodes.length;
       const position = {
         x: 100 + (nodeCount % 6) * 60,
@@ -378,7 +414,7 @@ export function usePipelineGraph({
       setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
       triggerFitView();
     },
-    [nodes, edges, setNodes, setEdges, takeSnapshot, setPipelineConfig, triggerFitView]
+    [paradigm, nodes, edges, setNodes, setEdges, takeSnapshot, setPipelineConfig, triggerFitView]
   );
 
   const deleteSelected = useCallback(() => {
@@ -398,15 +434,105 @@ export function usePipelineGraph({
     }
   }, [selectedNodeId, selectedEdgeId, setNodes, setEdges, takeSnapshot, setPipelineConfig]);
 
-  const dagValidation = useMemo<DagValidationResult>(
+  const sdpPlan = useMemo<SdpExecutionPlan | null>(
     () =>
-      validateDagTopology(
-        nodes as any,
-        edges as any,
-        jobConfig?.checkpointRoot !== undefined ? { jobConfig } : undefined
-      ),
-    [nodes, edges, jobConfig]
+      paradigm === 'sdp'
+        ? buildSdpPlan(nodes as any, edges as any, jobConfig, { enforceRuntimeVersion: false })
+        : null,
+    [paradigm, nodes, edges, jobConfig]
   );
+
+  const dagValidation = useMemo<DagValidationResult>(() => {
+    const baseValidation = validateDagTopology(
+      nodes as any,
+      edges as any,
+      paradigm === 'sdp'
+        ? ({ paradigm: 'sdp' } as any)
+        : jobConfig?.checkpointRoot !== undefined
+          ? { jobConfig }
+          : undefined
+    );
+
+    if (paradigm !== 'sdp' || !sdpPlan) {
+      return baseValidation;
+    }
+
+    // In SDP mode, MergeCdcScd only requires a streaming CDC input on the "left" handle
+    // because SDP manages the target streaming table directly without a "right" snapshot source,
+    // and SDP manages checkpoints under pipeline storage rather than per-sink checkpointLocation.
+    const validMergeLeftOnlyIds = new Set<string>();
+    for (const node of nodes) {
+      if (isMergeCdcScdNode(node as any)) {
+        const inbound = edges.filter((e) => e.target === node.id);
+        const leftCount = inbound.filter((e) => e.targetHandle === 'left').length;
+        const rightCount = inbound.filter((e) => e.targetHandle === 'right').length;
+        const untypedCount = inbound.filter(
+          (e) => e.targetHandle !== 'left' && e.targetHandle !== 'right'
+        ).length;
+        if (leftCount === 1 && rightCount === 0 && untypedCount === 0) {
+          validMergeLeftOnlyIds.add(node.id);
+        }
+      }
+    }
+
+    const isImperativeOnlyDiagnostic = (msg: string): boolean =>
+      msg.includes('is missing a checkpoint path. Configure "checkpointLocation"') ||
+      (msg.includes('MergeCdcScd node') && msg.includes('(missing "right")'));
+
+    const errors = baseValidation.errors.filter((msg) => !isImperativeOnlyDiagnostic(msg));
+    const warnings = baseValidation.warnings.filter((msg) => !isImperativeOnlyDiagnostic(msg));
+    const missingUpstreamNodeIds = (baseValidation.missingUpstreamNodeIds || []).filter(
+      (id) => !validMergeLeftOnlyIds.has(id)
+    );
+
+    const nodeErrors: Record<string, string[]> = {};
+    if (baseValidation.nodeErrors) {
+      for (const [nid, list] of Object.entries(baseValidation.nodeErrors)) {
+        const filtered = list.filter((msg) => !isImperativeOnlyDiagnostic(msg));
+        if (filtered.length > 0) {
+          nodeErrors[nid] = [...filtered];
+        }
+      }
+    }
+
+    const nodeWarnings: Record<string, string[]> = {};
+    if (baseValidation.nodeWarnings) {
+      for (const [nid, list] of Object.entries(baseValidation.nodeWarnings)) {
+        const filtered = list.filter((msg) => !isImperativeOnlyDiagnostic(msg));
+        if (filtered.length > 0) {
+          nodeWarnings[nid] = [...filtered];
+        }
+      }
+    }
+
+    for (const issue of sdpPlan.blockingIssues) {
+      if (!errors.includes(issue.message)) {
+        errors.push(issue.message);
+      }
+      if (issue.nodeId) {
+        const existing = nodeErrors[issue.nodeId] ?? [];
+        if (!existing.includes(issue.message)) {
+          nodeErrors[issue.nodeId] = [...existing, issue.message];
+        }
+      }
+    }
+
+    for (const warn of sdpPlan.warnings) {
+      if (!warnings.includes(warn)) {
+        warnings.push(warn);
+      }
+    }
+
+    return {
+      ...baseValidation,
+      isValid: errors.length === 0,
+      missingUpstreamNodeIds,
+      errors,
+      warnings,
+      nodeErrors,
+      nodeWarnings,
+    };
+  }, [nodes, edges, jobConfig, paradigm, sdpPlan]);
 
   const streamingPropagation = useMemo(
     () => computeStreamingNodeSet(nodes as any, edges as any),
@@ -427,6 +553,7 @@ export function usePipelineGraph({
     const invalidUpstreamSet = new Set(dagValidation.invalidUpstreamNodeIds || []);
     const nodeErrorsMap = dagValidation.nodeErrors;
     const nodeWarningsMap = dagValidation.nodeWarnings;
+    const isSdp = paradigm === 'sdp';
 
     return nodes.map((node) => {
       const nodeErrors = nodeErrorsMap?.[node.id];
@@ -461,11 +588,19 @@ export function usePipelineGraph({
           : undefined;
 
       const nodePlan = executionPlan.nodes[node.id];
-      const executionMode: ReadMode =
-        nodePlan?.executionMode ??
-        (streamingPropagation.streamingNodeIds.has(node.id) ? 'streaming' : 'batch');
-      const isCached = Boolean(nodePlan?.isCached);
-      const isForeachBatchSink = Boolean(nodePlan?.isForeachBatchSink);
+      const sdpDataset = isSdp ? sdpPlan?.datasetsByNodeId[node.id] : undefined;
+      const executionMode: ReadMode = sdpDataset
+        ? sdpDataset.isStreaming
+          ? 'streaming'
+          : 'batch'
+        : nodePlan?.executionMode ??
+          (streamingPropagation.streamingNodeIds.has(node.id) ? 'streaming' : 'batch');
+      const isCached = isSdp ? false : Boolean(nodePlan?.isCached);
+      const isForeachBatchSink = isSdp ? false : Boolean(nodePlan?.isForeachBatchSink);
+      const nodeParadigm: PipelineParadigm | undefined = isSdp ? 'sdp' : undefined;
+      const sdpBadge = isSdp ? sdpDataset?.badge : undefined;
+      const sdpDatasetName = isSdp ? sdpDataset?.datasetName : undefined;
+      const sdpKind = isSdp ? sdpDataset?.kind : undefined;
 
       let supportedReadModes = node.data.supportedReadModes;
       if (node.data.type === 'SOURCE' && !supportedReadModes) {
@@ -484,6 +619,10 @@ export function usePipelineGraph({
         node.data.executionMode === executionMode &&
         node.data.isCached === isCached &&
         node.data.isForeachBatchSink === isForeachBatchSink &&
+        node.data.paradigm === nodeParadigm &&
+        node.data.sdpBadge === sdpBadge &&
+        node.data.sdpDatasetName === sdpDatasetName &&
+        node.data.sdpKind === sdpKind &&
         sameReadModes(node.data.supportedReadModes, supportedReadModes)
       ) {
         return node;
@@ -501,11 +640,15 @@ export function usePipelineGraph({
           executionMode,
           isCached,
           isForeachBatchSink,
+          paradigm: nodeParadigm,
+          sdpBadge,
+          sdpDatasetName,
+          sdpKind,
           ...(supportedReadModes ? { supportedReadModes } : {}),
         },
       };
     });
-  }, [nodes, dagValidation, executionPlan, streamingPropagation]);
+  }, [nodes, dagValidation, executionPlan, streamingPropagation, paradigm, sdpPlan]);
 
   const displayEdges = useMemo(() => {
     const cycleEdgeSet = new Set(dagValidation.cycleEdgeIds);
@@ -553,6 +696,7 @@ export function usePipelineGraph({
     displayEdges,
     dagValidation,
     executionPlan,
+    sdpPlan,
     pipelineMode,
     onNodesChange,
     onEdgesChange,

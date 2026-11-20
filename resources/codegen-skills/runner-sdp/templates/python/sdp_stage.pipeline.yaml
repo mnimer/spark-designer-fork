@@ -1,0 +1,26 @@
+# ==============================================================================
+# Google Cloud Managed Data Pipelines — Spark Declarative Pipelines (sdp) Stage
+#
+# Primary Production Execution Path:
+#   Packages spark-pipeline.yml and transformations/** via SdpPackager onto
+#   Google Cloud Serverless Spark Runtime 4.0 (Apache Spark 4.2+, Spark Connect).
+#
+# Static Spark Configuration Rule (CANNOT_MODIFY_STATIC_CONFIG):
+#   Place static session, JVM, and extension settings in execution_config.properties
+#   and extra gs:// connector JARs in execution_config.jar_uris below.
+#   Never place spark.jars*, spark.sql.extensions, spark.sql.catalogImplementation,
+#   spark.driver.*, spark.executor.*, or spark.dynamicAllocation.* inside
+#   spark-pipeline.yml configuration.
+# ==============================================================================
+name: {{pipeline_name}}
+runtime_version: "4.0"
+
+stages:
+  - id: {{pipeline_name}}_sdp
+    type: data_model
+    sdp:
+      spec_path: spark-pipeline.yml
+      execution_config:
+        properties:
+          spark.sql.extensions: "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
+        jar_uris: []

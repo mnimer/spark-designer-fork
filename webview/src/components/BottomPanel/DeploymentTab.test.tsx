@@ -5,10 +5,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { DeploymentTab, buildDefaultCommandPreview, type LogEntry } from './DeploymentTab';
-import { renderWithBottomPanel } from './testUtils';
+import { BottomPanelProvider } from './BottomPanelContext';
+import { createBottomPanelContextValue, renderWithBottomPanel } from './testUtils';
 
 describe('DeploymentTab', () => {
   const defaultProps = {
@@ -209,5 +210,240 @@ describe('DeploymentTab', () => {
 
     const runnerSelect = screen.getByLabelText(/Target Environment/i);
     expect(runnerSelect).toHaveValue('Local');
+  });
+
+  describe('Spark Declarative Pipelines (SDP3 & SDP9) mode', () => {
+    const sdpNodes = [
+      {
+        id: 'n-bronze',
+        type: 'source',
+        data: {
+          label: 'Bronze Orders',
+          nodeType: 'SOURCE',
+          sparkTransform: 'CsvSource',
+          sdpDatasetName: 'bronze_orders',
+          sdpKind: 'streaming_table',
+          sdpBadge: 'TABLE',
+          properties: { readMode: 'streaming', sdpResetAllowed: false },
+        },
+      },
+      {
+        id: 'n-cdc',
+        type: 'step',
+        data: {
+          label: 'Customer Auto CDC',
+          nodeType: 'STEP',
+          sparkTransform: 'MergeCdcScd',
+          sdpDatasetName: 'silver_customers',
+          sdpKind: 'auto_cdc',
+          sdpBadge: 'CDC',
+          properties: { scdType: 'scd1' },
+        },
+      },
+      {
+        id: 'n-mv',
+        type: 'step',
+        data: {
+          label: 'Gold Revenue MV',
+          nodeType: 'STEP',
+          sparkTransform: 'GroupByAgg',
+          sdpDatasetName: 'gold_revenue',
+          sdpKind: 'materialized_view',
+          sdpBadge: 'MV',
+          properties: {},
+        },
+      },
+      {
+        id: 'n-sink',
+        type: 'sink',
+        data: {
+          label: 'Kafka Sink',
+          nodeType: 'SINK',
+          sparkTransform: 'KafkaSink',
+          sdpDatasetName: 'kafka_alerts_sink',
+          sdpKind: 'external_sink',
+          sdpBadge: 'SINK',
+          properties: {},
+        },
+      },
+    ];
+
+    it('previews SDP runner commands (./run_sdp_local.sh, ./run_sdp_dataproc.sh, sdp_stage.pipeline.yaml) with refresh flags', () => {
+      expect(
+        buildDefaultCommandPreview(
+          'Local',
+          {
+            runner: 'Local',
+            sdpCommand: 'run',
+            sdpRefreshMode: 'refresh',
+            sdpRefreshDatasets: ['silver_customers', 'gold_revenue'],
+          },
+          'proj-1',
+          'us-central1',
+          'sdp'
+        )
+      ).toContain('SDP_REFRESH=silver_customers,gold_revenue ./run_sdp_local.sh');
+
+      expect(
+        buildDefaultCommandPreview(
+          'DataprocCluster',
+          {
+            runner: 'DataprocCluster',
+            clusterName: 'dp-40-cluster',
+            sdpCommand: 'run',
+            sdpRefreshMode: 'full_refresh_all',
+          },
+          'proj-1',
+          'us-central1',
+          'sdp'
+        )
+      ).toContain(
+        'CLUSTER_NAME=dp-40-cluster SDP_FULL_REFRESH_ALL=true ./run_sdp_dataproc.sh'
+      );
+
+      expect(
+        buildDefaultCommandPreview(
+          'ServerlessSpark',
+          { runner: 'ServerlessSpark', sdpCommand: 'dry-run' },
+          'proj-1',
+          'us-central1',
+          'sdp'
+        )
+      ).toContain('sdp_stage.pipeline.yaml');
+    });
+
+    it('requires explicit confirmation naming every reset dataset and Auto CDC state table before running full_refresh_all', () => {
+      const onRunNow = vi.fn();
+      const baseCtx = createBottomPanelContextValue({
+        ...defaultProps,
+        onRunNow,
+        nodes: sdpNodes,
+        jobConfig: {
+          ...defaultProps.jobConfig,
+          sdpCommand: 'run',
+          sdpRefreshMode: 'full_refresh_all',
+        },
+      });
+      render(
+        <BottomPanelProvider
+          value={{
+            ...baseCtx,
+            pipelineConfig: {
+              ...baseCtx.pipelineConfig,
+              config: { ...baseCtx.pipelineConfig.config, paradigm: 'sdp' },
+            },
+          }}
+        >
+          <DeploymentTab />
+        </BottomPanelProvider>
+      );
+
+      // MV truncation note and external sink duplicate warning are shown
+      expect(screen.getByTestId('sdp-mv-truncation-note')).toHaveTextContent('gold_revenue');
+      expect(screen.getByTestId('sdp-external-sink-duplicate-warning')).toHaveTextContent(
+        'kafka_alerts_sink'
+      );
+
+      // Clicking RUN PIPELINE opens confirmation modal instead of calling onRunNow immediately
+      fireEvent.click(screen.getByRole('button', { name: /RUN PIPELINE/i }));
+      expect(onRunNow).not.toHaveBeenCalled();
+
+      const modal = screen.getByTestId('sdp-full-refresh-confirm-modal');
+      expect(modal).toBeInTheDocument();
+
+      const resetList = screen.getByTestId('sdp-reset-dataset-list');
+      // bronze_orders has sdpResetAllowed: false, so it is protected from reset, while resettable datasets and external sinks are named
+      expect(resetList).not.toHaveTextContent('bronze_orders');
+      expect(resetList).toHaveTextContent('silver_customers');
+      expect(resetList).toHaveTextContent('__spark_autocdc_aux_state_silver_customers');
+      expect(resetList).toHaveTextContent('gold_revenue');
+      expect(resetList).toHaveTextContent('kafka_alerts_sink');
+      expect(modal).toHaveTextContent(/only from source data still available/i);
+
+      // Cancel closes modal without running
+      fireEvent.click(screen.getByTestId('cancel-sdp-full-refresh-btn'));
+      expect(
+        screen.queryByTestId('sdp-full-refresh-confirm-modal')
+      ).not.toBeInTheDocument();
+      expect(onRunNow).not.toHaveBeenCalled();
+
+      // Re-open and confirm -> calls onRunNow
+      fireEvent.click(screen.getByRole('button', { name: /RUN PIPELINE/i }));
+      fireEvent.click(screen.getByTestId('confirm-sdp-full-refresh-btn'));
+      expect(onRunNow).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to buildSdpPlan and data.type when React Flow type="pipeline" nodes omit sdpDatasetName', () => {
+      const rawNodes = [
+        {
+          id: 'src-raw',
+          type: 'pipeline',
+          data: {
+            label: 'Raw Orders Stream',
+            type: 'SOURCE',
+            spark_transform: 'CsvSource',
+            properties: {
+              readMode: 'streaming',
+              filePattern: 'gs://raw-orders-bucket/orders/*.csv',
+            },
+          },
+        },
+        {
+          id: 'agg-raw',
+          type: 'pipeline',
+          data: {
+            label: 'Daily Totals',
+            type: 'STEP',
+            spark_transform: 'GroupByAgg',
+            properties: {},
+          },
+        },
+        {
+          id: 'snk-raw',
+          type: 'pipeline',
+          data: {
+            label: 'Outbound Events Sink',
+            type: 'SINK',
+            spark_transform: 'KafkaSink',
+            properties: {},
+          },
+        },
+      ];
+
+      const baseCtx = createBottomPanelContextValue({
+        ...defaultProps,
+        nodes: rawNodes,
+        jobConfig: {
+          ...defaultProps.jobConfig,
+          sdpStorage: 'gs://raw-orders-bucket/orders/checkpoints',
+          sdpCommand: 'run',
+          sdpRefreshMode: 'full_refresh_all',
+        },
+      });
+
+      render(
+        <BottomPanelProvider
+          value={{
+            ...baseCtx,
+            pipelineConfig: {
+              ...baseCtx.pipelineConfig,
+              config: { ...baseCtx.pipelineConfig.config, paradigm: 'sdp' },
+            },
+          }}
+        >
+          <DeploymentTab />
+        </BottomPanelProvider>
+      );
+
+      // Source folder overlap warning works on real React Flow type="pipeline" SOURCE node
+      expect(screen.getByTestId('sdp-storage-error')).toHaveTextContent(
+        /cannot equal or be nested inside source path/i
+      );
+      // External sink duplicate warning and MV truncation note resolve from React Flow type="pipeline" nodes
+      expect(screen.getByTestId('sdp-external-sink-duplicate-warning')).toHaveTextContent(
+        'outbound_events_sink'
+      );
+      expect(screen.getByTestId('sdp-mv-truncation-note')).toHaveTextContent('daily_totals');
+    });
   });
 });

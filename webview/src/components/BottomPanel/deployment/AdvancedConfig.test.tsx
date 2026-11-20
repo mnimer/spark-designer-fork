@@ -465,4 +465,77 @@ describe('AdvancedConfig', () => {
       }
     });
   });
+
+  describe('Spark Declarative Pipelines (SDP3) mode', () => {
+    it('hides imperative Streaming Defaults, renders SdpSettingsPanel, and flags runtime 3.0 on ServerlessSpark', () => {
+      render(
+        <AdvancedConfig
+          jobConfig={{ runner: 'ServerlessSpark', runtimeVersion: '3.0' }}
+          setJobConfig={vi.fn()}
+          subnetworks={sampleSubnetworks}
+          paradigm="sdp"
+        />
+      );
+
+      expect(screen.queryByTestId('pipeline-streaming-defaults')).not.toBeInTheDocument();
+      expect(screen.getByTestId('sdp-settings-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('sdp-runtime-version-warning')).toHaveTextContent(
+        /SDP_SPARK_42_REQUIRED/
+      );
+    });
+
+    it('renders Dataproc 4.0 ICEBERG and zstandard>=0.25.0 note in SDP mode', () => {
+      render(
+        <AdvancedConfig
+          jobConfig={{ runner: 'DataprocCluster', runtimeVersion: '4.0' }}
+          setJobConfig={vi.fn()}
+          subnetworks={sampleSubnetworks}
+          paradigm="sdp"
+        />
+      );
+
+      const note = screen.getByTestId('sdp-dataproc-cluster-note');
+      expect(note).toHaveTextContent('--optional-components=ICEBERG');
+      expect(note).toHaveTextContent('zstandard>=0.25.0');
+    });
+
+    it('shows missing local iceberg-spark-runtime-4.2_2.13 warning banner when Local SDP has Iceberg nodes', () => {
+      const icebergNodes = [
+        {
+          id: 'snk-1',
+          type: 'sink',
+          data: { nodeType: 'SINK', sparkTransform: 'IcebergSink', properties: {} },
+        },
+      ];
+
+      const { rerender } = render(
+        <AdvancedConfig
+          jobConfig={{ runner: 'Local', runtimeVersion: '4.2-connect' }}
+          setJobConfig={vi.fn()}
+          subnetworks={sampleSubnetworks}
+          paradigm="sdp"
+          nodes={icebergNodes}
+        />
+      );
+
+      expect(screen.getByTestId('sdp-local-connect-info')).toBeInTheDocument();
+      const warning = screen.getByTestId('sdp-local-iceberg-warning');
+      expect(warning).toHaveTextContent('iceberg-spark-runtime-4.2_2.13');
+      expect(warning).toHaveTextContent('org.apache.iceberg.spark.SparkCatalog');
+      expect(warning).toHaveTextContent('./run_sdp_local.sh --test');
+      expect(warning).toHaveTextContent('SPARK_JARS');
+
+      // Warning disappears when no Iceberg nodes are on the canvas
+      rerender(
+        <AdvancedConfig
+          jobConfig={{ runner: 'Local', runtimeVersion: '4.2-connect' }}
+          setJobConfig={vi.fn()}
+          subnetworks={sampleSubnetworks}
+          paradigm="sdp"
+          nodes={[]}
+        />
+      );
+      expect(screen.queryByTestId('sdp-local-iceberg-warning')).not.toBeInTheDocument();
+    });
+  });
 });

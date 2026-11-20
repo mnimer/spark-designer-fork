@@ -149,4 +149,28 @@ describe('PropertyPane', () => {
     const rootPane = container.firstElementChild as HTMLElement;
     expect(rootPane.style.width).toBe('450px');
   });
+
+  it('forwards paradigm="sdp" to PropertyForm so SINK inspection shows SDP settings instead of streaming triggers (SDP2)', async () => {
+    render(
+      <PropertyPane
+        node={{
+          id: 'sink-sdp-1',
+          data: {
+            label: 'Gold Iceberg',
+            iconName: 'Database',
+            type: 'SINK',
+            spark_transform: 'IcebergSink',
+            executionMode: 'streaming',
+            properties: {},
+          },
+        }}
+        paradigm="sdp"
+        onChange={vi.fn()}
+        runtimeVariables={mockRuntimeVariables}
+      />
+    );
+
+    expect(await screen.findByText('SDP Target Dataset & Sink Settings')).toBeInTheDocument();
+    expect(screen.queryByText('Streaming Sink Settings')).not.toBeInTheDocument();
+  });
 });

@@ -64,6 +64,10 @@ function isWorkspaceUntrusted(): boolean {
 const UNTRUSTED_WORKSPACE_MESSAGE =
     'This workspace is not trusted. Trust the workspace to run pipelines or generate code.';
 
+/** Error message shown when an overlapping Spark Declarative Pipeline run is rejected on shared checkpoint storage. */
+export const SDP_OVERLAPPING_RUN_MESSAGE =
+    'Cannot start an overlapping Spark Declarative Pipeline run while another run is active on shared checkpoint storage. Stop or wait for the current run first.';
+
 /**
  * Executes a pipeline script as a child process and streams real-time stdout/stderr
  * logs and detected job IDs to the webview and output channel.
@@ -79,6 +83,23 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
         return;
     }
     const session = sessionOf(ctx);
+    const requestedParadigm: 'imperative' | 'sdp' =
+        message?.pipelineConfig?.paradigm === 'sdp' || message?.jobConfig?.paradigm === 'sdp'
+            ? 'sdp'
+            : 'imperative';
+
+    if (requestedParadigm === 'sdp' && session.activeProcess !== null) {
+        vscode.window.showErrorMessage(SDP_OVERLAPPING_RUN_MESSAGE);
+        const channel = ctx.outputChannel || getDesignerOutputChannel();
+        channel.appendLine(`[${new Date().toLocaleTimeString()}] ERROR: ${SDP_OVERLAPPING_RUN_MESSAGE}`);
+        ctx.postToWebview({
+            command: 'pipelineLog',
+            text: `[Error]: ${SDP_OVERLAPPING_RUN_MESSAGE}\n`,
+            stream: 'stderr',
+        });
+        return;
+    }
+
     const runUri = ctx.document ? ctx.document.uri : ctx.uri;
     if (runUri) {
         const outputFolder = message.pipelineConfig?.outputFolder;
@@ -98,7 +119,11 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
         }
 
         const runner = message.jobConfig?.runner || 'Local';
-        const possibleNames = runnerScriptCandidates(runner);
+        const resolveCandidates = runnerScriptCandidates as (
+            runnerName: string,
+            paradigm?: string
+        ) => string[];
+        const possibleNames = resolveCandidates(runner, requestedParadigm);
         const scriptName = findRunnerScript(folderPath, possibleNames);
 
         if (scriptName) {
@@ -108,7 +133,7 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
             }
 
             try {
-                // If this panel already has a run in progress, terminate it before starting a new one.
+                // If this panel already has an imperative run in progress, terminate it before starting a new one.
                 // Runs owned by other editor panels are left alone.
                 session.stopProcess(false);
                 activeRemoteJobBySession.delete(session);
@@ -120,7 +145,7 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
                     // Best effort file permission update, continue execution
                 }
 
-                const commandLine = `${describeRunner(runner)}\ncd "${folderPath}" && bash ./${scriptName}`;
+                const commandLine = `${describeRunner(runner, requestedParadigm)}\ncd "${folderPath}" && bash ./${scriptName}`;
 
                 ctx.postToWebview({
                     command: 'pipelineStarted',
@@ -135,11 +160,14 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
 
                 // F6: resolve the project before spawning (explicit projectId wins).
                 const target = await resolveRunTarget(message.jobConfig);
-                const effectiveJobConfig = message.jobConfig
+                const explicitParadigm =
+                    message?.pipelineConfig?.paradigm ?? message?.jobConfig?.paradigm;
+                const effectiveJobConfig = message.jobConfig || explicitParadigm
                     ? {
-                        ...message.jobConfig,
+                        ...(message.jobConfig || {}),
+                        ...(explicitParadigm ? { paradigm: explicitParadigm } : {}),
                         ...(target.project !== PLACEHOLDER_PROJECT_ID ? { projectId: target.project } : {}),
-                        region: message.jobConfig.region || target.region,
+                        region: message.jobConfig?.region || target.region,
                     }
                     : undefined;
 

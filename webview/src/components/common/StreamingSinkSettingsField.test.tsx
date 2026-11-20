@@ -137,4 +137,30 @@ describe('StreamingSinkSettingsField', () => {
       checkpointLocation: 'gs://my-bucket/chk/delta_sink',
     });
   });
+
+  it('returns null in SDP mode to hide per-sink outputMode, trigger, and checkpointLocation (SDP2)', () => {
+    expect(
+      shouldShowStreamingSinkSettings(
+        { data: { type: 'SINK', executionMode: 'streaming', properties: { outputMode: 'append' } } },
+        'sdp'
+      )
+    ).toBe(false);
+
+    const { container } = render(
+      <StreamingSinkSettingsField
+        node={{
+          id: 'kafka-sdp',
+          data: {
+            type: 'SINK',
+            executionMode: 'streaming',
+            paradigm: 'sdp',
+            properties: { outputMode: 'append', checkpointLocation: 'gs://b/chk' },
+          },
+        }}
+        paradigm="sdp"
+        onChange={vi.fn()}
+      />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
 });

@@ -44,13 +44,13 @@ describe('BottomPanelContext', () => {
       setPipelineConfig: vi.fn(),
     },
     codegen: {
-      generatedCode: 'print("beam")',
+      generatedCode: 'print("spark")',
       regenerate: vi.fn(),
       stopGeneration: vi.fn(),
       isGenerating: false,
       files: ['pipeline.py'],
       selectedFile: 'pipeline.py',
-      selectedFileContent: 'print("beam")',
+      selectedFileContent: 'print("spark")',
       pickFolder: vi.fn(),
       selectFile: vi.fn(),
       isGraphValid: true,
@@ -82,6 +82,23 @@ describe('BottomPanelContext', () => {
     expect(result.current.execution.status).toBe('running');
     expect(result.current.jobConfig.value.runner).toBe('DataflowRunner');
     expect(result.current.runtimeVariables.variables).toHaveLength(1);
-    expect(result.current.codegen.generatedCode).toBe('print("beam")');
+    expect(result.current.codegen.generatedCode).toBe('print("spark")');
+  });
+
+  it('supports optional paradigm on pipelineConfig slice for SDP mode', () => {
+    const base = createSampleContext();
+    const value: BottomPanelContextValue = {
+      ...base,
+      pipelineConfig: {
+        ...base.pipelineConfig,
+        config: { ...base.pipelineConfig.config, paradigm: 'sdp' },
+      },
+    };
+    const wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+      <BottomPanelProvider value={value}>{children}</BottomPanelProvider>
+    );
+
+    const { result } = renderHook(() => useBottomPanel(), { wrapper });
+    expect(result.current.pipelineConfig.config.paradigm).toBe('sdp');
   });
 });

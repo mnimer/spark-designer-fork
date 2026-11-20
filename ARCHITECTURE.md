@@ -1,221 +1,198 @@
-# Architecture Guide: DataFlow Pipeline Builder
+# Architecture Guide: Apache Spark / Managed Spark Pipeline Builder
 
 > **Author**: Mike Nimer <mikenimer@google.com>  
-> **Version**: 1.0.0  
-> **Purpose**: This document outlines the software architecture, runtime boundaries, inter-process communication (IPC) protocols, state synchronization models, and Gemini AI integration for the **DataFlow Pipeline Builder** VS Code extension.
+> **Version**: 2.0.0  
+> **Purpose**: Documents the runtime boundaries, dual-paradigm planners, IPC contracts, Gemini code generation pipeline, and multi-agent evaluation harness for the Apache Spark / Managed Spark Pipeline Builder VS Code extension.
 
 ---
 
 ## High-Level Overview
 
-The DataFlow Pipeline Builder is an interactive visual IDE extension for authoring, configuring, validating, and deploying Apache Beam pipelines on Google Cloud Dataflow. It executes across two isolated runtime contexts connected via an asynchronous IPC bridge:
+The Apache Spark / Managed Spark Pipeline Builder is a visual VS Code extension for designing, validating, generating, and running Apache Spark 4.x pipelines. It supports two pipeline paradigms from one `.spark` visual editor:
 
-1. **VS Code Extension Host (Backend)**: Runs in Node.js on the local workstation. It manages the filesystem, handles workspace commands, executes local GCP CLI operations (`gcloud`, `bq`), and communicates with Vertex AI via the `@google/genai` SDK.
-2. **Webview Canvas (Frontend)**: Runs inside a sandboxed browser context. Built with React, React Flow, and Tailwind CSS, it renders the interactive DAG graph, palette drawers, property inspectors, and code preview tabs.
+1. **Imperative PySpark (`paradigm: imperative`, default)**: Generates standalone PySpark 4.x DataFrame, Catalyst SQL, and Structured Streaming projects (`src/pipeline.py`, `tests/test_pipeline.py`, `Dockerfile`, and local, Dataproc, and Serverless Spark runners).
+2. **Spark Declarative Pipelines (`paradigm: sdp`, Apache Spark 4.2+)**: Generates `spark-pipeline.yml`, Python dataset modules under `transformations/*.py` (`from pyspark import pipelines as dp`), pure helpers in `src/transforms.py`, offline unit tests in `tests/test_transforms.py`, and Managed Data Pipelines `sdp` stage artifacts.
+
+The extension executes across two isolated runtime contexts connected over an asynchronous IPC bridge:
+
+- **VS Code Extension Host (`src/`)**: Runs in Node.js on the workstation. It manages `.spark` custom editors, workspace file safety gates, local Google Cloud CLI discovery (`gcloud`, `bq`), runner execution, and Vertex AI requests (`@google/genai`, `gemini-3.8-flash` on `location: 'global'`).
+- **Webview Canvas (`webview/src/`)**: Runs inside a sandboxed browser context. Built with React 19, React Flow, and Tailwind CSS, it renders the DAG canvas, node palette, property inspectors, code preview tabs, and deployment controls.
 
 ```mermaid
-graph TD
-    subgraph "VS Code Extension Host (Node.js)"
-        Ext["extension.ts (Controller)"]
-        Prov["BeamEditorProvider (Custom Text Editor)"]
-        GenAI["@google/genai (Gemini SDK client)"]
-        Tree["DataflowJobsProvider (Sidebar Tree View)"]
+flowchart TD
+    subgraph Host["VS Code Extension Host (Node.js)"]
+        Ext["extension.ts (Activation & Commands)"]
+        Prov["SparkEditorProvider (Custom .spark Editor)"]
+        Gen["codeGeneration.ts + CodegenPromptBuilder"]
+        Runner["PipelineRunner.ts (Script Execution)"]
+        Tree["SparkTreeProvider (sparkExplorer Sidebar)"]
     end
 
-    subgraph "Webview Context (React + React Flow)"
-        App["App.tsx (State Coordinator)"]
-        Flow["React Flow Canvas (Visual Editor)"]
-        Palette["NodesCard (Left Drawer Palette)"]
-        Props["PropertyPane (Right Configuration Inspector)"]
-        Bottom["BottomPanel (Source Code & Deployment Tabs)"]
-        Theme["ThemeContext (VS Code Theme Observer)"]
+    subgraph Shared["Cross-Boundary Graph & Runtime Engine"]
+        Val["dagValidator.ts (Topology & Watermarks)"]
+        ImpPlan["executionPlanner.ts (Imperative Plan)"]
+        SdpPlan["sdpPlanner.ts (SDP Compatibility & Datasets)"]
+        VM["versionMatrix.ts (Spark 4.x Runtimes & JARs)"]
     end
 
-    subgraph "Local Workstation & Google Cloud"
-        Disk["Workstation Filesystem (.beam & generated files)"]
-        CLI["gcloud / bq CLIs (Local tools)"]
-        GeminiAPI["Gemini API (Vertex AI Cloud GenAI)"]
-        Dataflow["Google Cloud Dataflow (Execution Engine)"]
+    subgraph Web["Webview Context (React 19 + React Flow)"]
+        App["App.tsx (State & Undo/Redo Coordinator)"]
+        Toolbar["CanvasToolbar (Paradigm & Mode Indicators)"]
+        Flow["React Flow Canvas (PipelineNode Cards)"]
+        Palette["NodesCard (Sources, Steps, Sinks, Samples)"]
+        Props["PropertyPane & PropertyForm"]
+        Bottom["BottomPanel (Source Code & Deployment)"]
     end
 
-    %% Webview Internal Communication
+    subgraph Cloud["Workstation & Google Cloud"]
+        Disk["Workspace (.spark & Generated Project)"]
+        CLI["gcloud / bq / spark-pipelines CLIs"]
+        Vertex["Vertex AI Global (gemini-3.8-flash)"]
+        Managed["Serverless Spark 4.0 / Dataproc 4.0"]
+    end
+
+    App --> Toolbar
     App --> Flow
     App --> Palette
     App --> Props
     App --> Bottom
-    Theme --> App
+    App --> Val
+    App --> ImpPlan
+    App --> SdpPlan
 
-    %% IPC Bridge (VS Code Webview Message Channel)
-    App -- "vscode.postMessage()" --> Ext
-    Ext -- "webview.postMessage()" --> App
+    App -- "vscode.postMessage()" --> Prov
+    Prov -- "webview.postMessage()" --> App
 
-    %% Extension Operations
-    Ext --> Disk
-    Ext -- "child_process.exec()" --> CLI
-    Ext --> GenAI
+    Ext --> Prov
     Ext --> Tree
-
-    %% External APIs
-    GenAI --> GeminiAPI
-    CLI --> Dataflow
+    Prov --> Gen
+    Prov --> Runner
+    Gen --> ImpPlan
+    Gen --> SdpPlan
+    Gen --> VM
+    Gen --> Vertex
+    Prov --> Disk
+    Runner --> CLI
+    CLI --> Managed
 ```
 
 ---
 
-## 1. Extension Host (`src/extension.ts`)
+## 1. Imperative PySpark vs. Spark Declarative Pipelines Decision Guide
 
-The Extension Host serves as the controller and native operating system interface for the extension.
+Users choose the paradigm per `.spark` file when creating a pipeline or from the `CanvasToolbar` paradigm switcher. Switching from SDP to Imperative always succeeds immediately. Switching from Imperative to SDP runs `evaluateSdpCompatibility` and displays every blocking node before permitting the switch.
 
-### Core Responsibilities
-- **Activation Lifecycle**: Registers commands (`refreshPipelines`, `showEditor`, `runPipeline`), custom editor providers, and tree view providers upon activation.
-- **`BeamEditorProvider`**: Implements `vscode.CustomTextEditorProvider` to register as the primary visual editor for `*.beam` files. It manages the HTML webview lifecycle, loads React bundle assets (`main.js`, `index.css`), and handles document save/sync lifecycles.
-- **IPC Command Dispatcher (`handleMessages`)**: Processes incoming JSON messages from the React webview and returns structured payloads.
-- **GCP Environment Discovery**: Executes local CLI commands under the hood (`bq ls --format=json`, `gcloud compute networks subnets list --format=json`) to populate dropdown options in property forms with live project assets.
-- **Gemini Client Manager**: Initializes the `@google/genai` client using the active project retrieved dynamically from `gcloud config get project`, pointing the client to Vertex AI (`location: 'global'`).
-- **Sidebar Jobs Provider (`DataflowJobsProvider`)**: A dedicated native VS Code Tree View in the activity bar that lists active and historical Dataflow pipeline jobs.
+| Dimension | Imperative PySpark (`imperative`) | Spark Declarative Pipelines (`sdp`) |
+| :--- | :--- | :--- |
+| **Spark Runtime Floor** | Apache Spark 4.0+ (Serverless 3.0/4.0, Dataproc 3.0/4.0, Local 4.0) | Apache Spark 4.2+ over Spark Connect only (Serverless 4.0, Dataproc 4.0, Local 4.2 Connect) |
+| **Generated Code Shape** | `src/pipeline.py` (`read_sources`, `transform`, `write_sinks`) + `tests/test_pipeline.py` | `spark-pipeline.yml` + `transformations/*.py` (`@dp.*`) + `src/transforms.py` + `tests/test_transforms.py` |
+| **Execution Model** | Batch run, `availableNow`, `processingTime` micro-batches, or `continuous` triggers | Triggered incremental `AvailableNow` runs only (no continuous mode) |
+| **Lakehouse Persistence** | Explicit `df.writeTo(...)` or `df.writeStream` with manual checkpoints | Managed `@dp.table` streaming tables and `@dp.materialized_view` tables |
+| **CDC & SCD Merges** | SCD Type 1 and SCD Type 2 via Catalyst staging + Iceberg/Delta `MERGE INTO` | SCD Type 1 only via `dp.create_auto_cdc_flow(..., stored_as_scd_type=1)` |
+| **External Sinks** | Native `writeStream` plus `foreachBatch` sinks (Spanner, Cloud SQL, AlloyDB, JDBC, Pub/Sub) | Streaming `dp.create_sink` connectors only (`foreachBatch`-only sinks blocked) |
+| **Spark ML & Caching** | Full `pyspark.ml`, XGBoost, Vertex AI batch inference, and manual `.cache()` / `.unpersist()` | Blocked on canvas (SDP manages table materialization automatically) |
 
-### IPC Message Protocol Registry
+### When to Choose Each Paradigm
+- If your pipeline builds bronze-silver-gold BigLake Iceberg tables, incremental file streams, batch materialized views, or SCD Type 1 Auto CDC tables on Spark 4.2+, choose **Spark Declarative Pipelines (`sdp`)**.
+- If your pipeline requires SCD Type 2 history tracking, `foreachBatch` database sinks (Spanner, Cloud SQL, AlloyDB, Bigtable, JDBC, Pub/Sub), Spark ML steps, continuous streaming triggers, or Spark 4.0/4.1 runtimes, choose **Imperative PySpark (`imperative`)**.
 
-| Direction | Command | Payload | Description |
+---
+
+## 2. Spark Declarative Pipelines Architecture, Ceilings & Execution Model
+
+### 2.1 Hard SDP Ceilings (`src/shared/sdpPlanner.ts`)
+In SDP mode, `checkNodeSdpCompatibility` and `buildSdpPlan` enforce OSS Apache Spark 4.2 (`branch-4.2`) boundaries deterministically:
+
+1. **SCD Type 1 Only (`AUTOCDC_SCD2_NOT_SUPPORTED`)**: `MergeCdcScd` supports `scdType: 'scd1'` through `dp.create_auto_cdc_flow`. Configuring `scdType: 'scd2'` blocks SDP execution.
+2. **No `foreachBatch`-Only Sinks (`SDP_FOREACH_BATCH_SINK_UNSUPPORTED`)**: Sinks whose `streamingSinkMode` equals `'foreachBatch'` (such as `SpannerSink`, `BigtableSink`, `CloudSqlSink`, `AlloyDbSink`, `JdbcSink`, `SnowflakeSink`, `RedshiftSink`, `PubSubSink`, `KinesisSink`, `FirestoreSink`, `RedisSink`, `VectorStoreSink`, and `ForeachBatchSink`) are greyed out in the SDP palette.
+3. **No Spark ML or Manual Caching (`SDP_SPARK_ML_UNSUPPORTED`, `SDP_CACHE_PERSIST_UNSUPPORTED`)**: `FeaturePrep`, `SparkMlAndVertexAi`, `SparkMlInference`, `VertexAiInference`, and `CachePersist` are disabled in SDP mode.
+4. **Explicit Pivot Values Required (`SDP_PIVOT_VALUES_REQUIRED`)**: `PivotUnpivot` in `pivot` mode requires explicit `pivotValues` because SDP dataset functions cannot execute eager distinct queries during graph planning.
+5. **Apache Spark 4.2+ Spark Connect Only (`SDP_SPARK_42_REQUIRED`)**: SDP runs exclusively over Spark Connect (`spark.api.mode=connect`) on Spark 4.2 or newer. Runtimes below Spark 4.2 are rejected.
+6. **Watermarks Before Stateful Streaming Steps (`SDP_STREAMING_WATERMARK_REQUIRED`)**: Streaming `GroupByAgg`, `RollupCube`, `Deduplicate`, and stream-stream `Join` steps require an upstream `Watermark` step unless explicitly materialized as batch views.
+7. **Mutually Exclusive Partitioning & Clustering (`SPECIFY_CLUSTER_BY_WITH_PARTITIONED_BY_IS_NOT_ALLOWED`)**: A dataset cannot set both `partition_cols` and `cluster_by`.
+8. **Reset Protection Propagation (`INVALID_RESETTABLE_DEPENDENCY`)**: If a streaming table sets `pipelines.reset.allowed=false`, every upstream pipeline streaming table feeding it via `readStream` must also set `pipelines.reset.allowed=false`.
+9. **Zero Databricks-Only APIs**: OSS Spark 4.2 has no `dlt` module, `@dp.view`, `@dp.expect*`, `dp.apply_changes`, `append_flow(once=...)`, or `format("cloudFiles")`. `DataQualityAssert` compiles to filter-based clean and `<dataset>_quarantine` datasets using pure predicates in `src/transforms.py`.
+
+### 2.2 Triggered Execution Model, Refresh Safety & Materialized View Truncation
+- **Triggered `AvailableNow` Runs Only**: Each `spark-pipelines run` processes currently available streaming records with `Trigger.AvailableNow`, recomputes materialized views, and exits. `spark-pipeline.yml` forbids `continuous` and `trigger` keys (`PIPELINE_SPEC_UNEXPECTED_FIELD`).
+- **No Overlapping Runs**: External schedulers (Managed Data Pipelines, Cloud Composer, or Cloud Scheduler) and the extension's `PipelineRunner` guard against overlapping runs of the same pipeline because concurrent runs corrupt shared checkpoints under `storage`.
+- **Materialized View Truncation Behavior**: SDP executes `TRUNCATE TABLE` on materialized views at the start of every run before flows execute. Downstream readers observe empty materialized views mid-run, and a failed run leaves materialized views empty until the next successful run.
+- **Full-Refresh Confirmation & Sink Duplicate Warning**: Full refreshes empty streaming tables and drop `__spark_autocdc_aux_state_*` tables, rebuilding only from retained source data. Because `pipelines.reset.allowed` cannot protect external `dp.create_sink` targets, `--full-refresh-all` resets sink checkpoints and re-sends available source records to Kafka or BigQuery as duplicates.
+
+### 2.3 Dataset Mapping (`buildSdpPlan`)
+`src/shared/sdpPlanner.ts` maps compatible nodes to deterministic dataset kinds and canvas badges:
+
+|SDP Construct | `kind` | Badge | Assigned Nodes |
 | :--- | :--- | :--- | :--- |
-| **Webview &rarr; Ext** | `savePipeline` | `{ yamlContent }` | Persists visual DAG state to the open `*.beam` YAML file. |
-| **Webview &rarr; Ext** | `regenerateCode` | `{ yamlContent, language, outputFolder }` | Invokes Gemini to generate complete source code and dependencies. |
-| **Webview &rarr; Ext** | `readFolderFiles` | `{ folderPath }` | Queries directory contents to populate generated file tabs. |
-| **Webview &rarr; Ext** | `readFileContent` | `{ filePath }` | Loads file text for the syntax-highlighted code editor preview. |
-| **Webview &rarr; Ext** | `pickFolder` | `—` | Opens native VS Code folder selection dialog. |
-| **Webview &rarr; Ext** | `runPipeline` | `{ jobConfig, language, outputFolder }` | Executes local run script or submits Dataflow job. |
-| **Webview &rarr; Ext** | `fetchSubnetworks` | `—` | Queries GCP subnets via `gcloud` CLI. |
-| **Ext &rarr; Webview** | `pipelineLoaded` | `{ yamlContent }` | Sends initial `.beam` file content on editor launch. |
-| **Ext &rarr; Webview** | `codeRegenerated` | `{ files, mainCode, success }` | Returns generated code and updates code preview. |
-| **Ext &rarr; Webview** | `codeGenerationProgress` | `{ message }` | Progress text of a long generation run (optional reviewer steps). |
-| **Ext &rarr; Webview** | `folderFilesLoaded`| `{ files }` | Returns updated directory file list. |
-| **Ext &rarr; Webview** | `subnetworksLoaded`| `{ subnetworks }` | Returns available GCP subnets for deployment configuration. |
+| `@dp.temporary_view` | `temporary_view` | `VIEW` | Non-persisted batch sources, intermediate row projections, and watermark views feeding stateful steps |
+| `@dp.materialized_view` | `materialized_view` | `MV` | Batch aggregations (`GroupByAgg`, `RollupCube`), joins against dimensions, and batch Lakehouse sinks |
+| `@dp.table` | `streaming_table` | `TABLE` | Streaming sources (including file streams with explicit `.schema(...)`), streaming row filters/projections, and single-input streaming Lakehouse sinks |
+| `dp.create_streaming_table` + `@dp.append_flow` | `append_flow` | `TABLE` | `UnionByName` or multi-branch streaming fan-in into one target streaming table |
+| `dp.create_streaming_table` + `dp.create_auto_cdc_flow` | `auto_cdc` | `CDC` | `MergeCdcScd` (`scd1`, `left` handle only) paired with a `MERGE`-capable `IcebergSink` or `DeltaSink` |
+| `dp.create_sink` + `@dp.append_flow` | `external_sink` | `SINK` | External streaming sinks (`KafkaSink`, `BigQuerySink`, `PulsarSink`, `EventHubsSink`, file sinks, `ConsoleSink`) |
+
+### 2.4 Managed Data Pipelines `sdp` Stage vs. Standalone Dataproc `4.0` vs. Local `4.2`
+- **Managed Data Pipelines `sdp` Stage (`sdp_stage.pipeline.yaml`, primary GCP path)**: Runs on Managed Spark Serverless `4.0` (Spark `4.2.0`). Static Spark properties (`spark.sql.extensions`, `spark.jars*`, `spark.driver.*`, `spark.executor.*`) live in `sdp.execution_config.properties` and `jar_uris`, never in `spark-pipeline.yml` `configuration` (`CANNOT_MODIFY_STATIC_CONFIG`).
+- **BigLake Iceberg Catalog Contract**: `spark-pipeline.yml` uses a plain identifier `catalog` alias (such as `lake`) mapped to `https://biglake.googleapis.com/iceberg/v1/restcatalog` with warehouse `bl://projects/<project>/catalogs/<catalog_id>` (or bucket-root `gs://<bucket>` without `/warehouse`). Downstream BigQuery and `dbt` queries reference `<project>.<catalog_id>.<database>.<table>` and exclude `__spark_autocdc_metadata` and `__spark_autocdc_aux_state_<table>`.
+- **Standalone Self-Managed Dataproc `4.0` (`run_sdp_dataproc.sh`)**: Targets Dataproc Compute Engine image `4.0` (`--optional-components=ICEBERG` and driver package `zstandard>=0.25.0`). Runs `CREATE NAMESPACE IF NOT EXISTS <catalog>.<database>` and launches `org.apache.spark.deploy.SparkPipelines` in driver local mode without conflicting `spark.master=yarn` settings.
+- **Local Spark `4.2` Spark Connect (`run_sdp_local.sh`)**: Runs `spark-pipelines dry-run` and `run` over `--remote "local[*]"`. Because Maven Central lacks `iceberg-spark-runtime-4.2_2.13`, `versionMatrix.ts` sets `missingLocalIcebergRuntime: true` on `local_4.2_connect` and warns when Iceberg nodes are present.
 
 ---
 
-## 2. Webview Frontend (`webview/src/`)
+## 3. Imperative Execution Planner & Runtime Matrix
 
-The frontend is a single-page application built with React 19, TypeScript, React Flow, and Tailwind CSS, bundled with Vite.
+For imperative pipelines (`paradigm: imperative`), `src/shared/executionPlanner.ts` computes an `ExecutionPlan` before calling Gemini:
 
-### Component Architecture & Hierarchy
-
-```
-App.tsx (Root State Coordinator & Drag Context)
- ├── ThemeProvider (Auto-synchronizes VS Code theme classes)
- ├── ReactFlowProvider
- │    ├── ReactFlow Canvas (Infinite Grid, Background, Edges)
- │    │    ├── PipelineNode (Custom Node Component with Inline Renaming)
- │    │    ├── Controls (Zoom, Fit-view, Auto-layout, Minimap toggle)
- │    │    └── MiniMap (Theme-adaptive category colored nodes)
- │    ├── NodesCard (Left Slide-out Palette)
- │    │    ├── VerticalTabStrip (Sources, Steps, Sinks, Samples)
- │    │    ├── SearchInput (Live filtering)
- │    │    └── SidebarItem (Draggable & Click-to-add items)
- │    ├── PropertyPane (Right Slide-out Inspector)
- │    │    ├── NodeHeader (Editable label, ID, category tag)
- │    │    ├── PropertyForm (Dynamic transform property sheet dispatcher)
- │    │    │    ├── properties/source/*, properties/sink/*, properties/step/* (Per-transform panels)
- │    │    │    └── components/common/* (PropertyField, SecretManagerAuthFields,
- │    │    │         StepExecutionSettingsField, StreamingSinkSettingsField)
- │    │    ├── InfoTooltip (Portal-based documentation popup)
- │    │    └── RuntimeVariables (Copyable dynamic variable drawer)
- │    ├── CanvasToolbar (Undo, Redo, Auto-layout, and Pipeline Mode BATCH/STREAMING pill)
- │    └── BottomPanel (Resizable Drawer Container)
- │         ├── SourceCodeTab (Language picker, Output folder, Code preview)
- │         └── DeploymentTab (Runner config, Streaming defaults, Instance bounds, RUN NOW)
-```
-
-### Phase 1 Spark DAG Semantics, Validation & Deterministic Execution Planner
-
-The extension host and React webview share a pure TypeScript graph engine under `src/shared/` and `src/spark/`:
-
-- **Node Capability Registry (`src/shared/sparkNodeCapabilities.ts`)**: Declares read modes, streaming sink modes, DLQ capability, and input arity across all Spark transforms.
-- **Direct Source-to-Sink Edges (`usePipelineGraph.ts`, `dagValidator.ts`)**: Allows direct `SOURCE -> SINK` edges for zero-transform replication jobs while rejecting self-loops and invalid directions.
-- **Streaming Propagation (`src/shared/sparkDagRules.ts`)**: `computeStreamingNodeSet` marks downstream nodes as streaming while keeping static batch lookup branches for **Stream–Static Joins**.
-- **Spark Topology Validation (`src/shared/dagValidator.ts`)**: Enforces acyclic graphs, `Join` and `MergeCdcScd` handle occupancy, static right-target snapshots on `MergeCdcScd`, stream–static join rules, stream–stream outer join watermarks, arity, and checkpoint validation.
-- **Deterministic Execution Planner (`src/shared/executionPlanner.ts`)**: `buildExecutionPlan` computes topological order, batch fan-out `.cache()` and `.unpersist()` points, DLQ splits, and `foreachBatch` sink groups.
-- **Spark 4.x Runtime Matrix (`src/spark/versionMatrix.ts`)**: Maps Serverless 4.0, Serverless 3.0, Cluster 3.0, and Local runtimes (`standard` tier default) to JARs, Maven coordinates, and Python `DataSource` fallbacks.
+1. **Streaming Propagation (`sparkDagRules.ts`)**: Marks nodes reachable from streaming sources while preserving static right lookup inputs on stream-static joins.
+2. **Batch Fan-Out Caching (`cacheDirectives`)**: Inserts `.cache()` on batch nodes with out-degree greater than one and `.unpersist()` after downstream sinks complete.
+3. **Streaming Sink Grouping (`streamingSinkGroups`)**: Emits native `.writeStream` queries for single native sinks and groups `foreachBatch` sinks or multi-sink fan-outs into one micro-batch writer with `batch_df.cache()`, `txnVersion`, `txnAppId`, and `batch_df.unpersist()`.
+4. **Runtime Matrix (`src/spark/versionMatrix.ts`)**: Resolves `serverless_4.0` (Spark 4.2.0), `serverless_3.0` (Spark 4.0.1), `cluster_4.0` (Spark 4.2.0), `cluster_3.0` (Spark 4.1.2), `local_4.2_connect` (Spark 4.2.0), and `local` (Spark 4.0.1) along with pre-installed Managed Spark connectors, GCS JARs, Maven packages, and Spark 4.0 Python `DataSource` fallbacks.
 
 ---
 
-## 3. State Synchronization & Code Generation
-
-Pipeline configurations are persisted as human-readable YAML inside `*.spark` files.
+## 4. State Synchronization & Skill-Based Code Generation
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
-    participant Webview as Webview (React)
-    participant Ext as Extension Host (Node.js)
-    participant Planner as Execution Planner (src/shared/executionPlanner)
-    participant Builder as Prompt Builder (src/codegen)
-    participant Gemini as Gemini API (gemini-3.8-flash)
-    participant Disk as Filesystem
+    participant Webview as Webview (React 19)
+    participant Host as Extension Host
+    participant Planner as executionPlanner / sdpPlanner
+    participant Builder as CodegenPromptBuilder
+    participant Gemini as Vertex AI (gemini-3.8-flash)
+    participant Checks as ReadOnlyCheckRunner
 
-    User->>Webview: Edit Pipeline Canvas (add/move/rename/configure node)
-    Note over Webview: State updates, marks needsRebuild = true
-    Webview->>Ext: savePipeline (YAML Config)
-    Ext->>Disk: Write pipeline.spark configuration file
-
-    User->>Webview: Click "GENERATE CODE" (PySpark 4.x badge + optional AI Reviewer toggle)
-    Webview->>Ext: regenerateCode (YAML Config, Output Folder, enableReviewer)
-    Note over Ext: Validates the DAG, gates the output folder (.sparkgen.json)
-    Ext->>Builder: buildPromptFromPipelineYaml (YAML, PySpark, Spark version)
-    Builder->>Planner: buildExecutionPlan (nodes, edges, jobConfig)
-    Planner-->>Builder: Deterministic ExecutionPlan (caching, foreachBatch, DLQ splits, JARs)
-    Note over Builder: 1. Redact credentials<br/>2. Detect spark_transform & features<br/>3. Select Phase 2 Spark skills<br/>4. Inject ## Execution Plan + skills
-    Builder-->>Ext: prompt + selected skill names + ExecutionPlan
-    Ext->>Gemini: ONE generateContent call (prompt + JSON schema)
-    Gemini-->>Ext: Structured JSON (files array)
-    opt Reviewer toggle or setting is on (default off)
-        Ext->>Ext: ReadOnlyCheckRunner (py_compile, 3-phase structure, pytest --collect-only)
-        Ext->>Gemini: Review call (findings JSON)
-        Ext->>Gemini: Fix call for blocking findings (max 2 rounds)
-        Ext-->>Webview: codeGenerationProgress (one message per step)
+    User->>Webview: Design .spark DAG & select paradigm (Imperative or SDP)
+    Webview->>Host: savePipeline (YAML with paradigm, nodes, edges, jobConfig)
+    User->>Webview: Click GENERATE CODE
+    Webview->>Host: regenerateCode (yamlContent, outputFolder, enableReviewer)
+    Host->>Builder: buildPromptFromPipelineYaml (redact credentials first)
+    Builder->>Planner: buildExecutionPlan OR buildSdpPlan
+    Planner-->>Builder: Deterministic Plan + Runtime Artifacts
+    Note over Builder: Select paradigm-filtered skills from resources/codegen-skills/
+    Builder-->>Host: Single prompt + template list
+    Host->>Gemini: generateContent (structured JSON schema)
+    Gemini-->>Host: Generated files array
+    opt Optional AI Code Reviewer Pass
+        Host->>Checks: py_compile, contract/SDP purity checks, pytest --collect-only, optional spark-pipelines dry-run
+        Host->>Gemini: Review & fix blocking findings (up to 2 rounds)
     end
-    Ext->>Disk: Stage, scoped cleanup, commit files, gemini.log, .sparkgen.json manifest
-    Ext-->>Webview: codeRegenerated (Success + main pipeline code)
-    Note over Webview: Sets needsRebuild = false, updates preview
-    Webview->>Ext: readFolderFiles
-    Ext-->>Webview: folderFilesLoaded (Refreshes file tabs)
+    Host-->>Webview: Stage files, update .sparkgen.json manifest, refresh preview
 ```
 
-### Prompt Assembly from Skills, Deterministic ExecutionPlan & Response Schema
-Code generation makes ONE model call. The prompt is assembled from modular topic skills and the deterministic `ExecutionPlan`. No prompt text lives in TypeScript.
-
-- **Skills** (`resources/codegen-skills/<name>/SKILL.md` plus runner `templates/python/<file>` and `resources/templates/pyspark/<file>`):
-  - **Global contract & gate**: `codegen-common` (`kind: common`, always first; enforces the 8 repository deliverables and the testable 3-phase separation `read_sources(spark, config)`, pure `transform(dfs, config)`, and `write_sinks(dfs, config)` tested offline in `tests/test_pipeline.py`) and `verification-gate` (`kind: gate`, always last).
-  - **Core PySpark 4.x & Catalyst skills**: `core-pyspark` (`kind: language`, session initialization via `SparkSession.builder` vs. `ManagedSparkSession`, production `logging`, zero-dependency Secret Manager helper, and DLQ `_corrupt_record` / `_error` splits) and `core-catalyst-optimization` (`kind: crosscutting`, `F.broadcast()` lookup joins, no unbounded driver collection, single-pass `.withColumns({...})`, flat `functools.reduce(DataFrame.unionByName, dfs)`, vectorized Arrow `@pandas_udf` / `mapInPandas`, `.coalesce()` vs. `.repartition()`, zero `spark._jsc` / `spark.sparkContext` calls, and deterministic fan-out `.cache()` / `.unpersist()`).
-  - **Feature-gated & transform-matched Spark skills**: `core-streaming` (`preloadWhen: [streaming]`, `transforms: [Watermark, StatefulTransform]`; `spark.readStream`, `.withWatermark()`, `availableNow` / `processingTime` / `continuous` triggers, checkpoints, multi-sink `foreachBatch` with `batch_df.cache()` / `unpersist()` and `txnVersion`, and Spark 4.0 `transformWithState`) and `core-python-datasource` (`preloadWhen: [python_datasource]`, `transforms: [PubSubSource, PubSubSink, KinesisSource, KinesisSink, MqttSource, MqttSink, FirestoreSource, FirestoreSink, CassandraSource, RedisSource, RedisSink]`; Spark 4.0 `pyspark.sql.datasource.DataSource` reader/writer/stream templates).
-  - **Runner skills & templates**: `runner-local` (`run_local.sh` with `--test` `pytest` mode, `spark-submit`, and optional `ManagedSparkSession` Spark Connect. Before each mode it bootstraps `.venv` from `requirements.txt`, selects or downloads a JDK 17 or 21, and resolves `--packages` through a Maven Central-only `.spark-ivy/ivysettings.xml`. Generated `requirements.txt` pins `pyspark==4.0.*` to match the local Spark 4.0 Maven coordinates), `runner-dataproc-cluster` (`run_dataproc_cluster.sh` with `gcloud dataproc jobs submit pyspark`), and `runner-serverless-spark` (`run_serverless_spark.sh` with `gcloud dataproc batches submit pyspark`, `--version=4.0`, normalized root `--deps-bucket=gs://<bucket>`, `standard` tier default, and non-root `USER 1099:1099` `Dockerfile`).
-- **Pipeline** (`src/codegen/`):
-  1. `credentialRedaction.redactPipelineDocument()` strips credentials first so `gemini.log` never records plaintext secrets.
-  2. `PipelineFeatureDetector` reads the parsed `.spark` YAML: `spark_transform` / `sparkTransform` set, supported runners (`local`, `dataproc-cluster`, `serverless-spark`), and features (`streaming`, `python_datasource`, `multi_output`, `custom_instructions`).
-  3. `CodegenSkillCatalog.select()` filters by caller, language (`python`), runner, kind, transforms, and `preloadWhen` features in deterministic `(kind, name)` order.
-  4. `CodegenPromptBuilder.build()` calls `buildExecutionPlan()` from `src/shared/executionPlanner.ts` and emits `codegen-common`, `## Pipeline YAML` (verbatim), `## Execution Plan` (markdown summary + serialized JSON covering topological node order, `isStreaming`, `cacheNodes`, `streamingSinkGroups`, `dlqRoutes`, and `runtimeJars` / `runtimePackages` / `sparkProperties` from `versionMatrix.ts`), the redaction notice (when applicable), and each `## Skill: <name>`, resolving `{{spark_version}}` in skill text and templates only.
-- **Shared entry point**: `buildPromptFromPipelineYaml()`. Both the extension (`codeGeneration.ts`) and integration runner (`codegen-runner.ts`) call it.
-- **Optional AI Code Reviewer Pass**: Controlled by the `AI Code Reviewer Pass` toggle in `GeneratorSettings.tsx` (`SourceCodeTab.tsx`) or setting `sparkDesigner.codegen.enableReviewer` (default `false`). `ReadOnlyCheckRunner` runs `python3 -m py_compile` on all generated `.py` files, verifies `src/pipeline.py` defines `read_sources`, `transform`, and `write_sinks`, and runs `python3 -m pytest --collect-only -q` when `pytest` is installed. `CodeReviewer` then runs up to two review/fix rounds using `resources/codegen-prompts/{reviewer,fix}.md`.
-- **Response JSON Schema**: `resources/code-gen-schema.json`
-  - Enforces structured JSON output with an array of files containing `filename`, `content`, and `executable` boolean flags.
-
 ---
 
-## 4. Multi-Agent Spark Evaluation Harness (Integration Testing)
+## 5. Multi-Agent Evaluation Harness & Verification Gate
 
-Integration tests generate complete PySpark 4.x repositories with `gemini-3.8-flash` on the global Vertex AI endpoint. A multi-agent hierarchy then checks Spark semantics, specification fidelity, security hardening, and deployability on Local PySpark, Dataproc Clusters, and Serverless Spark. No human review is needed. See `src/test/integration/README.md` for run commands.
+Integration tests (`src/test/integration/`) validate generated Imperative and SDP repositories offline and via multi-agent rubrics:
 
-1. **Deterministic Pre-Flight Gate (`src/test/integration/evaluators/deterministic-gate.ts`):** Non-LLM checks. It runs `python3 -m py_compile` and `bash -n` through `execFile` argument arrays. It audits the Decision D3 deliverables and the `read_sources` / `transform(dfs, config)` / `write_sinks` contract. It flags a hardcoded local master in deployed code, `_jsc` / `_jvm` access, plaintext secrets, and unreplaced placeholders. Test modules, `conftest.py`, and `run_local.sh` are exempt from the local-master scan.
-2. **Specialist Sub-Agents (concurrent via `Promise.all`):** Each agent runs deterministic checks first and then an LLM audit. If the model call fails, the agent keeps its deterministic findings.
-   - **`SparkArchitectureAgent` (`src/test/integration/evaluators/spark-architecture-evaluator.ts`):** Enforces D3 separation (no reads or writes in `transform`), Catalyst rules (no driver `collect` / `toPandas`, no RDD or `SparkContext` APIs, built-in functions over Python UDFs), cache and unpersist discipline, `foreachBatch` idempotency (`txnVersion` / `txnAppId`), watermarks on streaming windows and deduplication, and the Managed Spark classpath (no Scala 2.12 or Spark 3.x artifacts, no duplicate pre-installed connectors).
-   - **`PipelineSpecificationAgent` (`src/test/integration/evaluators/pipeline-spec-evaluator.ts`):** Audits property completeness, custom `system_instructions`, `runtimeVariables`, and `jobConfig`. It builds the deterministic `ExecutionPlan`, audits every node's `spark_transform` (missing, legacy Beam alias, unknown, or type mismatch), and checks plan compliance: `dfs` keys, cache directives, `foreachBatch` sink groups, checkpoints, and DLQ splits.
-   - **`SecurityAndHardeningAgent` (`src/test/integration/evaluators/security-evaluator.ts`):** Audits Secret Manager credentials, container hardening (non-root execution), and shell quoting.
-   - **`PackagingAndDeployabilityAgent` (`src/test/integration/evaluators/packaging-evaluator.ts`):** Requires a `pyspark` 4.x pin, `pytest`, and every plan pip package in `requirements.txt`, and rejects `apache-beam`. It audits runner script flags (jars, packages, cluster, region, Serverless Spark 4.x runtime version, properties) and plan connector artifacts against the target runtime profile.
-3. **Lead Arbiter & Synthesizer Agent (`src/test/integration/evaluators/arbiter-evaluator.ts`):** Computes rubric scorecards (Architecture, Specification, Security, Packaging, Maintainability) and enforces hard vetoes on critical defects. It emits **Skill Remediation Directives**. Each directive targets exactly one codegen skill under `resources/codegen-skills/`, resolved from the node `sparkTransform` through the codegen skill catalog. An `io-*` or `transform-*` skill wins over a cross-cutting skill. The arbiter never patches generated code.
-4. **Offline pytest runner (`src/test/integration/pytest-runner.ts`):** `codegen-runner.ts` writes the generated repository to a temporary folder and runs `tests/test_pipeline.py` on a local PySpark 4.x session. The runner adds a `local[2]` `conftest.py` fixture if the repository has none, runs pytest with argument arrays, a SIGKILL timeout, and an allowlisted environment, and parses the JUnit XML report. A `failed`, `error`, or `timeout` result fails the test. If PySpark, pytest, or a compatible JVM is missing, the result is `skipped` and never fails the test.
+1. **Deterministic Pre-Flight Gate (`deterministic-gate.ts`)**: Compiles Python files (`py_compile`), checks shell syntax (`bash -n`), parses JSON and YAML artifacts, audits Imperative D3 or SDP deliverables, enforces `spark-pipeline.yml` schema and static-config bans, scans for banned Spark/Databricks APIs and plaintext secrets, and runs `spark-pipelines dry-run` when installed.
+2. **Specialist Evaluators**:
+   - **`SparkArchitectureAgent` (`spark-architecture-evaluator.ts`)**: Audits D3 separation, Catalyst rules, cache discipline, `foreachBatch` idempotency, watermarks, classpath hygiene, and SDP dataset purity, query-type matching, and Databricks API bans.
+   - **`PipelineSpecificationAgent` (`pipeline-spec-evaluator.ts`)**: Builds a Requirement Traceability Matrix (RTM) and verifies `ExecutionPlan` or `SdpExecutionPlan` compliance across all node properties, edges, quarantine tables, and Auto CDC flows.
+   - **`SecurityAndHardeningAgent` (`security-evaluator.ts`)**: Verifies Secret Manager credential resolution, non-root `USER 1099:1099` containers, and shell quoting.
+   - **`PackagingAndDeployabilityAgent` (`packaging-evaluator.ts`)**: Audits `requirements.txt` (`pyspark==4.0.*` for imperative local or `pyspark` 4.2+ for SDP), runner script flags, namespace setup, and `sdp_stage.pipeline.yaml`.
+3. **Lead Arbiter (`arbiter-evaluator.ts`) & Offline Pytest Runner (`pytest-runner.ts`)**: Synthesizes specialist findings, applies hard vetoes on critical defects, emits skill-level remediation directives, and executes offline `pytest` suites against local PySpark sessions.
 
----
-
-## 5. UI/UX Design System Cross-Reference
-
-For UI design tokens, 8pt spacing grid specifications, typography hierarchies, category color codes, and component styling rules, see `DESIGN.md`.
+For UI tokens, 8pt spacing rules, paradigm badges, and inspector layouts, see `DESIGN.md`.

@@ -224,6 +224,50 @@ describe('pipelineConfigReducer', () => {
     });
   });
 
+  describe('setParadigm action (SDP1)', () => {
+    it('switches paradigm to sdp and marks needsRebuild true', () => {
+      const next = pipelineConfigReducer(baseConfig, {
+        type: 'setParadigm',
+        paradigm: 'sdp',
+      });
+      expect(next).toEqual({
+        language: 'Python',
+        outputFolder: 'output/dir',
+        needsRebuild: true,
+        paradigm: 'sdp',
+      });
+    });
+
+    it('switches paradigm from sdp back to imperative and marks needsRebuild true', () => {
+      const sdpClean: PipelineConfig = {
+        ...baseConfig,
+        paradigm: 'sdp',
+        needsRebuild: false,
+      };
+      const next = pipelineConfigReducer(sdpClean, {
+        type: 'setParadigm',
+        paradigm: 'imperative',
+      });
+      expect(next).toEqual({
+        language: 'Python',
+        outputFolder: 'output/dir',
+        needsRebuild: true,
+        paradigm: 'imperative',
+      });
+    });
+
+    it('preserves referential equality when paradigm is already effective imperative or sdp', () => {
+      expect(
+        pipelineConfigReducer(baseConfig, { type: 'setParadigm', paradigm: 'imperative' })
+      ).toBe(baseConfig);
+
+      const sdpConfig: PipelineConfig = { ...baseConfig, paradigm: 'sdp' };
+      expect(pipelineConfigReducer(sdpConfig, { type: 'setParadigm', paradigm: 'sdp' })).toBe(
+        sdpConfig
+      );
+    });
+  });
+
   describe('unhandled action types', () => {
     it('returns identical reference on unknown action', () => {
       const next = pipelineConfigReducer(baseConfig, {

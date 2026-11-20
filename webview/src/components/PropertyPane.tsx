@@ -25,6 +25,7 @@ import {
 import { PropertyForm } from './PropertyForm';
 import { ErrorBoundary } from './common/ErrorBoundary';
 import { getNodeIcon } from './common/nodeIcons';
+import type { PipelineParadigm } from '../utils/sharedTypes';
 
 /**
  * Props for the {@link PropertyPane} component.
@@ -39,6 +40,7 @@ export interface PropertyPaneProps {
   width?: number;
   onResizeStart?: (e: React.MouseEvent) => void;
   onClose?: () => void;
+  paradigm?: PipelineParadigm;
 }
 
 /**
@@ -53,7 +55,8 @@ export const PropertyPane: React.FC<PropertyPaneProps> = ({
   onAddPubSubSource,
   width,
   onResizeStart,
-  onClose
+  onClose,
+  paradigm,
 }) => {
   const IconComponent = getNodeIcon(node.data.iconName, Box);
   const [labelValue, setLabelValue] = React.useState(node.data.label || '');
@@ -132,7 +135,13 @@ export const PropertyPane: React.FC<PropertyPaneProps> = ({
       {/* Scrollable Form Area */}
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1">
         <ErrorBoundary fallbackTitle="Error loading node properties">
-          <PropertyForm node={node} onChange={onChange} onAddKVMapper={onAddKVMapper} onAddPubSubSource={onAddPubSubSource} />
+          <PropertyForm
+            node={node}
+            onChange={onChange}
+            onAddKVMapper={onAddKVMapper}
+            onAddPubSubSource={onAddPubSubSource}
+            paradigm={paradigm}
+          />
         </ErrorBoundary>
       </div>
 

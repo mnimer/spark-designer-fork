@@ -99,4 +99,40 @@ describe('CanvasToolbar', () => {
 
     expect(screen.queryByTestId('mini-map')).not.toBeInTheDocument();
   });
+
+  it('renders IMPERATIVE vs SDP (4.2+) paradigm indicator and fires onParadigmChange (SDP1)', () => {
+    const onParadigmChange = vi.fn();
+    const { rerender } = render(
+      <CanvasToolbar
+        canUndo={false}
+        canRedo={false}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onParadigmChange={onParadigmChange}
+      />
+    );
+
+    const indicator = screen.getByTestId('toolbar-paradigm-indicator');
+    expect(indicator).toHaveTextContent('IMPERATIVE');
+    fireEvent.click(indicator);
+    expect(onParadigmChange).toHaveBeenCalledWith('sdp');
+
+    onParadigmChange.mockClear();
+    rerender(
+      <CanvasToolbar
+        canUndo={false}
+        canRedo={false}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onAutoLayout={vi.fn()}
+        paradigm="sdp"
+        onParadigmChange={onParadigmChange}
+      />
+    );
+
+    expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('SDP (4.2+)');
+    fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    expect(onParadigmChange).toHaveBeenCalledWith('imperative');
+  });
 });

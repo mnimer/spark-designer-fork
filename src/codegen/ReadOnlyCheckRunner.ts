@@ -4,37 +4,54 @@
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Fast checks on generated PySpark files with NO model call. The optional reviewer
- * (`CodeReviewer.ts`) sends the results to the review model as evidence:
- * 1. `required_files`: the build file (`requirements.txt`), the main and test sources
- *    (`src/pipeline.py` or `src/<baseName>.py`, `tests/test_pipeline.py` or `src/<baseName>_test.py`),
- *    and every runner template file of the selected runner skills exist.
- * 2. `leftover_tokens`: no `{{...}}` placeholder and no redaction sentinel remain.
- * 3. `python_syntax`: `python3 -m py_compile` on every generated `.py` file. Skipped when no
- *    interpreter is available.
- * 4. `pipeline_contract`: verifies the primary pipeline file (`src/pipeline.py` or `src/<baseName>.py`)
- *    defines `def read_sources(`, `def transform(`, and `def write_sinks(`.
- * 5. `test_imports`: the test module imports `src.pipeline` or `src.<baseName>`.
- * 6. `pytest_collect`: runs `python3 -m pytest --collect-only -q` over the materialized test
- *    files when `pytest` is installed. Gracefully skipped when `python3` or `pytest` is absent.
+ * Runs fast deterministic checks on generated PySpark and Spark Declarative Pipelines (SDP)
+ * files without making any model calls. The optional reviewer (`CodeReviewer.ts`) passes
+ * these check results to the review model as evidence.
  *
- * Architectural decisions / notes for future sessions:
- * - Checks NEVER modify generated code (project rule: no procedural post-processing). The
- *   review model decides what to fix and the fix call rewrites the file.
- * - A missing tool (`python3` or `pytest`) marks a check `skipped`, not `failed`.
- * - The command executor is injectable, so unit tests never spawn real processes.
- * - The required runner files come from the runner skills' template file names, so the
- *   skills stay the single source of truth for which runner files exist.
+ * Imperative mode checks:
+ * 1. `required_files`: verifies `requirements.txt`, `src/pipeline.py`, `tests/test_pipeline.py`,
+ *    and every runner template file exist.
+ * 2. `leftover_tokens`: verifies no `{{...}}` placeholder or redaction sentinel remains.
+ * 3. `python_syntax`: runs `python3 -m py_compile` on every generated Python file.
+ * 4. `pipeline_contract`: verifies `src/pipeline.py` defines `read_sources`, `transform`,
+ *    and `write_sinks`.
+ * 5. `test_imports`: verifies `tests/test_pipeline.py` imports `src.pipeline`.
+ * 6. `pytest_collect`: runs `python3 -m pytest --collect-only -q` when `pytest` is installed.
+ *
+ * SDP mode checks (when `request.paradigm === 'sdp'` or SDP spec files exist):
+ * 1. `required_files`: requires `requirements.txt`, single `spark-pipeline.yml`,
+ *    at least one `transformations/*.py` module, `src/transforms.py`, `tests/test_transforms.py`,
+ *    and `request.runnerFiles`.
+ * 2. `sdp_spec_contract`: validates `spark-pipeline.yml` allowed keys, `storage` URI scheme,
+ *    plain `catalog` identifier, string `configuration` values, static-setting ban, and
+ *    `libraries` glob syntax.
+ * 3. `pipeline_contract`: scans `transformations/*.py` for banned `SparkSession.builder`,
+ *    session mutations, writers, eager actions, `.schema`/`.columns` property inspection,
+ *    and Databricks-only APIs.
+ * 4. `test_imports`: verifies `tests/test_transforms.py` imports `src.transforms` or `transforms`.
+ * 5. `sdp_dry_run`: runs `spark-pipelines dry-run --spec spark-pipeline.yml` when
+ *    `spark-pipelines` and a compatible local Spark 4.2 environment exist.
+ *
+ * Architectural notes:
+ * - Checks never modify generated code.
+ * - Missing host tools (`python3`, `pytest`, or `spark-pipelines`) mark checks `skipped`.
+ * - The command executor is injectable so unit tests run deterministically offline.
  */
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFile } from 'child_process';
+import * as YAML from 'yaml';
 import { REDACTION_PLACEHOLDER } from '../credentialRedaction';
-import { LANGUAGE_BUILD_FILES, READ_ONLY_CHECK_LIMITS, SkillLanguage } from './codegenConfig';
+import {
+    LANGUAGE_BUILD_FILES,
+    MODEL_FACING_PLACEHOLDERS,
+    READ_ONLY_CHECK_LIMITS,
+    SkillLanguage,
+} from './codegenConfig';
 
-/** One generated file (same shape as the structured output schema). */
+/** One generated file matching the structured output schema. */
 export interface GeneratedFile {
     /** Project-relative path with forward slashes. */
     filename: string;
@@ -44,14 +61,16 @@ export interface GeneratedFile {
     executable?: boolean;
 }
 
-/** Identifiers of the checks. */
+/** Identifiers of the read-only checks. */
 export const CHECK_IDS = {
     requiredFiles: 'required_files',
     leftoverTokens: 'leftover_tokens',
     pythonSyntax: 'python_syntax',
+    sdpSpecContract: 'sdp_spec_contract',
     pipelineContract: 'pipeline_contract',
     testImports: 'test_imports',
     pytestCollect: 'pytest_collect',
+    sdpDryRun: 'sdp_dry_run',
 } as const;
 
 /** A check identifier. */
@@ -62,15 +81,15 @@ export type CheckStatus = 'passed' | 'failed' | 'skipped';
 
 /** Outcome of one check. */
 export interface CheckResult {
-    /** Which check. */
+    /** Which check ran. */
     check: CheckId;
-    /** Status. */
+    /** Pass, fail, or skip status. */
     status: CheckStatus;
-    /** Evidence (truncated) or the skip reason. */
+    /** Evidence (truncated) or skip reason. */
     output: string;
 }
 
-/** Result of running one command. */
+/** Result of running one external command. */
 export interface CommandOutcome {
     /** Process exit code (-1 when it could not start). */
     exitCode: number;
@@ -82,7 +101,7 @@ export interface CommandOutcome {
     notFound?: boolean;
 }
 
-/** Executes a command. Injectable for tests. */
+/** Executes an external command. Injectable for unit tests. */
 export type CommandExecutor = (
     command: string,
     args: string[],
@@ -113,6 +132,22 @@ export interface CheckRequest {
     baseName: string;
     /** Runner files that must exist (template file names of the selected runner skills). */
     runnerFiles: readonly string[];
+    /** Optional pipeline paradigm (`imperative` or `sdp`). Auto-detects SDP when omitted. */
+    paradigm?: 'imperative' | 'sdp';
+}
+
+/** One static violation found in an SDP spec or transformation module. */
+export interface SdpStaticViolation {
+    /** Error code matching Apache Spark 4.2 SDP diagnostics. */
+    code: string;
+    /** Project-relative file path. */
+    file: string;
+    /** Optional 1-indexed line number. */
+    line?: number;
+    /** Optional trimmed source line evidence. */
+    evidence?: string;
+    /** Human-readable defect description. */
+    message: string;
 }
 
 /** Marker appended to truncated output. */
@@ -121,11 +156,515 @@ const TRUNCATION_MARKER = '\n...[truncated]';
 /** Pattern of a leftover placeholder. */
 const PLACEHOLDER_PATTERN = /\{\{[A-Za-z_][\w]*\}\}/g;
 
+/** Known model-facing placeholders that must never remain in SDP YAML specs. */
+const KNOWN_CODEGEN_PLACEHOLDERS: ReadonlySet<string> = new Set([
+    '{{spark_version}}',
+    ...Object.values(MODEL_FACING_PLACEHOLDERS),
+]);
+
 /** Spark redaction placeholder checked alongside `REDACTION_PLACEHOLDER`. */
 const SPARK_REDACTION_PLACEHOLDER = '__REDACTED_BY_SPARK_DESIGNER__';
 
-/** Required 3-phase functions in `src/pipeline.py` (G3 / G11). */
+/** Required 3-phase functions in `src/pipeline.py` for imperative mode. */
 export const REQUIRED_PIPELINE_FUNCTIONS = ['read_sources', 'transform', 'write_sinks'] as const;
+
+/** Allowed top-level keys in `spark-pipeline.yml` (Apache Spark 4.2 `PipelineSpec`). */
+export const ALLOWED_SDP_SPEC_KEYS: ReadonlySet<string> = new Set([
+    'name',
+    'storage',
+    'catalog',
+    'database',
+    'schema',
+    'configuration',
+    'libraries',
+]);
+
+/** Plain Spark identifier pattern for SDP `catalog` aliases. */
+const PLAIN_SPARK_IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Jinja template variable expression allowed in Managed Data Pipelines SDP specs. */
+const JINJA_TEMPLATE_VALUE_REGEX = /^\{\{\s*[A-Za-z_][A-Za-z0-9_.]*\s*\}\}$/;
+
+/** URI with an explicit scheme such as `gs://bucket/path`. */
+const EXPLICIT_URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s]+$/;
+
+/** Normalizes a generated relative path to forward slashes without leading `./`. */
+function normalizeRelPath(filename: string): string {
+    return filename.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * Returns true if a Spark configuration key is a static session or cluster setting
+ * forbidden inside `spark-pipeline.yml` `configuration`.
+ *
+ * @param key Spark configuration property name.
+ * @returns True when setting `key` in `spark-pipeline.yml` triggers `CANNOT_MODIFY_STATIC_CONFIG`.
+ */
+export function isStaticSdpSparkConfigKey(key: string): boolean {
+    const trimmed = key.trim();
+    return (
+        trimmed === 'spark.sql.extensions' ||
+        trimmed === 'spark.jars' ||
+        trimmed === 'spark.jars.packages' ||
+        trimmed.startsWith('spark.jars.') ||
+        trimmed === 'spark.sql.catalogImplementation' ||
+        trimmed.startsWith('spark.driver.') ||
+        trimmed.startsWith('spark.executor.') ||
+        trimmed.startsWith('spark.dynamicAllocation.') ||
+        trimmed === 'spark.files' ||
+        trimmed === 'spark.archives' ||
+        trimmed === 'spark.master' ||
+        trimmed === 'spark.submit.deployMode'
+    );
+}
+
+/**
+ * Determines whether a set of generated files represents a Spark Declarative Pipeline project.
+ *
+ * @param files Generated files.
+ * @param paradigm Optional explicit paradigm override.
+ * @returns True when SDP validation rules apply.
+ */
+export function isSdpGeneratedProject(
+    files: readonly Pick<GeneratedFile, 'filename'>[],
+    paradigm?: 'imperative' | 'sdp'
+): boolean {
+    if (paradigm === 'sdp') {
+        return true;
+    }
+    if (paradigm === 'imperative') {
+        return false;
+    }
+    for (const file of files) {
+        const norm = normalizeRelPath(file.filename);
+        if (
+            norm === 'spark-pipeline.yml' ||
+            norm === 'spark-pipeline.yaml' ||
+            norm === 'sdp_stage.pipeline.yaml' ||
+            norm === 'run_sdp_local.sh' ||
+            norm === 'run_sdp_dataproc.sh' ||
+            /^transformations\/.+\.(?:py|sql)$/.test(norm)
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Validates `spark-pipeline.yml` (or `spark-pipeline.yaml`) content against Apache Spark 4.2 SDP rules.
+ *
+ * @param specFilename Spec filename for diagnostics.
+ * @param content Raw YAML text.
+ * @returns List of SDP spec violations (empty when valid).
+ */
+export function validateSdpSpecYaml(specFilename: string, content: string): SdpStaticViolation[] {
+    const violations: SdpStaticViolation[] = [];
+    let parsed: unknown;
+    try {
+        parsed = YAML.parse(content);
+    } catch (err) {
+        violations.push({
+            code: 'PIPELINE_SPEC_INVALID_YAML',
+            file: specFilename,
+            message: `PIPELINE_SPEC_INVALID_YAML: ${specFilename} is not valid YAML (${(err as Error).message}).`,
+        });
+        return violations;
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        violations.push({
+            code: 'PIPELINE_SPEC_INVALID_YAML',
+            file: specFilename,
+            message: `PIPELINE_SPEC_INVALID_YAML: ${specFilename} root must be a YAML mapping.`,
+        });
+        return violations;
+    }
+
+    const doc = parsed as Record<string, unknown>;
+
+    // 1. Top-level key allowlist.
+    for (const key of Object.keys(doc)) {
+        if (!ALLOWED_SDP_SPEC_KEYS.has(key)) {
+            violations.push({
+                code: 'PIPELINE_SPEC_UNEXPECTED_FIELD',
+                file: specFilename,
+                evidence: key,
+                message: `PIPELINE_SPEC_UNEXPECTED_FIELD: Unexpected top-level key '${key}' in ${specFilename}. Allowed keys: name, storage, catalog, database, schema, configuration, libraries.`,
+            });
+        }
+    }
+
+    // 2. Required storage field with explicit URI scheme.
+    if (doc.storage === undefined || doc.storage === null || String(doc.storage).trim() === '') {
+        violations.push({
+            code: 'PIPELINE_SPEC_MISSING_REQUIRED_FIELD',
+            file: specFilename,
+            message: `PIPELINE_SPEC_MISSING_REQUIRED_FIELD: Required field 'storage' is missing in ${specFilename}.`,
+        });
+    } else if (typeof doc.storage !== 'string') {
+        violations.push({
+            code: 'PIPELINE_STORAGE_ROOT_INVALID',
+            file: specFilename,
+            message: `PIPELINE_STORAGE_ROOT_INVALID: 'storage' in ${specFilename} must be a URI string.`,
+        });
+    } else {
+        const storageVal = doc.storage.trim();
+        if (!JINJA_TEMPLATE_VALUE_REGEX.test(storageVal) && !EXPLICIT_URI_SCHEME_REGEX.test(storageVal)) {
+            violations.push({
+                code: 'PIPELINE_STORAGE_ROOT_INVALID',
+                file: specFilename,
+                evidence: storageVal,
+                message: `PIPELINE_STORAGE_ROOT_INVALID: 'storage' value '${storageVal}' in ${specFilename} must include an explicit URI scheme (for example gs://bucket/path).`,
+            });
+        }
+    }
+
+    // 3. Optional catalog field must be a plain identifier unless templated.
+    if (doc.catalog !== undefined && doc.catalog !== null) {
+        if (typeof doc.catalog !== 'string' || doc.catalog.trim() === '') {
+            violations.push({
+                code: 'INVALID_IDENTIFIER',
+                file: specFilename,
+                message: `INVALID_IDENTIFIER: 'catalog' in ${specFilename} must be a non-empty plain identifier string.`,
+            });
+        } else {
+            const catalogVal = doc.catalog.trim();
+            if (
+                !JINJA_TEMPLATE_VALUE_REGEX.test(catalogVal) &&
+                !PLAIN_SPARK_IDENTIFIER_REGEX.test(catalogVal)
+            ) {
+                violations.push({
+                    code: 'INVALID_IDENTIFIER',
+                    file: specFilename,
+                    evidence: catalogVal,
+                    message: `INVALID_IDENTIFIER: 'catalog' value '${catalogVal}' in ${specFilename} must be a plain Spark identifier (letters, digits, and underscores only).`,
+                });
+            }
+        }
+    }
+
+    // 4. Optional configuration mapping must contain string-only values and zero static Spark keys.
+    if (doc.configuration !== undefined && doc.configuration !== null) {
+        if (typeof doc.configuration !== 'object' || Array.isArray(doc.configuration)) {
+            violations.push({
+                code: 'PIPELINE_SPEC_INVALID_CONFIGURATION',
+                file: specFilename,
+                message: `PIPELINE_SPEC_INVALID_CONFIGURATION: 'configuration' in ${specFilename} must be a string mapping.`,
+            });
+        } else {
+            const configObj = doc.configuration as Record<string, unknown>;
+            for (const [cfgKey, cfgVal] of Object.entries(configObj)) {
+                if (typeof cfgVal !== 'string') {
+                    violations.push({
+                        code: 'PIPELINE_SPEC_DICT_VALUE_NOT_STRING',
+                        file: specFilename,
+                        evidence: `${cfgKey}: ${String(cfgVal)}`,
+                        message: `PIPELINE_SPEC_DICT_VALUE_NOT_STRING: configuration['${cfgKey}'] in ${specFilename} must be a string (found ${typeof cfgVal}).`,
+                    });
+                }
+                if (isStaticSdpSparkConfigKey(cfgKey)) {
+                    violations.push({
+                        code: 'CANNOT_MODIFY_STATIC_CONFIG',
+                        file: specFilename,
+                        evidence: cfgKey,
+                        message: `CANNOT_MODIFY_STATIC_CONFIG: Static Spark setting '${cfgKey}' is forbidden in ${specFilename} configuration. Move it to runner execution_config.properties or --conf.`,
+                    });
+                }
+            }
+        }
+    }
+
+    // 5. Libraries globs must use folder/** or explicit .py/.sql paths (never transformations/*.py).
+    if (!Array.isArray(doc.libraries) || doc.libraries.length === 0) {
+        violations.push({
+            code: 'PIPELINE_SPEC_MISSING_LIBRARIES',
+            file: specFilename,
+            message: `PIPELINE_SPEC_MISSING_LIBRARIES: 'libraries' in ${specFilename} must declare at least one glob include entry.`,
+        });
+    } else {
+        for (const item of doc.libraries) {
+            const globObj =
+                item && typeof item === 'object' && !Array.isArray(item)
+                    ? (item as Record<string, unknown>).glob
+                    : undefined;
+            const includeVal =
+                globObj && typeof globObj === 'object' && !Array.isArray(globObj)
+                    ? (globObj as Record<string, unknown>).include
+                    : undefined;
+            if (typeof includeVal !== 'string' || includeVal.trim() === '') {
+                violations.push({
+                    code: 'PIPELINE_SPEC_INVALID_GLOB_PATTERN',
+                    file: specFilename,
+                    message: `PIPELINE_SPEC_INVALID_GLOB_PATTERN: Each entry in 'libraries' must specify glob.include in ${specFilename}.`,
+                });
+                continue;
+            }
+            const trimmedInc = includeVal.trim();
+            const hasWildcard = /[*?]/.test(trimmedInc);
+            if (hasWildcard) {
+                const validFolderRecursiveGlob =
+                    trimmedInc.endsWith('/**') && !/[*?]/.test(trimmedInc.slice(0, -3));
+                if (!validFolderRecursiveGlob) {
+                    violations.push({
+                        code: 'PIPELINE_SPEC_INVALID_GLOB_PATTERN',
+                        file: specFilename,
+                        evidence: trimmedInc,
+                        message: `PIPELINE_SPEC_INVALID_GLOB_PATTERN: Glob '${trimmedInc}' in ${specFilename} is invalid. Use folder/** (such as transformations/**) or an explicit file path.`,
+                    });
+                }
+            } else if (!trimmedInc.endsWith('.py') && !trimmedInc.endsWith('.sql')) {
+                violations.push({
+                    code: 'PIPELINE_UNSUPPORTED_DEFINITIONS_FILE_EXTENSION',
+                    file: specFilename,
+                    evidence: trimmedInc,
+                    message: `PIPELINE_UNSUPPORTED_DEFINITIONS_FILE_EXTENSION: Library path '${trimmedInc}' in ${specFilename} must end with .py or .sql.`,
+                });
+            }
+        }
+    }
+
+    return violations;
+}
+
+/**
+ * Strips Python comments and triple-quoted docstrings while preserving exact line count.
+ *
+ * @param source Raw Python source text.
+ * @returns Array of sanitized code lines indexed from 0.
+ */
+export function stripPythonCommentsAndDocstrings(source: string): string[] {
+    const rawLines = source.split('\n');
+    const cleaned: string[] = [];
+    let inTriple: '"""' | "'''" | null = null;
+
+    for (const rawLine of rawLines) {
+        let out = '';
+        let i = 0;
+        let singleQuote: '"' | "'" | null = null;
+
+        while (i < rawLine.length) {
+            if (inTriple) {
+                const closeIdx = rawLine.indexOf(inTriple, i);
+                if (closeIdx === -1) {
+                    i = rawLine.length;
+                } else {
+                    i = closeIdx + 3;
+                    inTriple = null;
+                }
+                continue;
+            }
+
+            if (singleQuote) {
+                const ch = rawLine[i];
+                out += ch;
+                if (ch === '\\' && i + 1 < rawLine.length) {
+                    out += rawLine[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (ch === singleQuote) {
+                    singleQuote = null;
+                }
+                i += 1;
+                continue;
+            }
+
+            const tripleCandidate = rawLine.slice(i, i + 3);
+            if (tripleCandidate === '"""' || tripleCandidate === "'''") {
+                inTriple = tripleCandidate;
+                i += 3;
+                continue;
+            }
+
+            const ch = rawLine[i];
+            if (ch === '#') {
+                break;
+            }
+            if (ch === '"' || ch === "'") {
+                singleQuote = ch;
+            }
+            out += ch;
+            i += 1;
+        }
+
+        cleaned.push(out);
+    }
+
+    return cleaned;
+}
+
+/** Per-line SDP transformation module rule. */
+interface SdpLineRule {
+    code: string;
+    regex: RegExp;
+    message: string;
+    transformationsOnly?: boolean;
+}
+
+const SDP_PYTHON_LINE_RULES: readonly SdpLineRule[] = [
+    {
+        code: 'SDP_BANNED_SESSION_BUILDER',
+        regex: /\bSparkSession\s*\.\s*builder\b/,
+        message: 'SparkSession.builder is forbidden in SDP modules. Use the injected spark session or SparkSession.active().',
+        transformationsOnly: true,
+    },
+    {
+        code: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE',
+        regex: /\bspark\s*\.\s*conf\s*\.\s*set\s*\(/,
+        message: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE: spark.conf.set() is forbidden in SDP transformations. Use spark-pipeline.yml configuration or decorator spark_conf.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE',
+        regex: /\bspark\s*\.\s*catalog\s*\.\s*(?:setCurrentCatalog|setCurrentDatabase)\s*\(/,
+        message: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE: spark.catalog.setCurrentCatalog/setCurrentDatabase is forbidden in SDP transformations.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE',
+        regex: /\.\s*create(?:Global)?(?:OrReplace)?TempView\s*\(/,
+        message: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE: createOrReplaceTempView is forbidden in SDP transformations. Declare @dp.temporary_view instead.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE',
+        regex: /\bspark\s*\.\s*udf\s*\.\s*register\s*\(/,
+        message: 'SESSION_MUTATION_IN_DECLARATIVE_PIPELINE: spark.udf.register() is forbidden in SDP transformations. Apply F.udf or @pandas_udf directly in DataFrame expressions.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION',
+        regex: /\.\s*(?:write|writeStream|writeTo)\b/,
+        message: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION: Imperative writers (.write, .writeStream, .writeTo) are forbidden inside SDP transformations.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION',
+        regex: /\.\s*(?:save|saveAsTable|toTable|start|collect|show|toPandas)\s*\(/,
+        message: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION: Eager actions and table writers (.save, .saveAsTable, .toTable, .start, .collect, .show, .toPandas) are forbidden inside SDP transformations.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION',
+        regex: /(?<!\b(?:F|functions))\.\s*count\s*\(\s*\)/,
+        message: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION: Eager DataFrame .count() is forbidden inside SDP transformations.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION',
+        regex: /\.\s*schema\b(?!\s*\()/,
+        message: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION: Reading DataFrame .schema is forbidden inside SDP dataset functions.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION',
+        regex: /\.\s*columns\b(?!\s*=)/,
+        message: 'ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION: Reading DataFrame .columns is forbidden inside SDP dataset functions.',
+        transformationsOnly: true,
+    },
+    {
+        code: 'SDP_BANNED_DATABRICKS_API',
+        regex: /^\s*import\s+dlt\b|\bfrom\s+dlt\s+import\b|\bfrom\s+pyspark(?:\.pipelines)?\s+import\s+[^#\n]*\bdlt\b/,
+        message: 'SDP_BANNED_DATABRICKS_API: Databricks dlt module does not exist in Apache Spark 4.2. Import from pyspark import pipelines as dp.',
+    },
+    {
+        code: 'SDP_BANNED_DATABRICKS_API',
+        regex: /@\s*(?:dp|dlt)\s*\.\s*view\b/,
+        message: 'SDP_BANNED_DATABRICKS_API: @dp.view does not exist in Apache Spark 4.2. Use @dp.temporary_view.',
+    },
+    {
+        code: 'SDP_BANNED_DATABRICKS_API',
+        regex: /@\s*(?:dp|dlt)\s*\.\s*expect(?:_[A-Za-z0-9_]+)?\b/,
+        message: 'SDP_BANNED_DATABRICKS_API: @dp.expect* decorators do not exist in OSS Apache Spark 4.2. Implement filter-based clean and quarantine datasets.',
+    },
+    {
+        code: 'SDP_BANNED_DATABRICKS_API',
+        regex: /\b(?:dp|dlt)\s*\.\s*apply_changes\b/,
+        message: 'SDP_BANNED_DATABRICKS_API: dp.apply_changes does not exist in Apache Spark 4.2. Use dp.create_auto_cdc_flow.',
+    },
+    {
+        code: 'AUTOCDC_SCD2_NOT_SUPPORTED',
+        regex: /\bstored_as_scd_type\s*=\s*["']?2["']?(?!\d)/,
+        message: 'AUTOCDC_SCD2_NOT_SUPPORTED: OSS Apache Spark 4.2 Auto CDC supports SCD Type 1 (stored_as_scd_type=1) only.',
+    },
+    {
+        code: 'SDP_BANNED_DATABRICKS_API',
+        regex: /\.\s*format\s*\(\s*["']cloudFiles["']\s*\)/i,
+        message: 'SDP_BANNED_DATABRICKS_API: Databricks Auto Loader format("cloudFiles") does not exist in Apache Spark 4.2. Use standard spark.readStream.format(...).',
+    },
+];
+
+/**
+ * Scans generated SDP Python files (`transformations/*.py` and non-test `src/*.py`) for
+ * banned session mutations, eager DataFrame actions, writers, and Databricks-only APIs.
+ *
+ * @param files Generated files.
+ * @returns List of SDP Python violations (empty when clean).
+ */
+export function scanSdpPythonViolations(files: readonly GeneratedFile[]): SdpStaticViolation[] {
+    const violations: SdpStaticViolation[] = [];
+
+    for (const file of files) {
+        const norm = normalizeRelPath(file.filename);
+        if (!norm.endsWith('.py')) {
+            continue;
+        }
+        const base = path.posix.basename(norm);
+        const isTest =
+            norm.startsWith('tests/') ||
+            norm.includes('/tests/') ||
+            base.startsWith('test_') ||
+            base.endsWith('_test.py') ||
+            base === 'conftest.py';
+        if (isTest) {
+            continue;
+        }
+
+        const isTransformationFile = norm.startsWith('transformations/');
+        const rawLines = file.content.split('\n');
+        const cleanedLines = stripPythonCommentsAndDocstrings(file.content);
+
+        for (const rule of SDP_PYTHON_LINE_RULES) {
+            if (rule.transformationsOnly && !isTransformationFile) {
+                continue;
+            }
+            for (let idx = 0; idx < cleanedLines.length; idx++) {
+                if (rule.regex.test(cleanedLines[idx])) {
+                    violations.push({
+                        code: rule.code,
+                        file: file.filename,
+                        line: idx + 1,
+                        evidence: rawLines[idx].trim().slice(0, 160),
+                        message: `${file.filename}:${idx + 1}: ${rule.message}`,
+                    });
+                    break;
+                }
+            }
+        }
+
+        // Multi-line check for `@dp.append_flow(..., once=...)`.
+        const cleanedJoined = cleanedLines.join('\n');
+        const appendFlowOnceRegex = /@\s*(?:dp|dlt)\s*\.\s*append_flow\s*\(([^)]*)\)/g;
+        let match: RegExpExecArray | null;
+        while ((match = appendFlowOnceRegex.exec(cleanedJoined)) !== null) {
+            if (/\bonce\s*=/.test(match[1])) {
+                const prefix = cleanedJoined.slice(0, match.index);
+                const lineNum = prefix.split('\n').length;
+                violations.push({
+                    code: 'SDP_BANNED_DATABRICKS_API',
+                    file: file.filename,
+                    line: lineNum,
+                    evidence: rawLines[lineNum - 1]?.trim().slice(0, 160),
+                    message: `${file.filename}:${lineNum}: SDP_BANNED_DATABRICKS_API: @dp.append_flow does not accept 'once=' in Apache Spark 4.2.`,
+                });
+                break;
+            }
+        }
+    }
+
+    return violations;
+}
 
 /**
  * Truncates check output to the configured limit.
@@ -158,9 +697,9 @@ export function expectedSourceFiles(_language: SkillLanguage, _baseName: string)
  */
 function findMainPipelineFile(files: GeneratedFile[], baseName: string): GeneratedFile | undefined {
     return (
-        files.find((f) => f.filename === 'src/pipeline.py') ??
-        files.find((f) => f.filename === `src/${baseName}.py`) ??
-        files.find((f) => f.filename === 'pipeline.py')
+        files.find((f) => normalizeRelPath(f.filename) === 'src/pipeline.py') ??
+        files.find((f) => normalizeRelPath(f.filename) === `src/${baseName}.py`) ??
+        files.find((f) => normalizeRelPath(f.filename) === 'pipeline.py')
     );
 }
 
@@ -173,23 +712,36 @@ function findMainPipelineFile(files: GeneratedFile[], baseName: string): Generat
  */
 function findTestPipelineFile(files: GeneratedFile[], baseName: string): GeneratedFile | undefined {
     return (
-        files.find((f) => f.filename === 'tests/test_pipeline.py') ??
-        files.find((f) => f.filename === `tests/test_${baseName}.py`) ??
-        files.find((f) => f.filename === `src/${baseName}_test.py`) ??
-        files.find((f) => f.filename === 'src/pipeline_test.py')
+        files.find((f) => normalizeRelPath(f.filename) === 'tests/test_pipeline.py') ??
+        files.find((f) => normalizeRelPath(f.filename) === `tests/test_${baseName}.py`) ??
+        files.find((f) => normalizeRelPath(f.filename) === `src/${baseName}_test.py`) ??
+        files.find((f) => normalizeRelPath(f.filename) === 'src/pipeline_test.py')
     );
 }
 
 /**
- * Materializes generated `.py` files into a temporary workspace directory safely.
+ * Resolves the SDP test module (`tests/test_transforms.py`).
+ *
+ * @param files Generated files.
+ * @returns Matching SDP test module, if present.
+ */
+function findSdpTestTransformsFile(files: GeneratedFile[]): GeneratedFile | undefined {
+    return (
+        files.find((f) => normalizeRelPath(f.filename) === 'tests/test_transforms.py') ??
+        files.find((f) => normalizeRelPath(f.filename) === 'test_transforms.py')
+    );
+}
+
+/**
+ * Materializes generated files into a temporary workspace directory safely.
  *
  * @param workDir Temporary workspace root.
- * @param pythonFiles Generated `.py` files.
+ * @param candidateFiles Generated files to write.
  * @returns Relative paths of files written inside `workDir`.
  */
-async function materializePythonFiles(workDir: string, pythonFiles: GeneratedFile[]): Promise<string[]> {
+async function materializeWorkspaceFiles(workDir: string, candidateFiles: GeneratedFile[]): Promise<string[]> {
     const written: string[] = [];
-    for (const file of pythonFiles) {
+    for (const file of candidateFiles) {
         const target = path.resolve(workDir, file.filename);
         if (!target.startsWith(workDir + path.sep)) {
             continue;
@@ -202,7 +754,31 @@ async function materializePythonFiles(workDir: string, pythonFiles: GeneratedFil
 }
 
 /**
- * Runs read-only verification checks over generated PySpark files.
+ * Returns true if `spark-pipelines dry-run` output indicates a missing local runtime,
+ * incompatible host JDK, Spark version below 4.2, or unreachable external catalog rather than
+ * a generated project error.
+ *
+ * @param combined Combined stdout and stderr text.
+ * @returns True when the check should be marked `skipped`.
+ */
+export function isSdpDryRunEnvironmentSkip(combined: string): boolean {
+    return (
+        /JAVA_HOME is not set/i.test(combined) ||
+        /\bjava:\s*(?:command\s+)?not found/i.test(combined) ||
+        /UnsupportedClassVersionError/i.test(combined) ||
+        /getSubject is not supported/i.test(combined) ||
+        /No module named ['"]?pyspark\.pipelines['"]?/i.test(combined) ||
+        /No module named ['"]?zstandard['"]?/i.test(combined) ||
+        /PACKAGE_NOT_INSTALLED[\s\S]*zstandard/i.test(combined) ||
+        /iceberg-spark-runtime-4\.2/i.test(combined) ||
+        /ClassNotFoundException:\s*org\.apache\.iceberg/i.test(combined) ||
+        /UnknownHostException/i.test(combined) ||
+        /biglake\.googleapis\.com/i.test(combined)
+    );
+}
+
+/**
+ * Runs read-only verification checks over generated PySpark or SDP files.
  */
 export class ReadOnlyCheckRunner {
     /**
@@ -210,23 +786,29 @@ export class ReadOnlyCheckRunner {
      *
      * @param executor Command executor (tests inject a fake).
      * @param pythonCommand Python interpreter for `py_compile` and `pytest`.
+     * @param sparkPipelinesCommand CLI binary for `spark-pipelines dry-run` in SDP mode.
      */
     constructor(
         private readonly executor: CommandExecutor = defaultCommandExecutor,
-        private readonly pythonCommand: string = READ_ONLY_CHECK_LIMITS.pythonCommand
+        private readonly pythonCommand: string = READ_ONLY_CHECK_LIMITS.pythonCommand,
+        private readonly sparkPipelinesCommand: string = 'spark-pipelines'
     ) {}
 
     /**
-     * Runs every check in a stable order.
+     * Runs every check in a stable order for the detected paradigm.
      *
-     * @param request Files, language, base name, and runner files.
+     * @param request Files, language, base name, runner files, and optional paradigm.
      * @returns One result per check.
      */
     public async run(request: CheckRequest): Promise<CheckResult[]> {
-        const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files);
+        if (isSdpGeneratedProject(request.files, request.paradigm)) {
+            return this.runSdpChecks(request);
+        }
+
+        const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false);
         return [
             this.checkRequiredFiles(request),
-            this.checkLeftoverTokens(request.files),
+            this.checkLeftoverTokens(request.files, false),
             syntaxAndPytest.syntaxResult,
             this.checkPipelineContract(request),
             this.checkTestImports(request),
@@ -235,14 +817,39 @@ export class ReadOnlyCheckRunner {
     }
 
     /**
-     * Checks that the build file (`requirements.txt`), the main and test sources, and the
-     * runner files exist.
+     * Runs all read-only checks for a Spark Declarative Pipeline (SDP) project.
      *
      * @param request Check request.
-     * @returns The result.
+     * @returns Ordered SDP check results.
+     */
+    private async runSdpChecks(request: CheckRequest): Promise<CheckResult[]> {
+        const execResults = await this.checkPythonSyntaxAndPytest(request.files, true);
+        const dryRunResult: CheckResult = execResults.dryRunResult ?? {
+            check: CHECK_IDS.sdpDryRun,
+            status: 'skipped',
+            output: 'No spark-pipeline.yml generated.',
+        };
+        return [
+            this.checkSdpRequiredFiles(request),
+            this.checkLeftoverTokens(request.files, true),
+            execResults.syntaxResult,
+            this.checkSdpSpecContract(request.files),
+            this.checkSdpPipelineContract(request.files),
+            this.checkSdpTestImports(request.files),
+            execResults.pytestResult,
+            dryRunResult,
+        ];
+    }
+
+    /**
+     * Checks that `requirements.txt`, `src/pipeline.py`, `tests/test_pipeline.py`, and
+     * runner files exist in imperative mode.
+     *
+     * @param request Check request.
+     * @returns Check result.
      */
     private checkRequiredFiles(request: CheckRequest): CheckResult {
-        const present = new Set(request.files.map((file) => file.filename));
+        const present = new Set(request.files.map((file) => normalizeRelPath(file.filename)));
         const missing: string[] = [];
 
         const buildFile = LANGUAGE_BUILD_FILES[request.language];
@@ -258,7 +865,7 @@ export class ReadOnlyCheckRunner {
         }
 
         for (const runnerFile of request.runnerFiles) {
-            if (!present.has(runnerFile)) {
+            if (!present.has(normalizeRelPath(runnerFile))) {
                 missing.push(runnerFile);
             }
         }
@@ -269,15 +876,87 @@ export class ReadOnlyCheckRunner {
     }
 
     /**
-     * Checks that no placeholder or redaction sentinel remains in any file.
+     * Checks SDP required files (`requirements.txt`, single `spark-pipeline.yml`,
+     * `transformations/*.py`, `src/transforms.py`, `tests/test_transforms.py`, and runner files).
+     *
+     * @param request Check request.
+     * @returns Check result.
+     */
+    private checkSdpRequiredFiles(request: CheckRequest): CheckResult {
+        const normalizedPaths = request.files.map((file) => normalizeRelPath(file.filename));
+        const present = new Set(normalizedPaths);
+        const missing: string[] = [];
+        const errors: string[] = [];
+
+        const buildFile = LANGUAGE_BUILD_FILES[request.language];
+        if (buildFile && !present.has(buildFile)) {
+            missing.push(buildFile);
+        }
+
+        const hasYml = present.has('spark-pipeline.yml');
+        const hasYaml = present.has('spark-pipeline.yaml');
+        if (hasYml && hasYaml) {
+            errors.push(
+                'MULTIPLE_PIPELINE_SPEC_FILES_FOUND: Keep only one pipeline spec file (spark-pipeline.yml or spark-pipeline.yaml), never both.'
+            );
+        } else if (!hasYml && !hasYaml) {
+            missing.push('spark-pipeline.yml');
+        }
+
+        const hasTransformationModule = normalizedPaths.some(
+            (p) => /^transformations\/.+\.py$/.test(p) && !p.endsWith('/__init__.py')
+        );
+        if (!hasTransformationModule) {
+            missing.push('transformations/*.py');
+        }
+
+        if (!present.has('src/transforms.py')) {
+            missing.push('src/transforms.py');
+        }
+        if (!present.has('tests/test_transforms.py')) {
+            missing.push('tests/test_transforms.py');
+        }
+
+        for (const runnerFile of request.runnerFiles) {
+            if (!present.has(normalizeRelPath(runnerFile))) {
+                missing.push(runnerFile);
+            }
+        }
+
+        if (missing.length > 0) {
+            errors.push(`Missing file(s): ${missing.join(', ')}`);
+        }
+
+        return errors.length === 0
+            ? { check: CHECK_IDS.requiredFiles, status: 'passed', output: '' }
+            : { check: CHECK_IDS.requiredFiles, status: 'failed', output: truncateCheckOutput(errors.join('\n')) };
+    }
+
+    /**
+     * Checks that no codegen placeholder or redaction sentinel remains in any file.
+     * In SDP YAML spec files, Managed Data Pipeline Jinja variables are permitted while
+     * known codegen placeholders (`{{pipeline_name}}`, `{{spark_version}}`, etc.) fail.
      *
      * @param files Generated files.
-     * @returns The result.
+     * @param isSdp True when checking an SDP project.
+     * @returns Check result.
      */
-    private checkLeftoverTokens(files: GeneratedFile[]): CheckResult {
+    private checkLeftoverTokens(files: GeneratedFile[], isSdp: boolean): CheckResult {
         const problems: string[] = [];
         for (const file of files) {
-            const tokens = new Set(file.content.match(PLACEHOLDER_PATTERN) ?? []);
+            const norm = normalizeRelPath(file.filename);
+            const isSdpYamlSpec =
+                isSdp &&
+                (norm === 'spark-pipeline.yml' ||
+                    norm === 'spark-pipeline.yaml' ||
+                    norm.endsWith('.pipeline.yaml'));
+
+            const rawMatches = file.content.match(PLACEHOLDER_PATTERN) ?? [];
+            const tokens = new Set(
+                isSdpYamlSpec
+                    ? rawMatches.filter((tok) => KNOWN_CODEGEN_PLACEHOLDERS.has(tok))
+                    : rawMatches
+            );
             if (file.content.includes(REDACTION_PLACEHOLDER)) {
                 tokens.add(REDACTION_PLACEHOLDER);
             }
@@ -294,10 +973,105 @@ export class ReadOnlyCheckRunner {
     }
 
     /**
+     * Validates `spark-pipeline.yml` (or `spark-pipeline.yaml`) in SDP mode.
+     *
+     * @param files Generated files.
+     * @returns Check result.
+     */
+    private checkSdpSpecContract(files: GeneratedFile[]): CheckResult {
+        const specFiles = files.filter((f) => {
+            const norm = normalizeRelPath(f.filename);
+            return norm === 'spark-pipeline.yml' || norm === 'spark-pipeline.yaml';
+        });
+
+        if (specFiles.length === 0) {
+            return {
+                check: CHECK_IDS.sdpSpecContract,
+                status: 'skipped',
+                output: 'No spark-pipeline.yml generated.',
+            };
+        }
+
+        if (specFiles.length > 1) {
+            return {
+                check: CHECK_IDS.sdpSpecContract,
+                status: 'failed',
+                output: 'MULTIPLE_PIPELINE_SPEC_FILES_FOUND: Project contains both spark-pipeline.yml and spark-pipeline.yaml.',
+            };
+        }
+
+        const spec = specFiles[0];
+        const violations = validateSdpSpecYaml(spec.filename, spec.content);
+        return violations.length === 0
+            ? { check: CHECK_IDS.sdpSpecContract, status: 'passed', output: '' }
+            : {
+                  check: CHECK_IDS.sdpSpecContract,
+                  status: 'failed',
+                  output: truncateCheckOutput(violations.map((v) => v.message).join('\n')),
+              };
+    }
+
+    /**
+     * Verifies `transformations/*.py` dataset declarations, pure `src/transforms.py` helpers,
+     * and absence of banned session mutations, writers, actions, and Databricks APIs in SDP mode.
+     *
+     * @param files Generated files.
+     * @returns Check result.
+     */
+    private checkSdpPipelineContract(files: GeneratedFile[]): CheckResult {
+        const transformationFiles = files.filter((f) => {
+            const norm = normalizeRelPath(f.filename);
+            return /^transformations\/.+\.py$/.test(norm) && !norm.endsWith('/__init__.py');
+        });
+        if (transformationFiles.length === 0) {
+            return {
+                check: CHECK_IDS.pipelineContract,
+                status: 'skipped',
+                output: 'No transformations/*.py modules generated.',
+            };
+        }
+
+        const errors: string[] = [];
+
+        const hasDpRegistration = transformationFiles.some((f) => {
+            const cleaned = stripPythonCommentsAndDocstrings(f.content).join('\n');
+            return (
+                /@\s*dp\s*\.\s*(?:table|materialized_view|temporary_view|append_flow)\b/.test(cleaned) ||
+                /\bdp\s*\.\s*create_(?:streaming_table|auto_cdc_flow|sink)\s*\(/.test(cleaned)
+            );
+        });
+        if (!hasDpRegistration) {
+            errors.push(
+                'transformations/*.py does not declare any @dp.table, @dp.materialized_view, @dp.temporary_view, @dp.append_flow, dp.create_streaming_table, dp.create_auto_cdc_flow, or dp.create_sink dataset.'
+            );
+        }
+
+        const transformsHelper = files.find((f) => normalizeRelPath(f.filename) === 'src/transforms.py');
+        if (transformsHelper) {
+            const helperCleaned = stripPythonCommentsAndDocstrings(transformsHelper.content).join('\n');
+            if (!/^\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/m.test(helperCleaned)) {
+                errors.push('src/transforms.py must define at least one pure transformation helper function.');
+            }
+        }
+
+        for (const v of scanSdpPythonViolations(files)) {
+            errors.push(v.message);
+        }
+
+        return errors.length === 0
+            ? { check: CHECK_IDS.pipelineContract, status: 'passed', output: '' }
+            : {
+                  check: CHECK_IDS.pipelineContract,
+                  status: 'failed',
+                  output: truncateCheckOutput(errors.join('\n')),
+              };
+    }
+
+    /**
      * Verifies that `src/pipeline.py` defines `read_sources`, `transform`, and `write_sinks`.
      *
      * @param request Check request.
-     * @returns The result.
+     * @returns Check result.
      */
     private checkPipelineContract(request: CheckRequest): CheckResult {
         const mainFile = findMainPipelineFile(request.files, request.baseName);
@@ -327,15 +1101,13 @@ export class ReadOnlyCheckRunner {
      * Checks that the Python test module imports the main module (`src.pipeline` or `src.<baseName>`).
      *
      * @param request Check request.
-     * @returns The result.
+     * @returns Check result.
      */
     private checkTestImports(request: CheckRequest): CheckResult {
         const test = findTestPipelineFile(request.files, request.baseName);
         if (!test) {
             return { check: CHECK_IDS.testImports, status: 'skipped', output: 'No tests/test_pipeline.py generated.' };
         }
-        // Accept `from src.pipeline import`, `import src.pipeline`, `from pipeline import`, `import pipeline`,
-        // or the pipeline baseName equivalent.
         const escapedBase = request.baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const moduleGroup = `(?:pipeline|${escapedBase})`;
         const pattern = new RegExp(
@@ -352,17 +1124,53 @@ export class ReadOnlyCheckRunner {
     }
 
     /**
-     * Byte-compiles every Python file with `python3 -m py_compile` and runs
-     * `python3 -m pytest --collect-only -q` in a single temporary folder.
+     * Checks that `tests/test_transforms.py` imports `src.transforms` or `transforms` in SDP mode.
      *
      * @param files Generated files.
-     * @returns Syntax and pytest collection check outcomes.
+     * @returns Check result.
+     */
+    private checkSdpTestImports(files: GeneratedFile[]): CheckResult {
+        const test = findSdpTestTransformsFile(files);
+        if (!test) {
+            return {
+                check: CHECK_IDS.testImports,
+                status: 'skipped',
+                output: 'No tests/test_transforms.py generated.',
+            };
+        }
+        const pattern =
+            /^\s*(?:from\s+(?:src\.)?transforms\s+import|from\s+src\s+import\s+[^#\n]*\btransforms\b|import\s+(?:src\.)?transforms\b)/m;
+        return pattern.test(test.content)
+            ? { check: CHECK_IDS.testImports, status: 'passed', output: '' }
+            : {
+                  check: CHECK_IDS.testImports,
+                  status: 'failed',
+                  output: `${test.filename} does not import the pure helper module 'src.transforms'.`,
+              };
+    }
+
+    /**
+     * Byte-compiles every Python file with `python3 -m py_compile`, runs
+     * `python3 -m pytest --collect-only -q`, and (in SDP mode) runs
+     * `spark-pipelines dry-run --spec <specFile>` when `spark-pipelines` is available.
+     *
+     * @param files Generated files.
+     * @param includeSdpDryRun True when running in SDP mode.
+     * @returns Syntax, pytest collection, and optional SDP dry-run outcomes.
      */
     private async checkPythonSyntaxAndPytest(
-        files: GeneratedFile[]
-    ): Promise<{ syntaxResult: CheckResult; pytestResult: CheckResult }> {
+        files: GeneratedFile[],
+        includeSdpDryRun: boolean
+    ): Promise<{ syntaxResult: CheckResult; pytestResult: CheckResult; dryRunResult?: CheckResult }> {
         const pythonFiles = files.filter((file) => file.filename.endsWith('.py'));
-        if (pythonFiles.length === 0) {
+        const specFile = includeSdpDryRun
+            ? files.find((f) => {
+                  const norm = normalizeRelPath(f.filename);
+                  return norm === 'spark-pipeline.yml' || norm === 'spark-pipeline.yaml';
+              })
+            : undefined;
+
+        if (pythonFiles.length === 0 && !specFile) {
             return {
                 syntaxResult: {
                     check: CHECK_IDS.pythonSyntax,
@@ -374,100 +1182,165 @@ export class ReadOnlyCheckRunner {
                     status: 'skipped',
                     output: 'No Python files generated.',
                 },
+                ...(includeSdpDryRun
+                    ? {
+                          dryRunResult: {
+                              check: CHECK_IDS.sdpDryRun,
+                              status: 'skipped',
+                              output: 'No spark-pipeline.yml generated.',
+                          },
+                      }
+                    : {}),
             };
         }
 
         const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'spark-codegen-checks-'));
         try {
-            // 1. Materialize the Python files. Paths are model-controlled, so keep them inside workDir.
-            const written = await materializePythonFiles(workDir, pythonFiles);
-            if (written.length === 0) {
-                return {
-                    syntaxResult: {
-                        check: CHECK_IDS.pythonSyntax,
-                        status: 'skipped',
-                        output: 'No safe Python files generated.',
-                    },
-                    pytestResult: {
-                        check: CHECK_IDS.pytestCollect,
-                        status: 'skipped',
-                        output: 'No safe Python files generated.',
-                    },
-                };
-            }
+            // 1. Materialize files safely inside workDir.
+            const filesToWrite = includeSdpDryRun ? files : pythonFiles;
+            const writtenAll = await materializeWorkspaceFiles(workDir, filesToWrite);
+            const writtenPy = writtenAll.filter((rel) => rel.endsWith('.py'));
 
-            // 2. Run python3 -m py_compile. A missing interpreter is a skip, not a failure.
-            const compileOutcome = await this.executor(this.pythonCommand, ['-m', 'py_compile', ...written], {
-                cwd: workDir,
-                timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
-            });
-            if (compileOutcome.notFound) {
-                const msg = `Python interpreter '${this.pythonCommand}' not found.`;
-                return {
-                    syntaxResult: { check: CHECK_IDS.pythonSyntax, status: 'skipped', output: msg },
-                    pytestResult: { check: CHECK_IDS.pytestCollect, status: 'skipped', output: msg },
-                };
-            }
+            let syntaxResult: CheckResult;
+            let pytestResult: CheckResult;
 
-            const compileOutput = truncateCheckOutput(
-                [compileOutcome.stdout, compileOutcome.stderr].filter(Boolean).join('\n').trim()
-            );
-            const syntaxResult: CheckResult = {
-                check: CHECK_IDS.pythonSyntax,
-                status: compileOutcome.exitCode === 0 ? 'passed' : 'failed',
-                output: compileOutput,
-            };
-
-            // 3. Run python3 -m pytest --collect-only -q when test files exist.
-            const hasTestFile = written.some(
-                (rel) => rel.startsWith('tests/') || rel.endsWith('_test.py') || path.basename(rel).startsWith('test_')
-            );
-            if (!hasTestFile) {
-                return {
-                    syntaxResult,
-                    pytestResult: {
-                        check: CHECK_IDS.pytestCollect,
-                        status: 'skipped',
-                        output: 'No pytest test files generated.',
-                    },
-                };
-            }
-
-            const pytestOutcome = await this.executor(
-                this.pythonCommand,
-                ['-m', 'pytest', '--collect-only', '-q'],
-                {
+            if (writtenPy.length === 0) {
+                const skipMsg = pythonFiles.length === 0 ? 'No Python files generated.' : 'No safe Python files generated.';
+                syntaxResult = { check: CHECK_IDS.pythonSyntax, status: 'skipped', output: skipMsg };
+                pytestResult = { check: CHECK_IDS.pytestCollect, status: 'skipped', output: skipMsg };
+            } else {
+                // 2. Run python3 -m py_compile. A missing interpreter skips rather than fails.
+                const compileOutcome = await this.executor(this.pythonCommand, ['-m', 'py_compile', ...writtenPy], {
                     cwd: workDir,
                     timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
+                });
+                if (compileOutcome.notFound) {
+                    const msg = `Python interpreter '${this.pythonCommand}' not found.`;
+                    syntaxResult = { check: CHECK_IDS.pythonSyntax, status: 'skipped', output: msg };
+                    pytestResult = { check: CHECK_IDS.pytestCollect, status: 'skipped', output: msg };
+                } else {
+                    const compileOutput = truncateCheckOutput(
+                        [compileOutcome.stdout, compileOutcome.stderr].filter(Boolean).join('\n').trim()
+                    );
+                    syntaxResult = {
+                        check: CHECK_IDS.pythonSyntax,
+                        status: compileOutcome.exitCode === 0 ? 'passed' : 'failed',
+                        output: compileOutput,
+                    };
+
+                    // 3. Run python3 -m pytest --collect-only -q when test files exist.
+                    const hasTestFile = writtenPy.some(
+                        (rel) =>
+                            rel.startsWith('tests/') ||
+                            rel.endsWith('_test.py') ||
+                            path.basename(rel).startsWith('test_')
+                    );
+                    if (!hasTestFile) {
+                        pytestResult = {
+                            check: CHECK_IDS.pytestCollect,
+                            status: 'skipped',
+                            output: 'No pytest test files generated.',
+                        };
+                    } else {
+                        const pytestOutcome = await this.executor(
+                            this.pythonCommand,
+                            ['-m', 'pytest', '--collect-only', '-q'],
+                            {
+                                cwd: workDir,
+                                timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
+                            }
+                        );
+                        const pytestCombined = [pytestOutcome.stdout, pytestOutcome.stderr]
+                            .filter(Boolean)
+                            .join('\n')
+                            .trim();
+                        if (
+                            pytestOutcome.notFound ||
+                            /No module named ['"]?pytest['"]?/i.test(pytestCombined) ||
+                            /ModuleNotFoundError:\s*No module named ['"]?pyspark['"]?/i.test(pytestCombined)
+                        ) {
+                            pytestResult = {
+                                check: CHECK_IDS.pytestCollect,
+                                status: 'skipped',
+                                output: truncateCheckOutput(
+                                    pytestCombined || 'pytest or pyspark module not installed in local environment.'
+                                ),
+                            };
+                        } else {
+                            pytestResult = {
+                                check: CHECK_IDS.pytestCollect,
+                                status: pytestOutcome.exitCode === 0 ? 'passed' : 'failed',
+                                output: truncateCheckOutput(pytestCombined),
+                            };
+                        }
+                    }
                 }
-            );
-            const pytestCombined = [pytestOutcome.stdout, pytestOutcome.stderr].filter(Boolean).join('\n').trim();
-            if (
-                pytestOutcome.notFound ||
-                /No module named ['"]?pytest['"]?/i.test(pytestCombined) ||
-                /ModuleNotFoundError:\s*No module named ['"]?pyspark['"]?/i.test(pytestCombined)
-            ) {
-                return {
-                    syntaxResult,
-                    pytestResult: {
-                        check: CHECK_IDS.pytestCollect,
-                        status: 'skipped',
-                        output: truncateCheckOutput(pytestCombined || 'pytest or pyspark module not installed in local environment.'),
-                    },
-                };
             }
 
-            return {
-                syntaxResult,
-                pytestResult: {
-                    check: CHECK_IDS.pytestCollect,
-                    status: pytestOutcome.exitCode === 0 ? 'passed' : 'failed',
-                    output: truncateCheckOutput(pytestCombined),
-                },
-            };
+            if (!includeSdpDryRun) {
+                return { syntaxResult, pytestResult };
+            }
+
+            // 4. Optional spark-pipelines dry-run when SDP spec is materialized.
+            const dryRunResult = await this.runOptionalSdpDryRun(workDir, specFile, writtenAll);
+            return { syntaxResult, pytestResult, dryRunResult };
         } finally {
-            // 4. Never leave generated code behind.
             await fs.promises.rm(workDir, { recursive: true, force: true });
         }
+    }
+
+    /**
+     * Executes `spark-pipelines dry-run --spec <specFile>` when `spark-pipelines` is available.
+     *
+     * @param workDir Materialized temporary project directory.
+     * @param specFile SDP spec file candidate, if present.
+     * @param writtenFiles Materialized relative file paths.
+     * @returns Dry-run check result (`passed`, `failed`, or `skipped`).
+     */
+    private async runOptionalSdpDryRun(
+        workDir: string,
+        specFile: GeneratedFile | undefined,
+        writtenFiles: readonly string[]
+    ): Promise<CheckResult> {
+        if (!specFile) {
+            return {
+                check: CHECK_IDS.sdpDryRun,
+                status: 'skipped',
+                output: 'No spark-pipeline.yml generated.',
+            };
+        }
+        const specRel = normalizeRelPath(specFile.filename);
+        if (!writtenFiles.includes(specRel)) {
+            return {
+                check: CHECK_IDS.sdpDryRun,
+                status: 'skipped',
+                output: 'No safe spark-pipeline.yml generated.',
+            };
+        }
+
+        const outcome = await this.executor(this.sparkPipelinesCommand, ['dry-run', '--spec', specRel], {
+            cwd: workDir,
+            timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
+        });
+        const combined = [outcome.stdout, outcome.stderr].filter(Boolean).join('\n').trim();
+        if (outcome.notFound) {
+            return {
+                check: CHECK_IDS.sdpDryRun,
+                status: 'skipped',
+                output: `CLI '${this.sparkPipelinesCommand}' not installed on PATH.`,
+            };
+        }
+        if (outcome.exitCode !== 0 && isSdpDryRunEnvironmentSkip(combined)) {
+            return {
+                check: CHECK_IDS.sdpDryRun,
+                status: 'skipped',
+                output: truncateCheckOutput(combined || 'Local Spark 4.2 environment unavailable for dry-run.'),
+            };
+        }
+        return {
+            check: CHECK_IDS.sdpDryRun,
+            status: outcome.exitCode === 0 ? 'passed' : 'failed',
+            output: truncateCheckOutput(combined),
+        };
     }
 }

@@ -40,9 +40,12 @@ import {
     PIPELINE_FEATURES,
     PipelineFeature,
     PYTHON_DATASOURCE_TRANSFORMS,
+    SDP_LANGUAGE_RUNNERS,
+    SKILL_PARADIGMS,
     STREAMING_SOURCE_TRANSFORMS,
     STREAMING_STEP_TRANSFORMS,
     SkillLanguage,
+    SkillParadigm,
     SkillRunner,
     XLANG_TRANSFORMS,
     toSkillLanguage,
@@ -55,6 +58,8 @@ const SOURCE_NODE_TYPE = 'SOURCE';
 export interface DetectedPipeline {
     /** Skill language id. */
     language: SkillLanguage;
+    /** Pipeline paradigm (`imperative` by default, or `sdp`). */
+    paradigm: SkillParadigm;
     /** Every runner that the project must support. */
     runners: Set<SkillRunner>;
     /** Every node `data.spark_transform` value. */
@@ -163,12 +168,39 @@ function usesPythonDataSource(
 }
 
 /**
+ * Resolves the pipeline paradigm from top-level `paradigm`, `pipelineConfig.paradigm`, or
+ * `jobConfig.paradigm`, defaulting to `'imperative'`.
+ *
+ * @param root Parsed pipeline document record.
+ * @returns Canonical `SkillParadigm` (`'imperative'` | `'sdp'`).
+ */
+function extractParadigm(root: Record<string, unknown>): SkillParadigm {
+    const candidates = [
+        root.paradigm,
+        asRecord(root.pipelineConfig)?.paradigm,
+        asRecord(root.jobConfig)?.paradigm,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const normalized = candidate.trim().toLowerCase();
+            if (normalized === SKILL_PARADIGMS.sdp) {
+                return SKILL_PARADIGMS.sdp;
+            }
+            if (normalized === SKILL_PARADIGMS.imperative) {
+                return SKILL_PARADIGMS.imperative;
+            }
+        }
+    }
+    return SKILL_PARADIGMS.imperative;
+}
+
+/**
  * Detects the skill-selection facts of a parsed pipeline.
  *
- * @param parsedPipeline The parsed `.spark` YAML (any shape; missing parts are tolerated).
+ * @param parsedPipeline The parsed `.spark` YAML (any shape, missing parts are tolerated).
  * @param language The resolved generation language.
  * @param resolveTransform Optional skill catalog transform resolver.
- * @returns Language, runners, transforms, features, and warnings.
+ * @returns Language, paradigm, runners, transforms, features, and warnings.
  */
 export function detectPipelineFeatures(
     parsedPipeline: unknown,
@@ -177,12 +209,20 @@ export function detectPipelineFeatures(
 ): DetectedPipeline {
     const skillLanguage = toSkillLanguage(language);
     const root = asRecord(parsedPipeline) ?? {};
+    const paradigm = extractParadigm(root);
     const transforms = new Set<string>();
     const features = new Set<PipelineFeature>();
     const warnings: string[] = [];
 
     const rawNodes = asArray(root.nodes);
     const rawEdges = asArray(root.edges);
+    const errorSourceNodeIds = new Set<string>();
+    for (const edge of rawEdges) {
+        const edgeRecord = asRecord(edge);
+        if (edgeRecord?.sourceHandle === 'error' && typeof edgeRecord.source === 'string') {
+            errorSourceNodeIds.add(edgeRecord.source);
+        }
+    }
 
     // 1. Propagate streaming across the DAG via sparkDagRules when valid node IDs exist.
     const dagNodes = rawNodes.filter((n): n is DagNode => asRecord(n) !== undefined);
@@ -256,6 +296,25 @@ export function detectPipelineFeatures(
         if (XLANG_TRANSFORMS[skillLanguage].has(transformName)) {
             features.add(PIPELINE_FEATURES.xlang);
         }
+
+        // 2h. Spark Declarative Pipelines (SDP) feature flags (`sdp_auto_cdc`, `sdp_quarantine`).
+        if (paradigm === SKILL_PARADIGMS.sdp) {
+            if (transformName === 'MergeCdcScd' || rawTrimmed === 'MergeCdcScd') {
+                features.add(PIPELINE_FEATURES.sdpAutoCdc);
+            }
+            const nodeId = typeof nodeRecord?.id === 'string' ? nodeRecord.id : '';
+            const hasDlqSplit =
+                (nodeId.length > 0 && errorSourceNodeIds.has(nodeId)) ||
+                properties?.failurePolicy === 'route_to_dlq' ||
+                properties?.quarantine === true;
+            if (
+                transformName === 'DataQualityAssert' ||
+                rawTrimmed === 'DataQualityAssert' ||
+                ((transformName === 'EnforceSchemaAndCast' || transformName === 'ParsePayload') && hasDlqSplit)
+            ) {
+                features.add(PIPELINE_FEATURES.sdpQuarantine);
+            }
+        }
     }
 
     // 3. Edges: side inputs and multi-output routing.
@@ -269,10 +328,16 @@ export function detectPipelineFeatures(
         }
     }
 
-    // 4. Runners: every runner of the language (parity), independent of jobConfig.runner.
+    // 4. Runners: SDP uses `SDP_LANGUAGE_RUNNERS` (`sdp`), while imperative gets all language runners.
+    const runners =
+        paradigm === SKILL_PARADIGMS.sdp
+            ? new Set<SkillRunner>(SDP_LANGUAGE_RUNNERS[skillLanguage])
+            : new Set<SkillRunner>(LANGUAGE_RUNNERS[skillLanguage]);
+
     return {
         language: skillLanguage,
-        runners: new Set<SkillRunner>(LANGUAGE_RUNNERS[skillLanguage]),
+        paradigm,
+        runners,
         transforms,
         features,
         warnings,

@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative, sdp]
   transforms: [MergeCdcScd]
   preloadWhen: []
   sources:
@@ -16,7 +17,7 @@ metadata:
 
 # CDC Deduplication & SCD Type 1 / Type 2 Staging (`MergeCdcScd`)
 
-Use these rules when generating PySpark {{spark_version}} code for a `MergeCdcScd` (`EXT4`) step inside `transform(dfs, config)`.
+Use these rules when generating PySpark {{spark_version}} code for a `MergeCdcScd` (`EXT4`) step inside `transform(dfs, config)` in Imperative mode (`paradigm: imperative`). When `paradigm` is `sdp` (`## SDP Execution Plan`), follow `sdp-auto-cdc` (`dp.create_streaming_table` + `dp.create_auto_cdc_flow` with `stored_as_scd_type=1`) instead of imperative `apply_merge_cdc_scd` staging, and never access `.columns` or `.schema` inside SDP dataset functions.
 
 ## 1. Pure Two-Input Contract (`left` and `right`)
 

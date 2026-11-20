@@ -6,6 +6,7 @@ import React from 'react';
 import { ChevronRight } from 'lucide-react';
 import { SidebarItem } from '../SidebarItem';
 import type { NodeDefinition } from '../../catalog/nodes';
+import type { PipelineParadigm } from '../../utils/sharedTypes';
 
 /**
  * Props for the NodeGroupAccordion component.
@@ -21,6 +22,8 @@ export interface NodeGroupAccordionProps {
   groupName?: string;
   /** Currently active tab ('SOURCES', 'STEPS', 'SINKS'), controls category dot color. */
   activeTab?: string | null;
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
+  paradigm?: PipelineParadigm;
   /** Callback invoked when the accordion open state is toggled by the user. */
   onToggle: (open: boolean) => void;
   /** Handler invoked when a node card drag starts. */
@@ -51,6 +54,7 @@ export const NodeGroupAccordion: React.FC<NodeGroupAccordionProps> = ({
   isOpen,
   groupName,
   activeTab,
+  paradigm = 'imperative',
   onToggle,
   onDragStart,
   onAddNode,
@@ -84,19 +88,25 @@ export const NodeGroupAccordion: React.FC<NodeGroupAccordionProps> = ({
 
       {/* Node Cards */}
       <div className="p-2 space-y-1.5">
-        {items.map((item) => (
-          <SidebarItem
-            key={item.label}
-            label={item.label}
-            type={item.type}
-            iconName={item.iconName}
-            sparkTransform={item.sparkTransform}
-            badge={item.badge}
-            description={item.description}
-            onDragStart={onDragStart}
-            onAddNode={onAddNode}
-          />
-        ))}
+        {items.map((item) => {
+          const itemCategory =
+            item.type ||
+            (activeTab === 'SOURCES' ? 'SOURCE' : activeTab === 'SINKS' ? 'SINK' : 'STEP');
+          return (
+            <SidebarItem
+              key={item.label}
+              label={item.label}
+              type={itemCategory}
+              iconName={item.iconName}
+              sparkTransform={item.sparkTransform}
+              badge={item.badge}
+              description={item.description}
+              paradigm={paradigm}
+              onDragStart={onDragStart}
+              onAddNode={onAddNode}
+            />
+          );
+        })}
       </div>
     </details>
   );

@@ -4,18 +4,21 @@
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
+import type { PipelineParadigm } from '../utils/sharedTypes';
+
 /**
  * Language values accepted by `setLanguage` actions, including `'PySpark'` normalized to `'Python'`.
  */
 export type PipelineLanguageInput = 'PySpark' | 'Python' | 'Java';
 
 /**
- * Configuration settings for the pipeline generator and language target.
+ * Configuration settings for the pipeline generator, language target, and authoring paradigm.
  */
 export interface PipelineConfig {
   language: 'Python' | 'Java';
   outputFolder: string;
   needsRebuild: boolean;
+  paradigm?: PipelineParadigm;
 }
 
 /**
@@ -24,7 +27,8 @@ export interface PipelineConfig {
 export type PipelineConfigAction =
   | { type: 'setLanguage'; language: PipelineLanguageInput }
   | { type: 'setOutputFolder'; folder: string }
-  /** Host-driven sync; first hydration from '' does not dirty the pipeline, any later change does. */
+  | { type: 'setParadigm'; paradigm: PipelineParadigm }
+  /** Host-driven sync when first hydrating from empty without dirtying the pipeline. */
   | { type: 'syncOutputFolderFromHost'; folder: string }
   | { type: 'markBuilt' }
   | { type: 'markDirty' }
@@ -38,6 +42,16 @@ export type PipelineConfigAction =
  */
 export function normalizePipelineLanguage(language: PipelineLanguageInput): 'Python' | 'Java' {
   return language === 'Java' ? 'Java' : 'Python';
+}
+
+/**
+ * Normalizes a pipeline paradigm identifier to `'imperative'` or `'sdp'`.
+ *
+ * @param paradigm Candidate paradigm identifier.
+ * @returns Normalized `'imperative' | 'sdp'` value.
+ */
+export function normalizePipelineParadigm(paradigm: unknown): PipelineParadigm {
+  return paradigm === 'sdp' ? 'sdp' : 'imperative';
 }
 
 /**
@@ -94,6 +108,18 @@ export function pipelineConfigReducer(
     case 'setOutputFolder':
       return withRebuildIfChanged(state, { outputFolder: action.folder });
 
+    case 'setParadigm': {
+      const nextParadigm = normalizePipelineParadigm(action.paradigm);
+      const currentParadigm = normalizePipelineParadigm(state.paradigm);
+      if (
+        currentParadigm === nextParadigm &&
+        (state.paradigm === nextParadigm || nextParadigm === 'imperative')
+      ) {
+        return state;
+      }
+      return withRebuildIfChanged(state, { paradigm: nextParadigm });
+    }
+
     case 'syncOutputFolderFromHost': {
       if (state.outputFolder === action.folder) {
         return state;
@@ -132,7 +158,8 @@ export function pipelineConfigReducer(
       if (
         state.language === normalizedLanguage &&
         state.outputFolder === action.config.outputFolder &&
-        state.needsRebuild === action.config.needsRebuild
+        state.needsRebuild === action.config.needsRebuild &&
+        state.paradigm === action.config.paradigm
       ) {
         return state;
       }

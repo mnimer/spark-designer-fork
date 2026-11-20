@@ -1,13 +1,13 @@
 /**
- * @fileoverview Unit tests for the bundled Local Rate Stream to Delta Lake sample (I4).
+ * @fileoverview Unit tests for the bundled Generate Mock Data sample.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
  * Verifies sample discovery, companion ASD-STE100 documentation, local checkpoint and
- * watermark topology validation, ExecutionPlan native streaming sink configuration,
- * Local runner Delta Lake Maven artifact resolution, and codegen skill selection for
- * rate-stream-to-delta.spark.
+ * topology validation, credential redaction cleanliness, ExecutionPlan native streaming
+ * console configuration with zero external JARs, and codegen skill selection for
+ * generate-mock-data.spark.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -20,18 +20,20 @@ import { validateDagTopology, type DagEdge, type DagNode } from '../../shared/da
 import { buildExecutionPlan } from '../../shared/executionPlanner';
 import { buildPromptFromPipelineYaml } from '../../codegen/CodegenPromptBuilder';
 import { clearCodegenSkillCatalogCache } from '../../codegen/CodegenSkillCatalog';
+import { redactPipelineDocument } from '../../credentialRedaction';
 
 vi.mock('vscode', async () => (await import('./helpers/vscodeMock')).createVscodeMock());
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const SAMPLE_SPARK_PATH = path.join(REPO_ROOT, 'resources', 'samples', 'rate-stream-to-delta.spark');
-const SAMPLE_MD_PATH = path.join(REPO_ROOT, 'resources', 'samples', 'rate-stream-to-delta.md');
+const SAMPLE_SPARK_PATH = path.join(REPO_ROOT, 'resources', 'samples', 'generate-mock-data.spark');
+const SAMPLE_MD_PATH = path.join(REPO_ROOT, 'resources', 'samples', 'generate-mock-data.md');
 const SKILLS_ROOT = path.join(REPO_ROOT, 'resources', 'codegen-skills');
 
 /**
  * Parsed representation of a bundled Spark sample document.
  */
 interface ParsedSampleDocument {
+    paradigm?: 'imperative' | 'sdp';
     pipelineConfig?: Record<string, unknown>;
     jobConfig?: Record<string, unknown>;
     runtimeVariables?: Array<{ key: string; value: string }>;
@@ -40,50 +42,54 @@ interface ParsedSampleDocument {
 }
 
 /**
- * Reads and parses the bundled Rate Stream to Delta Lake YAML specification from disk.
+ * Reads and parses the bundled Generate Mock Data YAML specification from disk.
  *
  * @returns Parsed sample pipeline document and raw YAML string.
  */
-function loadRateDeltaSample(): { rawYaml: string; doc: ParsedSampleDocument } {
+function loadGenerateMockDataSample(): { rawYaml: string; doc: ParsedSampleDocument } {
     const rawYaml = fs.readFileSync(SAMPLE_SPARK_PATH, 'utf-8');
     const doc = YAML.parse(rawYaml) as ParsedSampleDocument;
     return { rawYaml, doc };
 }
 
-describe('Bundled Sample I4: rate-stream-to-delta', () => {
+describe('Bundled Sample: generate-mock-data', () => {
     it('discovers the sample via getSamplePipelines and loads its companion ASD-STE100 README', async () => {
         const samples = await getSamplePipelines({
             extensionPath: REPO_ROOT,
         } as unknown as vscode.ExtensionContext);
 
-        const sample = samples.find((entry) => entry.id === 'rate-stream-to-delta');
+        const sample = samples.find((entry) => entry.id === 'generate-mock-data');
         expect(sample).toBeDefined();
         expect(sample).toMatchObject({
-            id: 'rate-stream-to-delta',
-            filename: 'rate-stream-to-delta.spark',
-            title: 'Rate Stream To Delta',
+            id: 'generate-mock-data',
+            filename: 'generate-mock-data.spark',
+            title: 'Generate Mock Data',
             language: 'PySpark',
             runner: 'Local',
-            nodesCount: 5,
+            nodesCount: 3,
             description:
-                'Pipeline flow: Synthetic Rate Stream ➔ Derive Event Columns ➔ Event-Time Watermark ➔ Watermark Key Deduplicate ➔ Local Delta Lake Sink',
+                'Pipeline flow: Synthetic Rate Stream ➔ Generate Faker Customers ➔ Console Log Sink',
         });
 
         const diskReadme = fs.readFileSync(SAMPLE_MD_PATH, 'utf-8');
         expect(sample?.readmeContent).toBe(diskReadme);
-        expect(diskReadme).toContain('# Local Streaming Rate to Delta Lake Pipeline');
+        expect(diskReadme).toContain('# Generate Mock Data Pipeline');
         expect(diskReadme).toContain('## Overview');
         expect(diskReadme).toContain('## Pipeline Architecture & Data Flow');
         expect(diskReadme).toContain('## Runtime Parameters');
         expect(diskReadme).toContain('## Code Generation & Execution');
         expect(diskReadme).not.toContain('## Pipeline Nodes & Transforms');
         expect(diskReadme).not.toContain(';');
+        expect(diskReadme).not.toContain('.beam');
     });
 
-    it('passes DAG topology, watermark, and local checkpoint validation with zero errors or warnings', () => {
-        const { doc } = loadRateDeltaSample();
+    it('passes DAG topology and local checkpoint validation with zero errors or warnings', () => {
+        const { doc } = loadGenerateMockDataSample();
 
+        expect(doc.paradigm).toBe('imperative');
         expect(doc.jobConfig?.runner).toBe('Local');
+        expect(doc.jobConfig?.defaultTriggerType).toBe('processingTime');
+        expect(doc.jobConfig?.defaultTriggerInterval).toBe('1 second');
 
         const validation = validateDagTopology(doc.nodes, doc.edges, {
             jobConfig: doc.jobConfig,
@@ -97,32 +103,12 @@ describe('Bundled Sample I4: rate-stream-to-delta', () => {
         expect(validation.warnings).toEqual([]);
     });
 
-    it('emits expected watermark warning and invalid checkpoint scheme error on mutated copies (boundary and failure)', () => {
-        const { doc } = loadRateDeltaSample();
+    it('fails validation on mutated copies with missing or unsupported checkpoint URIs (boundary and failure)', () => {
+        const { doc } = loadGenerateMockDataSample();
 
-        // Boundary case: bypass Watermark before Deduplicate.
-        const nodesWithoutWatermark = doc.nodes.filter((n) => n.id !== 'step_watermark');
-        const edgesWithoutWatermark = doc.edges
-            .filter((e) => e.source !== 'step_watermark' && e.target !== 'step_watermark')
-            .concat({
-                id: 'e_enrich_to_dedup_direct',
-                source: 'step_enrich_columns',
-                sourceHandle: 'valid',
-                target: 'step_deduplicate',
-            });
-
-        const missingWatermark = validateDagTopology(nodesWithoutWatermark, edgesWithoutWatermark, {
-            jobConfig: doc.jobConfig,
-            requireCheckpoints: true,
-        });
-        expect(missingWatermark.isValid).toBe(true);
-        expect(
-            missingWatermark.warnings.some((w) => w.includes('dropDuplicatesWithinWatermark'))
-        ).toBe(true);
-
-        // Failure case: unsupported checkpoint URI scheme on DeltaSink.
+        // Failure case: unsupported checkpoint URI scheme on ConsoleSink.
         const badCheckpointNodes = doc.nodes.map((n) =>
-            n.id === 'sink_delta'
+            n.id === 'sink_console'
                 ? {
                       ...n,
                       data: {
@@ -143,26 +129,37 @@ describe('Bundled Sample I4: rate-stream-to-delta', () => {
         expect(badCheckpointResult.errors.some((e) => e.includes('Unsupported checkpoint URI'))).toBe(
             true
         );
+
+        // Boundary case: missing checkpointLocation and missing checkpointRoot.
+        const noCheckpointNodes = doc.nodes.map((n) => {
+            if (n.id !== 'sink_console') return n;
+            const props = { ...(n.data?.properties as Record<string, unknown>) };
+            delete props.checkpointLocation;
+            return { ...n, data: { ...n.data, properties: props } };
+        });
+        const jobConfigWithoutRoot = { ...(doc.jobConfig || {}) };
+        delete jobConfigWithoutRoot.checkpointRoot;
+        const missingCheckpointResult = validateDagTopology(noCheckpointNodes, doc.edges, {
+            jobConfig: jobConfigWithoutRoot,
+            requireCheckpoints: true,
+        });
+        expect(missingCheckpointResult.isValid).toBe(false);
     });
 
-    it('builds a Local streaming ExecutionPlan with native DeltaSink query and Delta Maven coordinate', () => {
-        const { doc } = loadRateDeltaSample();
+    it('builds a Local streaming ExecutionPlan with native ConsoleSink query and zero external JARs', () => {
+        const { doc } = loadGenerateMockDataSample();
         const plan = buildExecutionPlan(doc.nodes, doc.edges, doc.jobConfig);
 
         expect(plan.pipelineMode).toBe('streaming');
         expect(plan.sortedNodeIds).toEqual([
             'src_rate',
-            'step_enrich_columns',
-            'step_watermark',
-            'step_deduplicate',
-            'sink_delta',
+            'step_generate_customers',
+            'sink_console',
         ]);
         expect(plan.streamingNodeIds).toEqual([
             'src_rate',
-            'step_enrich_columns',
-            'step_watermark',
-            'step_deduplicate',
-            'sink_delta',
+            'step_generate_customers',
+            'sink_console',
         ]);
         expect(plan.dlqSplitPoints).toEqual([]);
         expect(plan.cachedNodeIds).toEqual([]);
@@ -170,28 +167,30 @@ describe('Bundled Sample I4: rate-stream-to-delta', () => {
         expect(plan.streamingSinkGroups).toHaveLength(1);
         expect(plan.streamingSinkGroups[0]).toMatchObject({
             mode: 'native',
-            sourceSubqueryNodeId: 'step_deduplicate',
-            sinkIds: ['sink_delta'],
+            sourceSubqueryNodeId: 'step_generate_customers',
+            sinkIds: ['sink_console'],
             settings: {
                 outputMode: 'append',
                 triggerType: 'processingTime',
-                triggerInterval: '5 seconds',
+                triggerInterval: '1 second',
                 checkpointLocation:
-                    'file:///tmp/spark-pipeline-builder/rate-stream-to-delta/checkpoints/sink_delta',
+                    'file:///tmp/spark-pipeline-builder/generate-mock-data/checkpoints/sink_console',
             },
         });
 
         expect(plan.runtimeArtifacts.profile.id).toBe('local');
         expect(plan.runtimeArtifacts.profile.runner).toBe('Local');
-        expect(plan.runtimeArtifacts.mavenPackages).toEqual(['io.delta:delta-spark_2.13:4.0.0']);
+        expect(plan.runtimeArtifacts.mavenPackages).toEqual([]);
         expect(plan.runtimeArtifacts.gcsJars).toEqual([]);
         expect(plan.runtimeArtifacts.preinstalledConnectors).toEqual([]);
     });
 
-    it('selects core-streaming and every expected IO and transform skill without credential redaction', () => {
-        const { rawYaml } = loadRateDeltaSample();
-        clearCodegenSkillCatalogCache();
+    it('passes redactPipelineDocument cleanly and selects expected skills for code generation', () => {
+        const { rawYaml } = loadGenerateMockDataSample();
+        const redacted = redactPipelineDocument(rawYaml);
+        expect(redacted.redactedPaths).toEqual([]);
 
+        clearCodegenSkillCatalogCache();
         const built = buildPromptFromPipelineYaml({
             skillsRoot: SKILLS_ROOT,
             yamlText: rawYaml,
@@ -207,14 +206,14 @@ describe('Bundled Sample I4: rate-stream-to-delta', () => {
                 'core-streaming',
                 'core-catalyst-optimization',
                 'io-rate',
-                'io-delta',
-                'transform-with-columns',
-                'transform-watermark',
-                'transform-deduplicate',
+                'io-console',
+                'transform-pandas-udf',
                 'runner-local',
                 'verification-gate',
             ])
         );
+        expect(built.prompt).toContain('latest faker library');
+        expect(built.prompt).toContain('log level to WARN');
         expect(built.prompt).toContain('## Execution Plan');
         expect(built.prompt).not.toContain('## Redacted Credentials');
     });

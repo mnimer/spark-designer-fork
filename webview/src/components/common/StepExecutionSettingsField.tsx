@@ -8,6 +8,7 @@
 import React from 'react';
 import { SOURCE_NODES } from '../../catalog/nodes/sources';
 import { SelectField, type SelectFieldOption } from './SelectField';
+import type { PipelineParadigm } from '../../utils/sharedTypes';
 
 /**
  * Props for the {@link StepExecutionSettingsField} component.
@@ -17,6 +18,8 @@ export interface StepExecutionSettingsFieldProps {
   node: any;
   /** Callback invoked with the merged node properties object. */
   onChange: (properties: any) => void;
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
+  paradigm?: PipelineParadigm;
 }
 
 const READ_MODE_OPTIONS: SelectFieldOption[] = [
@@ -28,6 +31,13 @@ const CACHE_OUTPUT_OPTIONS: SelectFieldOption[] = [
   { value: 'auto', label: 'Auto (Cache on Fan-Out > 1)' },
   { value: 'true', label: 'Always Cache (.cache())' },
   { value: 'false', label: 'Never Auto-Cache' },
+];
+
+const SDP_STEP_DATASET_OPTIONS: SelectFieldOption[] = [
+  { value: 'auto', label: 'Auto (Planner Recommended)' },
+  { value: 'temporary_view', label: 'Temporary View (@dp.temporary_view)' },
+  { value: 'streaming_table', label: 'Streaming Table (@dp.table)' },
+  { value: 'materialized_view', label: 'Materialized View (@dp.materialized_view)' },
 ];
 
 /**
@@ -72,11 +82,19 @@ export function shouldShowSourceReadModeToggle(node: any): boolean {
 
 /**
  * Determines whether a Step node should expose the manual `Cache output` override selector (A11).
+ * Always returns false in Spark Declarative Pipelines mode because SDP forbids manual `.cache()`.
  *
  * @param node React Flow node object.
- * @returns True when the node is a batch Step node.
+ * @param paradigm Active pipeline authoring paradigm.
+ * @returns True when the node is an imperative batch Step node.
  */
-export function shouldShowStepCacheToggle(node: any): boolean {
+export function shouldShowStepCacheToggle(
+  node: any,
+  paradigm?: PipelineParadigm
+): boolean {
+  if (paradigm === 'sdp' || node?.data?.paradigm === 'sdp') {
+    return false;
+  }
   const nodeType = String(node?.data?.type || '').toUpperCase();
   if (nodeType !== 'STEP') {
     return false;
@@ -103,7 +121,8 @@ export function normalizeCacheOutputSelection(raw: unknown): 'auto' | 'true' | '
 /**
  * Renders shared execution controls inside PropertyForm:
  * - For dual-mode `SOURCE` nodes: **Read Mode** (`batch` vs `streaming`) selector.
- * - For batch `STEP` nodes: **Cache Output** (`auto` vs `true` vs `false`) override selector (A11).
+ * - For imperative batch `STEP` nodes: **Cache Output** (`auto` vs `true` vs `false`) override selector (A11).
+ * - For SDP `STEP` nodes: **SDP Dataset Type** (`auto` vs `@dp.temporary_view` / `@dp.table` / `@dp.materialized_view`).
  *
  * @param props Selected node and property update callback.
  * @returns Execution settings card, or null when not applicable.
@@ -111,11 +130,18 @@ export function normalizeCacheOutputSelection(raw: unknown): 'auto' | 'true' | '
 export const StepExecutionSettingsField: React.FC<StepExecutionSettingsFieldProps> = ({
   node,
   onChange,
+  paradigm,
 }) => {
+  const effectiveParadigm: PipelineParadigm =
+    paradigm ?? (node?.data?.paradigm === 'sdp' ? 'sdp' : 'imperative');
+  const isSdpStep =
+    effectiveParadigm === 'sdp' &&
+    String(node?.data?.type || '').toUpperCase() === 'STEP' &&
+    node?.data?.spark_transform !== 'MergeCdcScd';
   const showSourceReadMode = shouldShowSourceReadModeToggle(node);
-  const showStepCache = shouldShowStepCacheToggle(node);
+  const showStepCache = shouldShowStepCacheToggle(node, effectiveParadigm);
 
-  if (!showSourceReadMode && !showStepCache) {
+  if (!showSourceReadMode && !showStepCache && !isSdpStep) {
     return null;
   }
 
@@ -131,6 +157,12 @@ export const StepExecutionSettingsField: React.FC<StepExecutionSettingsFieldProp
           : 'batch';
 
   const cacheSelection = normalizeCacheOutputSelection(properties.cacheOutput);
+  const sdpDatasetSelection =
+    properties.sdpDatasetType === 'temporary_view' ||
+    properties.sdpDatasetType === 'streaming_table' ||
+    properties.sdpDatasetType === 'materialized_view'
+      ? properties.sdpDatasetType
+      : 'auto';
 
   const handleReadModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const nextMode = e.target.value === 'streaming' ? 'streaming' : 'batch';
@@ -147,6 +179,13 @@ export const StepExecutionSettingsField: React.FC<StepExecutionSettingsFieldProp
     onChange({
       ...properties,
       cacheOutput: mappedValue,
+    });
+  };
+
+  const handleSdpDatasetTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    onChange({
+      ...properties,
+      sdpDatasetType: e.target.value,
     });
   };
 
@@ -176,6 +215,18 @@ export const StepExecutionSettingsField: React.FC<StepExecutionSettingsFieldProp
           value={cacheSelection}
           options={CACHE_OUTPUT_OPTIONS}
           onChange={handleCacheOutputChange}
+        />
+      )}
+
+      {isSdpStep && (
+        <SelectField
+          id="stepSdpDatasetTypeSelect"
+          name="sdpDatasetType"
+          label="SDP Dataset Persistence"
+          tooltip="Controls whether Spark Declarative Pipelines registers this step as a non-persisted @dp.temporary_view, a persisted @dp.table streaming table, or a @dp.materialized_view."
+          value={sdpDatasetSelection}
+          options={SDP_STEP_DATASET_OPTIONS}
+          onChange={handleSdpDatasetTypeChange}
         />
       )}
     </div>

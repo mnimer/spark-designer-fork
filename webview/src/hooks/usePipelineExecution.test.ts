@@ -18,6 +18,7 @@ import {
   usePipelineExecution,
   appendLog,
   MAX_EXECUTION_LOG_LINES,
+  SDP_OVERLAPPING_RUN_GUARD_MESSAGE,
   type UsePipelineExecutionOptions,
   formatRunnerLabel,
 } from './usePipelineExecution';
@@ -371,5 +372,62 @@ describe('formatRunnerLabel', () => {
   it('maps legacy DirectRunner and Spark values (failure condition)', () => {
     expect(formatRunnerLabel('DirectRunner')).toBe('Local');
     expect(formatRunnerLabel('Spark')).toBe('ServerlessSpark');
+  });
+});
+
+describe('SDP overlapping-run guard in usePipelineExecution (SDP9)', () => {
+  it('refuses handleRunNow when paradigm is sdp and pipelineStatus is running, then allows run once finished', () => {
+    const mockPostMessage = vi.fn();
+    const sdpPipelineConfig = {
+      language: 'Python' as const,
+      outputFolder: '/workspace/sdp-out',
+      needsRebuild: false,
+      paradigm: 'sdp' as const,
+    };
+    const sdpJobConfig = {
+      runner: 'Local',
+      paradigm: 'sdp',
+      sdpStorage: 'gs://sdp-bucket/checkpoints',
+    };
+
+    const { result } = renderHook(() =>
+      usePipelineExecution({
+        jobConfig: sdpJobConfig,
+        runtimeVariables: [],
+        pipelineConfig: sdpPipelineConfig,
+        vscode: { postMessage: mockPostMessage },
+      })
+    );
+
+    // Start first SDP run
+    act(() => {
+      result.current.handleRunNow();
+    });
+    expect(result.current.pipelineStatus).toBe('running');
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
+
+    // Attempt overlapping second SDP run while first is still running
+    act(() => {
+      result.current.handleRunNow();
+    });
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
+    expect(result.current.pipelineLogs).toHaveLength(1);
+    expect(result.current.pipelineLogs[0].stream).toBe('stderr');
+    expect(result.current.pipelineLogs[0].text).toContain(SDP_OVERLAPPING_RUN_GUARD_MESSAGE);
+
+    // Finish first run, then verify a subsequent run is permitted
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { command: 'pipelineFinished', exitCode: 0, status: 'completed' },
+        })
+      );
+    });
+    expect(result.current.pipelineStatus).toBe('completed');
+
+    act(() => {
+      result.current.handleRunNow();
+    });
+    expect(mockPostMessage).toHaveBeenCalledTimes(2);
   });
 });

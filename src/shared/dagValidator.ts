@@ -57,6 +57,7 @@ export interface DagEdge {
 export interface DagValidationOptions {
     jobConfig?: Record<string, any>;
     requireCheckpoints?: boolean;
+    paradigm?: 'imperative' | 'sdp';
 }
 
 /**
@@ -726,6 +727,8 @@ export function validateDagTopology(
         // 6b2. MergeCdcScd two-input handle arity and static target snapshot validation
         if (isMergeCdcScdNode(node)) {
             if (!isOrphan && !inCycle) {
+                const isSdpMode =
+                    options?.paradigm === 'sdp' || options?.jobConfig?.paradigm === 'sdp';
                 const leftEdges = inbound.filter((e) => e.targetHandle === 'left');
                 const rightEdges = inbound.filter((e) => e.targetHandle === 'right');
                 const untypedEdges = inbound.filter(
@@ -736,41 +739,60 @@ export function validateDagTopology(
                     pushUnique(invalidUpstreamNodeIds, id);
                     addFatalNodeError(
                         id,
-                        `MergeCdcScd node ${ref} requires incoming edges to connect to explicit "left" and "right" handles.`
+                        isSdpMode
+                            ? `MergeCdcScd node ${ref} requires its incoming CDC stream to connect to the explicit "left" handle.`
+                            : `MergeCdcScd node ${ref} requires incoming edges to connect to explicit "left" and "right" handles.`
                     );
                 }
 
-                if (leftEdges.length === 0 || rightEdges.length === 0) {
-                    const missingHandles: string[] = [];
+                if (isSdpMode) {
                     if (leftEdges.length === 0) {
-                        missingHandles.push('"left"');
+                        pushUnique(missingUpstreamNodeIds, id);
+                        addFatalNodeError(
+                            id,
+                            `MergeCdcScd node ${ref} requires 1 "left" streaming CDC input in SDP mode.`
+                        );
                     }
-                    if (rightEdges.length === 0) {
-                        missingHandles.push('"right"');
-                    }
-                    pushUnique(missingUpstreamNodeIds, id);
-                    addFatalNodeError(
-                        id,
-                        `MergeCdcScd node ${ref} requires 1 "left" input and 1 "right" input (missing ${missingHandles.join(' and ')}).`
-                    );
-                }
-
-                if (leftEdges.length > 1 || rightEdges.length > 1) {
-                    pushUnique(invalidUpstreamNodeIds, id);
-                    addFatalNodeError(
-                        id,
-                        `MergeCdcScd node ${ref} accepts at most 1 incoming edge per handle ("left": ${leftEdges.length}, "right": ${rightEdges.length}).`
-                    );
-                }
-
-                if (leftEdges.length === 1 && rightEdges.length === 1 && untypedEdges.length === 0) {
-                    const rightSourceId = rightEdges[0].source;
-                    if (streaming.streamingNodeIds.has(rightSourceId)) {
+                    if (leftEdges.length > 1 || rightEdges.length > 1) {
                         pushUnique(invalidUpstreamNodeIds, id);
                         addFatalNodeError(
                             id,
-                            `MergeCdcScd node ${ref} requires a static batch target table snapshot on the "right" handle, not a streaming input.`
+                            `MergeCdcScd node ${ref} accepts at most 1 incoming edge per handle ("left": ${leftEdges.length}, "right": ${rightEdges.length}).`
                         );
+                    }
+                } else {
+                    if (leftEdges.length === 0 || rightEdges.length === 0) {
+                        const missingHandles: string[] = [];
+                        if (leftEdges.length === 0) {
+                            missingHandles.push('"left"');
+                        }
+                        if (rightEdges.length === 0) {
+                            missingHandles.push('"right"');
+                        }
+                        pushUnique(missingUpstreamNodeIds, id);
+                        addFatalNodeError(
+                            id,
+                            `MergeCdcScd node ${ref} requires 1 "left" input and 1 "right" input (missing ${missingHandles.join(' and ')}).`
+                        );
+                    }
+
+                    if (leftEdges.length > 1 || rightEdges.length > 1) {
+                        pushUnique(invalidUpstreamNodeIds, id);
+                        addFatalNodeError(
+                            id,
+                            `MergeCdcScd node ${ref} accepts at most 1 incoming edge per handle ("left": ${leftEdges.length}, "right": ${rightEdges.length}).`
+                        );
+                    }
+
+                    if (leftEdges.length === 1 && rightEdges.length === 1 && untypedEdges.length === 0) {
+                        const rightSourceId = rightEdges[0].source;
+                        if (streaming.streamingNodeIds.has(rightSourceId)) {
+                            pushUnique(invalidUpstreamNodeIds, id);
+                            addFatalNodeError(
+                                id,
+                                `MergeCdcScd node ${ref} requires a static batch target table snapshot on the "right" handle, not a streaming input.`
+                            );
+                        }
                     }
                 }
             }
@@ -850,13 +872,17 @@ export function validateDagTopology(
 
         // 6g. Streaming SINK checkpoint path validation
         if (category === 'SINK' && streaming.streamingNodeIds.has(id)) {
+            const isSdpMode =
+                options?.paradigm === 'sdp' || options?.jobConfig?.paradigm === 'sdp';
             const rawSinkCheckpoint = getNodeProperties(node).checkpointLocation;
-            const rawRootCheckpoint = options?.jobConfig?.checkpointRoot;
+            const rawRootCheckpoint = isSdpMode
+                ? options?.jobConfig?.sdpStorage ?? options?.jobConfig?.checkpointRoot
+                : options?.jobConfig?.checkpointRoot;
 
             let hasConfiguredCheckpoint = false;
             let hasInvalidCheckpointError = false;
 
-            if (typeof rawSinkCheckpoint === 'string' && rawSinkCheckpoint.length > 0) {
+            if (!isSdpMode && typeof rawSinkCheckpoint === 'string' && rawSinkCheckpoint.length > 0) {
                 const formatError = validateCheckpointPathFormat(rawSinkCheckpoint);
                 if (formatError) {
                     hasInvalidCheckpointError = true;
@@ -873,7 +899,9 @@ export function validateDagTopology(
                     hasInvalidCheckpointError = true;
                     addFatalNodeError(
                         id,
-                        `Streaming Sink node ${ref} has an invalid pipeline checkpointRoot: ${formatError}`
+                        isSdpMode
+                            ? `Streaming Sink node ${ref} has an invalid SDP storage URI: ${formatError}`
+                            : `Streaming Sink node ${ref} has an invalid pipeline checkpointRoot: ${formatError}`
                     );
                 } else {
                     hasConfiguredCheckpoint = true;
@@ -887,7 +915,9 @@ export function validateDagTopology(
             ) {
                 const enforceCheckpointError =
                     options?.requireCheckpoints === true || options?.jobConfig !== undefined;
-                const checkpointMsg = `Streaming Sink node ${ref} is missing a checkpoint path. Configure "checkpointLocation" on the sink or "checkpointRoot" in jobConfig.`;
+                const checkpointMsg = isSdpMode
+                    ? `Streaming Sink node ${ref} is missing an SDP checkpoint storage URI. Configure "sdpStorage" in jobConfig.`
+                    : `Streaming Sink node ${ref} is missing a checkpoint path. Configure "checkpointLocation" on the sink or "checkpointRoot" in jobConfig.`;
                 if (enforceCheckpointError) {
                     addFatalNodeError(id, checkpointMsg);
                 } else {

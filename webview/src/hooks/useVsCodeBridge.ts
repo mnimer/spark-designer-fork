@@ -23,6 +23,8 @@ import {
   type PipelineConfig,
   type PipelineLanguageInput,
 } from '../state/pipelineConfigReducer';
+import type { PipelineParadigm } from '../utils/sharedTypes';
+import { normalizeSdpJobConfig } from '../utils/sdpPlanner';
 import type {
   DataprocClusterOption,
   SessionTemplateOption,
@@ -34,8 +36,7 @@ export type { PipelineConfig };
 export const PLACEHOLDER_PROJECT_ID = 'YOUR_PROJECT_ID';
 
 /**
- * Whether a project ID is still the unset placeholder (or empty), i.e. safe to replace with
- * the host-resolved gcloud default without discarding a user choice.
+ * Returns true when a project ID is unset or still uses the placeholder token.
  *
  * @param projectId Current project ID state.
  * @returns True when no real project has been chosen yet.
@@ -46,14 +47,39 @@ export function isPlaceholderProjectId(projectId: string | undefined): boolean {
 
 /**
  * Resolves the primary generated pipeline source file from a list of output directory files.
+ * For Spark Declarative Pipelines projects, selects `spark-pipeline.yml` or the first `transformations/*.py` module.
  *
  * @param files List of relative file paths in the generated output directory.
  * @param language Target programming language ('Python' | 'Java').
  * @param filename Optional current pipeline .spark filename used for name matching.
- * @returns The best matching main pipeline code file path, or null if empty.
+ * @param paradigm Optional active pipeline authoring paradigm ('imperative' | 'sdp').
+ * @returns The best matching main pipeline file path, or null if empty.
  */
-export const findMainPipelineFile = (files: string[], language: 'Python' | 'Java', filename?: string): string | null => {
+export const findMainPipelineFile = (
+  files: string[],
+  language: 'Python' | 'Java',
+  filename?: string,
+  paradigm?: PipelineParadigm
+): string | null => {
   if (!files || files.length === 0) return null;
+
+  const sdpSpecFile = files.find((f) => /(?:^|\/)spark-pipeline\.ya?ml$/i.test(f));
+  const sdpTransformationFiles = files.filter((f) => {
+    const normalized = f.replace(/\\/g, '/');
+    return (
+      /(?:^|\/)transformations\/[^/]+\.(?:py|sql)$/i.test(normalized) &&
+      !normalized.toLowerCase().endsWith('__init__.py')
+    );
+  });
+
+  if (paradigm === 'sdp' || sdpSpecFile || sdpTransformationFiles.length > 0) {
+    if (sdpSpecFile) {
+      return sdpSpecFile;
+    }
+    if (sdpTransformationFiles.length > 0) {
+      return sdpTransformationFiles[0];
+    }
+  }
 
   const baseName = filename ? filename.replace(/\.spark$/i, '').toLowerCase() : '';
   const pascalBaseName = baseName ? baseName.charAt(0).toUpperCase() + baseName.slice(1) : '';
@@ -224,11 +250,17 @@ export function useVsCodeBridge({
     const vs = vsCodeRef.current;
     if (vs) {
       setIsGenerating(true);
+      const effectiveJobConfig =
+        pipelineConfigRef.current.paradigm === 'sdp'
+          ? normalizeSdpJobConfig(
+              graphState.jobConfig as Record<string, unknown> | undefined
+            )
+          : graphState.jobConfig;
       const state = {
         nodes: graphState.nodes,
         edges: graphState.edges,
         runtimeVariables: graphState.runtimeVariables,
-        jobConfig: graphState.jobConfig,
+        jobConfig: effectiveJobConfig,
         pipelineConfig: { ...pipelineConfigRef.current, needsRebuild: false },
       };
       const yamlStr = serializePipeline(state);
@@ -290,7 +322,14 @@ export function useVsCodeBridge({
                 variables.unshift({ key: 'JOB_ID', value: defaultJobId });
               }
               setRuntimeVariables(variables);
-              setJobConfig({
+              const parsedParadigm: PipelineParadigm =
+                data.paradigm === 'sdp' ||
+                data.pipelineConfig?.paradigm === 'sdp' ||
+                data.jobConfig?.paradigm === 'sdp'
+                  ? 'sdp'
+                  : 'imperative';
+              const defaultRunner = parsedParadigm === 'sdp' ? 'ServerlessSpark' : 'Local';
+              const hydratedJobConfig: Record<string, unknown> = {
                 machineType: 'n1-standard-1',
                 minInstances: 1,
                 maxInstances: 10,
@@ -298,8 +337,20 @@ export function useVsCodeBridge({
                 network: '',
                 subnetwork: '',
                 ...(data.jobConfig || {}),
-                runner: data.jobConfig?.runner || 'Local',
-              });
+                runner: data.jobConfig?.runner || defaultRunner,
+              };
+              if (
+                parsedParadigm === 'imperative' &&
+                hydratedJobConfig.useSparkConnect !== true &&
+                hydratedJobConfig.runtimeVersion === '4.2-connect'
+              ) {
+                delete hydratedJobConfig.runtimeVersion;
+              }
+              setJobConfig(
+                parsedParadigm === 'sdp'
+                  ? normalizeSdpJobConfig(hydratedJobConfig)
+                  : hydratedJobConfig
+              );
 
               const rawConfig = data.pipelineConfig || {};
               const config: Omit<PipelineConfig, 'language'> & { language: PipelineLanguageInput } = {
@@ -307,6 +358,7 @@ export function useVsCodeBridge({
                 language: 'PySpark',
                 outputFolder: rawConfig.outputFolder || '',
                 needsRebuild: rawConfig.needsRebuild ?? false,
+                paradigm: parsedParadigm,
               };
               const nameWithoutExt = message.filename ? message.filename.replace(/\.spark$/i, '') : '';
               const relativeFolder = message.relativeFolder || '';
@@ -354,6 +406,7 @@ export function useVsCodeBridge({
                   language: 'Python',
                   outputFolder: message.defaultOutputFolder || '',
                   needsRebuild: false,
+                  paradigm: 'imperative',
                 },
               })
             );
@@ -408,7 +461,8 @@ export function useVsCodeBridge({
             const currentLang = pipelineConfigRef.current.language;
             const currentName = filenameRef.current;
             const currentFolder = pipelineConfigRef.current.outputFolder;
-            const mainFile = findMainPipelineFile(loadedFiles, currentLang, currentName);
+            const currentParadigm = pipelineConfigRef.current.paradigm;
+            const mainFile = findMainPipelineFile(loadedFiles, currentLang, currentName, currentParadigm);
             if (mainFile) {
               setSelectedFileName(mainFile);
               if (vs) {

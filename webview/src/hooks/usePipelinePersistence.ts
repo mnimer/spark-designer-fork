@@ -1,20 +1,23 @@
 /**
- * Hook for Apache Beam pipeline persistence
- * 
+ * Hook for Apache Spark pipeline persistence.
+ *
  * Author: Mike Nimer <mikenimer@google.com>
- * 
+ *
  * Handles serialization of pipeline state to YAML and debounced autosaving to the VS Code extension host.
  * Implements dirty-checking (P6) to avoid redundant writes when the serialized state has not changed.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef } from 'react';
 import YAML from 'yaml';
 import { getVsCodeApi } from '../bridge/vscodeApi';
+import type { PipelineParadigm } from '../utils/sharedTypes';
 
 /**
- * Serializable state snapshot representing an Apache Beam pipeline design.
+ * Serializable state snapshot representing an Apache Spark pipeline design.
  */
 export interface PipelineState {
+  paradigm?: PipelineParadigm;
   nodes: any[];
   edges: any[];
   runtimeVariables: { key: string; value: string }[];
@@ -26,6 +29,7 @@ export interface PipelineState {
  * Options for configuring debounced pipeline autosave in {@link usePipelinePersistence}.
  */
 export interface UsePipelinePersistenceOptions {
+  paradigm?: PipelineParadigm;
   nodes: any[];
   edges: any[];
   runtimeVariables: { key: string; value: string }[];
@@ -36,8 +40,7 @@ export interface UsePipelinePersistenceOptions {
   vscode?: { postMessage: (msg: any) => void } | null;
   /**
    * Debounce delay in milliseconds.
-   * Default: 2000ms (2s), chosen to prevent excessive synchronous host writes during active
-   * graph editing while keeping persistence responsive.
+   * Default is 2000ms (2s) to prevent excessive synchronous host writes during graph edits.
    */
   debounceMs?: number;
 }
@@ -68,14 +71,29 @@ const sanitizeEdgeForSerialization = (edge: any): any => {
 
 /**
  * Serializes the pipeline state object into a YAML string, excluding transient React Flow view state.
+ * Emits `paradigm` as the first top-level key so saved documents match starter pipeline files byte-for-byte.
  */
 export const serializePipeline = (state: PipelineState): string => {
+  const resolvedParadigm: PipelineParadigm =
+    state.paradigm === 'sdp' || state.pipelineConfig?.paradigm === 'sdp' ? 'sdp' : 'imperative';
+  const rawPipelineConfig = state.pipelineConfig;
+  let cleanPipelineConfig = rawPipelineConfig;
+  if (
+    rawPipelineConfig &&
+    typeof rawPipelineConfig === 'object' &&
+    'paradigm' in rawPipelineConfig
+  ) {
+    const { paradigm: omittedParadigm, ...restPipelineConfig } = rawPipelineConfig;
+    void omittedParadigm;
+    cleanPipelineConfig = restPipelineConfig;
+  }
   const cleanState: PipelineState = {
+    paradigm: resolvedParadigm,
     nodes: Array.isArray(state.nodes) ? state.nodes.map(sanitizeNodeForSerialization) : [],
     edges: Array.isArray(state.edges) ? state.edges.map(sanitizeEdgeForSerialization) : [],
     runtimeVariables: state.runtimeVariables,
     jobConfig: state.jobConfig,
-    pipelineConfig: state.pipelineConfig,
+    pipelineConfig: cleanPipelineConfig,
   };
   return YAML.stringify(cleanState);
 };
@@ -86,6 +104,7 @@ export const serializePipeline = (state: PipelineState): string => {
  * to the last saved output (dirty-check).
  */
 export function usePipelinePersistence({
+  paradigm,
   nodes,
   edges,
   runtimeVariables,
@@ -108,6 +127,7 @@ export function usePipelinePersistence({
     }
 
     const state: PipelineState = {
+      ...(paradigm !== undefined ? { paradigm } : {}),
       nodes,
       edges,
       runtimeVariables,
@@ -156,7 +176,7 @@ export function usePipelinePersistence({
     }, debounceMs);
 
     return () => clearTimeout(timer);
-  }, [nodes, edges, runtimeVariables, jobConfig, pipelineConfig, isLoaded, loadRevision, vscode, debounceMs]);
+  }, [paradigm, nodes, edges, runtimeVariables, jobConfig, pipelineConfig, isLoaded, loadRevision, vscode, debounceMs]);
 
   return {
     lastSavedYamlRef,

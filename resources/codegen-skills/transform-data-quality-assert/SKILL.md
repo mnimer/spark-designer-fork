@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative, sdp]
   transforms: [DataQualityAssert]
   preloadWhen: []
   sources:
@@ -16,7 +17,7 @@ metadata:
 
 # Vectorized Data Quality Assertions & DLQ Routing (`DataQualityAssert`)
 
-Use these rules when generating PySpark {{spark_version}} code for a `DataQualityAssert` step inside `transform(dfs, config)`.
+Use these rules when generating PySpark {{spark_version}} code for a `DataQualityAssert` step inside `transform(dfs, config)` in Imperative mode (`paradigm: imperative`). When `paradigm` is `sdp` (`## SDP Execution Plan`), follow `sdp-quality-quarantine` to emit filter-based clean and `<dataset>_quarantine` datasets via pure Catalyst predicate helpers in `src/transforms.py` without `.cache()` or `.schema` inspection.
 
 ## 1. Single-Pass Vectorized Expectation Evaluation
 

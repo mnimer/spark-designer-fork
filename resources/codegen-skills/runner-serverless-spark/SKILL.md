@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [serverless-spark]
+  paradigms: [imperative]
   transforms: []
   preloadWhen: []
   sources:

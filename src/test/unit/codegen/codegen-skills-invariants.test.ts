@@ -25,11 +25,12 @@ import YAML from 'yaml';
 import { CodegenSkillCatalog, CodegenSkill } from '../../../codegen/CodegenSkillCatalog';
 import { CodegenPromptBuilder } from '../../../codegen/CodegenPromptBuilder';
 import {
+    ALL_LANGUAGE_RUNNERS,
     ALL_SKILL_LANGUAGES,
     BEAM_VERSION_PLACEHOLDER,
-    LANGUAGE_RUNNERS,
     MODEL_FACING_PLACEHOLDERS,
     PYTHON_DATASOURCE_TRANSFORMS,
+    SKILL_PARADIGMS,
     SKILL_WILDCARD,
     SPARK_VERSION_PLACEHOLDER,
     STREAMING_SOURCE_TRANSFORMS,
@@ -289,14 +290,72 @@ describe('codegen skill library invariants', () => {
         const missing: string[] = [];
         for (const skill of SKILLS.filter((s) => s.kind === 'runner')) {
             const languages = skill.languages.includes(SKILL_WILDCARD) ? ALL_SKILL_LANGUAGES : skill.languages;
-            for (const language of languages as Array<keyof typeof LANGUAGE_RUNNERS>) {
-                const supported = skill.runners.some((r) => (LANGUAGE_RUNNERS[language] as readonly string[]).includes(r));
+            for (const language of languages as Array<keyof typeof ALL_LANGUAGE_RUNNERS>) {
+                const supported = skill.runners.some((r) => (ALL_LANGUAGE_RUNNERS[language] as readonly string[]).includes(r));
                 if (supported && !(skill.templates[language]?.length)) {
                     missing.push(`${skill.name}/templates/${language}`);
                 }
             }
         }
         expect(missing).toEqual([]);
+    });
+
+    it('keeps every runner skill python template byte-identical with resources/templates/pyspark/', () => {
+        const pysparkTemplatesDir = path.join(REPO_ROOT, 'resources', 'templates', 'pyspark');
+        const mismatches: string[] = [];
+        for (const skill of SKILLS.filter((s) => s.kind === 'runner')) {
+            for (const tmpl of skill.templates.python ?? []) {
+                const mirrorPath = path.join(pysparkTemplatesDir, tmpl.fileName);
+                if (!fs.existsSync(mirrorPath)) {
+                    mismatches.push(`${skill.name}: missing mirror resources/templates/pyspark/${tmpl.fileName}`);
+                    continue;
+                }
+                const skillBytes = fs.readFileSync(path.join(SKILLS_ROOT, skill.name, 'templates', 'python', tmpl.fileName));
+                const mirrorBytes = fs.readFileSync(mirrorPath);
+                if (!skillBytes.equals(mirrorBytes)) {
+                    mismatches.push(`${skill.name}: ${tmpl.fileName} differs from resources/templates/pyspark/${tmpl.fileName}`);
+                }
+            }
+        }
+        expect(mismatches).toEqual([]);
+    });
+
+    it('declares valid paradigms metadata across all bundled skills and bans Databricks-only APIs in sdp-* skills (SDP6)', () => {
+        const allowedParadigms = new Set<string>([SKILL_WILDCARD, ...Object.values(SKILL_PARADIGMS)]);
+        for (const skill of SKILLS) {
+            expect(skill.paradigms.length, `${skill.name} paradigms empty`).toBeGreaterThan(0);
+            for (const p of skill.paradigms) {
+                expect(allowedParadigms.has(p), `${skill.name} unknown paradigm ${p}`).toBe(true);
+            }
+            const rawText = fs.readFileSync(path.join(SKILLS_ROOT, skill.name, 'SKILL.md'), 'utf-8');
+            expect(rawText, `${skill.name} missing explicit paradigms key in frontmatter`).toMatch(/^\s+paradigms:\s*\[/m);
+        }
+
+        for (const sdpSkillName of ['sdp-core', 'sdp-spec', 'sdp-auto-cdc', 'sdp-quality-quarantine']) {
+            const sdpSkill = SKILLS.find((s) => s.name === sdpSkillName);
+            expect(sdpSkill, `Missing ${sdpSkillName}`).toBeDefined();
+            expect(sdpSkill?.paradigms).toEqual(['sdp']);
+        }
+
+        const sdpCoreBody = SKILLS.find((s) => s.name === 'sdp-core')?.body ?? '';
+        for (const bannedMention of ['dlt', '@dp.expect', 'dp.apply_changes', 'once=', 'stored_as_scd_type=2', 'cloudFiles']) {
+            expect(sdpCoreBody).toContain(bannedMention);
+        }
+
+        for (const imperativeOnlyName of [
+            'core-streaming',
+            'runner-local',
+            'runner-dataproc-cluster',
+            'runner-serverless-spark',
+            'io-foreach-batch',
+            'io-vector-store',
+            'transform-cache-persist',
+            'transform-feature-prep',
+            'transform-spark-ml-vertex-ai',
+        ]) {
+            const skill = SKILLS.find((s) => s.name === imperativeOnlyName);
+            expect(skill?.paradigms, imperativeOnlyName).toEqual(['imperative']);
+        }
     });
 
     it('lists at least one URL for every skill whose content is not only from the old prompt', () => {

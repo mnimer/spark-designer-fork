@@ -201,4 +201,45 @@ jobConfig: { runner: ServerlessSpark }
             "Node 'X': spark_transform 'MadeUp' has no codegen skill.",
         ]);
     });
+
+    it('detects paradigm: sdp, sets runners to sdp, and flags sdp_auto_cdc and sdp_quarantine (SDP7)', () => {
+        const sdpAutoCdc = detectPipelineFeatures(
+            parse(`
+paradigm: sdp
+nodes:
+  - id: src_cdc
+    data: { type: SOURCE, spark_transform: JsonSource, properties: { readMode: streaming } }
+  - id: step_cdc
+    data: { type: STEP, spark_transform: MergeCdcScd, properties: { scdType: scd1 } }
+  - id: step_dq
+    data: { type: STEP, spark_transform: DataQualityAssert }
+edges: []
+`),
+            'PySpark'
+        );
+        expect(sdpAutoCdc.paradigm).toBe('sdp');
+        expect([...sdpAutoCdc.runners]).toEqual(['sdp']);
+        expect(sdpAutoCdc.features.has('sdp_auto_cdc')).toBe(true);
+        expect(sdpAutoCdc.features.has('sdp_quarantine')).toBe(true);
+
+        const sdpFromPipelineCfg = detectPipelineFeatures(
+            parse(`
+pipelineConfig:
+  paradigm: sdp
+nodes:
+  - id: step_cast
+    data: { type: STEP, spark_transform: EnforceSchemaAndCast }
+edges:
+  - { source: step_cast, target: sink_q, sourceHandle: error }
+`),
+            'PySpark'
+        );
+        expect(sdpFromPipelineCfg.paradigm).toBe('sdp');
+        expect([...sdpFromPipelineCfg.runners]).toEqual(['sdp']);
+        expect(sdpFromPipelineCfg.features.has('sdp_quarantine')).toBe(true);
+
+        const defaultImperative = detectPipelineFeatures(parse('nodes: []'), 'PySpark');
+        expect(defaultImperative.paradigm).toBe('imperative');
+        expect([...defaultImperative.runners]).toEqual(['local', 'dataproc-cluster', 'serverless-spark']);
+    });
 });

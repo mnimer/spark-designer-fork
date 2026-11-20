@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import YAML from 'yaml';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -717,6 +718,150 @@ edges: []
     fireEvent.click(closeBtn);
 
     expect(screen.queryByRole('heading', { name: /Properties/i })).not.toBeInTheDocument();
+  });
+
+  it('switches cleanly between Imperative and SDP when compatible and blocks with modal when incompatible (SDP1)', () => {
+    render(<AppWithProvider />);
+
+    const paradigmBtn = screen.getByTestId('toolbar-paradigm-indicator');
+    expect(paradigmBtn).toHaveTextContent('IMPERATIVE');
+
+    // 1. Load an incompatible graph containing SpannerSink (foreachBatch-only)
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        data: {
+          command: 'loadPipeline',
+          filename: 'incompat.spark',
+          data: [
+            'paradigm: imperative',
+            'nodes:',
+            '  - id: s1',
+            '    type: pipeline',
+            '    position: { x: 0, y: 0 }',
+            '    data: { label: Kafka Orders, type: SOURCE, iconName: Radio, spark_transform: KafkaSource }',
+            '  - id: snk1',
+            '    type: pipeline',
+            '    position: { x: 300, y: 0 }',
+            '    data: { label: Spanner Ledger, type: SINK, iconName: Database, spark_transform: SpannerSink }',
+            'edges:',
+            '  - id: e1',
+            '    source: s1',
+            '    target: snk1',
+          ].join('\n'),
+        },
+      })
+    );
+
+    // Attempt switch Imperative -> SDP: blocked, modal opens naming Spanner Ledger & SpannerSink
+    fireEvent.click(paradigmBtn);
+    expect(paradigmBtn).toHaveTextContent('IMPERATIVE');
+    const modal = screen.getByTestId('sdp-compatibility-modal');
+    expect(modal).toBeInTheDocument();
+    expect(modal).toHaveAttribute('role', 'dialog');
+    expect(modal).toHaveTextContent('Spanner Ledger');
+    expect(modal).toHaveTextContent('SpannerSink');
+
+    // Close modal
+    fireEvent.click(screen.getByTestId('sdp-compatibility-modal-close'));
+    expect(screen.queryByTestId('sdp-compatibility-modal')).not.toBeInTheDocument();
+
+    // 2. Load a compatible graph (CsvSource -> IcebergSink) and switch Imperative -> SDP -> Imperative
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        data: {
+          command: 'loadPipeline',
+          filename: 'compat.spark',
+          data: [
+            'paradigm: imperative',
+            'nodes:',
+            '  - id: s1',
+            '    type: pipeline',
+            '    position: { x: 0, y: 0 }',
+            '    data: { label: Bronze Orders, type: SOURCE, iconName: FileText, spark_transform: CsvSource, properties: { readMode: streaming } }',
+            '  - id: snk1',
+            '    type: pipeline',
+            '    position: { x: 300, y: 0 }',
+            '    data: { label: Iceberg Orders, type: SINK, iconName: Database, spark_transform: IcebergSink }',
+            'edges:',
+            '  - id: e1',
+            '    source: s1',
+            '    target: snk1',
+          ].join('\n'),
+        },
+      })
+    );
+
+    fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    expect(screen.queryByTestId('sdp-compatibility-modal')).not.toBeInTheDocument();
+    expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('SDP (4.2+)');
+
+    // Switching SDP -> Imperative always succeeds immediately
+    fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('IMPERATIVE');
+  });
+
+  it('normalizes SDP Local runner to 4.2-connect with Spark Connect when loading and clicking Generate Code', () => {
+    render(<AppWithProvider />);
+
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        data: {
+          command: 'loadPipeline',
+          filename: 'local_sdp.spark',
+          data: [
+            'paradigm: sdp',
+            'nodes:',
+            '  - id: s1',
+            '    type: pipeline',
+            '    position: { x: 0, y: 0 }',
+            '    data: { label: Bronze Orders, type: SOURCE, iconName: FileText, spark_transform: CsvSource, properties: { readMode: streaming } }',
+            '  - id: snk1',
+            '    type: pipeline',
+            '    position: { x: 300, y: 0 }',
+            '    data: { label: Iceberg Orders, type: SINK, iconName: Database, spark_transform: IcebergSink }',
+            'edges:',
+            '  - id: e1',
+            '    source: s1',
+            '    target: snk1',
+            'jobConfig:',
+            '  runner: Local',
+          ].join('\n'),
+        },
+      })
+    );
+
+    expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('SDP (4.2+)');
+
+    const vscodeWindow = window as unknown as {
+      vscode: { postMessage: ReturnType<typeof vi.fn> };
+    };
+    vscodeWindow.vscode.postMessage.mockClear();
+
+    // Expand the Generate Code bottom tab and click the Generate Code action button
+    fireEvent.click(screen.getAllByText('Generate Code')[0]);
+    const generateButtons = screen.getAllByRole('button', { name: /^Generate Code$/i });
+    fireEvent.click(generateButtons[generateButtons.length - 1]);
+
+    const regenerateCalls = vscodeWindow.vscode.postMessage.mock.calls.filter(
+      (call: unknown[]) =>
+        (call[0] as { command?: string } | undefined)?.command === 'regenerateCode'
+    );
+    expect(regenerateCalls).toHaveLength(1);
+
+    const regeneratePayload = regenerateCalls[0][0] as { command: string; data: string };
+    const parsed = YAML.parse(regeneratePayload.data) as {
+      paradigm?: string;
+      jobConfig?: Record<string, unknown>;
+    };
+    expect(parsed.paradigm).toBe('sdp');
+    expect(parsed.jobConfig).toMatchObject({
+      runner: 'Local',
+      runtimeVersion: '4.2-connect',
+      useSparkConnect: true,
+    });
   });
 });
 

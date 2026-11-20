@@ -740,7 +740,7 @@ describe('NodesCard', () => {
       expect(renderedTitles[2]).toContain('Zebra Pipeline');
     });
 
-    it('provides four Apache Spark 4.x PySpark fallback entries in DEFAULT_SAMPLES using only .spark filenames', () => {
+    it('provides six Apache Spark 4.x fallback entries in DEFAULT_SAMPLES using only .spark filenames', () => {
       render(
         <NodesCard
           activeTab="SAMPLES"
@@ -752,11 +752,13 @@ describe('NodesCard', () => {
         />
       );
 
-      expect(screen.getByText(/Samples \(4\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Samples \(6\)/i)).toBeInTheDocument();
       expect(screen.getByText('gcs-parquet-etl.spark')).toBeInTheDocument();
       expect(screen.getByText('kafka-streaming-to-iceberg.spark')).toBeInTheDocument();
       expect(screen.getByText('bigquery-cloudsql-broadcast-join.spark')).toBeInTheDocument();
-      expect(screen.getByText('rate-stream-to-delta.spark')).toBeInTheDocument();
+      expect(screen.getByText('generate-mock-data.spark')).toBeInTheDocument();
+      expect(screen.getByText('sdp-biglake-iceberg-medallion.spark')).toBeInTheDocument();
+      expect(screen.getByText('sdp-auto-cdc-scd1.spark')).toBeInTheDocument();
       expect(DEFAULT_SAMPLES.every((s) => s.filename.endsWith('.spark'))).toBe(true);
     });
 
@@ -910,6 +912,54 @@ describe('NodesCard', () => {
       for (const label of ['Console', 'Memory', 'ForeachBatch']) {
         expect(debugSinksGroup.querySelector(`[aria-label="Add ${label}"]`)).not.toBeNull();
       }
+    });
+
+    it('greys out foreachBatch-only sinks and ML steps in SDP mode while keeping Iceberg and MergeCdcScd enabled (SDP2)', () => {
+      const { rerender } = render(
+        <NodesCard
+          activeTab="SINKS"
+          setActiveTab={vi.fn()}
+          nodesCount={1}
+          hasPubSubSource={false}
+          paradigm="sdp"
+          onDragStart={mockOnDragStart}
+          onAddNode={mockOnAddNode}
+        />
+      );
+
+      expect(screen.getByTestId('sidebar-item-cloud-spanner')).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      expect(screen.getByTestId('sidebar-item-foreachbatch')).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      expect(screen.getByTestId('sidebar-item-iceberg')).not.toHaveAttribute('aria-disabled');
+
+      rerender(
+        <NodesCard
+          activeTab="STEPS"
+          setActiveTab={vi.fn()}
+          nodesCount={1}
+          hasPubSubSource={false}
+          paradigm="sdp"
+          onDragStart={mockOnDragStart}
+          onAddNode={mockOnAddNode}
+        />
+      );
+
+      expect(screen.getByTestId('sidebar-item-feature-prep')).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      expect(screen.getByTestId('sidebar-item-cache-/-persist')).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      expect(screen.getByTestId('sidebar-item-merge-cdc-/-scd')).not.toHaveAttribute(
+        'aria-disabled'
+      );
     });
   });
 });

@@ -4,28 +4,43 @@
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Purpose:
- * Audits generated PySpark 4.x repositories for Spark architecture defects.
- * The agent checks Catalyst optimization rules, the `read_sources` / pure
- * `transform(dfs, config)` / `write_sinks` separation (decision D3), `.cache()` and
- * `.unpersist()` pairing, `foreachBatch` idempotency, watermark placement (decision D8),
- * and Managed Spark classpath rules.
+ * Audits generated PySpark 4.x and Spark Declarative Pipelines (SDP, Apache Spark 4.2+)
+ * repositories for Spark architecture defects.
+ * - Imperative mode checks Catalyst optimization rules, `read_sources` / pure
+ *   `transform(dfs, config)` / `write_sinks` separation (decision D3), `.cache()` and
+ *   `.unpersist()` pairing, `foreachBatch` idempotency, watermark placement (decision D8),
+ *   and Managed Spark classpath rules.
+ * - SDP mode checks `spark-pipeline.yml` spec hygiene, dataset-function purity inside
+ *   `transformations/*.py` (no `SparkSession.builder`, no session mutations, no writers,
+ *   no eager actions, no `.schema`/`.columns` property inspection), pure helper isolation
+ *   in `src/transforms.py`, query-type alignment (`@dp.table` vs `@dp.materialized_view`),
+ *   `SdpExecutionPlan` dataset coverage, and absence of Databricks-only APIs.
  *
  * Architectural decisions:
  * - Two layers. A deterministic static layer runs first and emits high-precision findings.
  *   An LLM layer then audits the semantic rules that regular expressions cannot prove.
- * - The static layer, the prompt builder, and the response parser are pure functions.
- *   Unit tests cover them offline without a model client.
+ * - The static layer, prompt builder, and response parser are pure functions covered
+ *   by offline unit tests without a model client.
  * - If the LLM call fails, the agent keeps the static findings and marks the result as failed.
  *   It never invents a synthetic finding for an infrastructure error.
- * - Test files (`tests/`, `test_*.py`, `*_test.py`) are exempt from the driver-collection
- *   and UDF rules, because the skills allow `.collect()` on small test fixtures.
+ * - Test files (`tests/`, `test_*.py`, `*_test.py`) are exempt from driver-collection
+ *   and UDF rules because tests may collect small fixtures.
  */
 
+import * as YAML from 'yaml';
 import { GoogleGenAI } from '@google/genai';
+import {
+    isSdpGeneratedProject,
+    scanSdpPythonViolations,
+    stripPythonCommentsAndDocstrings,
+    validateSdpSpecYaml,
+} from '../../../codegen/ReadOnlyCheckRunner';
 import { DEFAULT_GEMINI_MODEL } from '../../../constants';
-import { DEFAULT_SPARK_VERSION } from '../../../shared/types';
+import type { DagEdge, DagNode } from '../../../shared/dagValidator';
+import { buildSdpPlan, type SdpExecutionPlan } from '../../../shared/sdpPlanner';
+import { DEFAULT_SPARK_VERSION, type PipelineParadigm } from '../../../shared/types';
 import { EvaluatorFinding, FindingSeverity, SpecialistAgentResult, generateContentWithRetry } from './types';
-import { GeneratedFileCandidate } from './deterministic-gate';
+import type { GeneratedFileCandidate } from './deterministic-gate';
 import { formatFilesWithLineNumbers } from './format-utils';
 
 /** Agent name used as the key in `MultiAgentEvaluationResult.specialistResults`. */
@@ -38,7 +53,11 @@ export const SPARK_ARCHITECTURE_CATEGORIES = ['ARCHITECTURE', 'IDIOMATIC_SPARK']
 export type SparkArchitectureCategory = (typeof SPARK_ARCHITECTURE_CATEGORIES)[number];
 
 /** Runner scripts that submit to Managed Spark (Dataproc Cluster and Serverless Spark). */
-const MANAGED_SPARK_RUNNER_SCRIPTS = ['run_dataproc_cluster.sh', 'run_serverless_spark.sh'];
+const MANAGED_SPARK_RUNNER_SCRIPTS = [
+    'run_dataproc_cluster.sh',
+    'run_serverless_spark.sh',
+    'run_sdp_dataproc.sh',
+];
 
 /** Connectors that Managed Spark runtimes pre-install. A second copy causes classpath conflicts. */
 const MANAGED_SPARK_PREINSTALLED_CONNECTORS = [
@@ -49,11 +68,11 @@ const MANAGED_SPARK_PREINSTALLED_CONNECTORS = [
     'hadoop-azure',
 ];
 
-/** A body of one Python function extracted from source text. */
+/** Body of one Python function extracted from source text. */
 export interface PythonFunctionBody {
     /** 1-indexed line number of the `def` line. */
     defLine: number;
-    /** Parameter text between the parentheses of the `def` line, when it is on one line. */
+    /** Parameter text between the parentheses of the `def` line when on one line. */
     params: string;
     /** Body lines with their 1-indexed line numbers. */
     lines: { line: number; text: string }[];
@@ -81,6 +100,22 @@ export interface SparkArchitectureSignals {
     unpersistCalls: number;
     /** Number of row-at-a-time Python UDF declarations in non-test Python files. */
     pythonUdfCount: number;
+    /** Optional SDP paradigm marker populated when evaluating SDP projects. */
+    paradigm?: PipelineParadigm;
+    /** Optional SDP spec filename when evaluating SDP projects. */
+    sdpSpecFile?: string;
+    /** Optional count of SDP transformation modules under `transformations/`. */
+    sdpTransformationFiles?: number;
+    /** Optional flag indicating `src/transforms.py` exists with pure helper functions. */
+    hasPureTransformsModule?: boolean;
+}
+
+/** Options controlling Spark architecture evaluation and static checks. */
+export interface SparkArchitectureCheckOptions {
+    /** Explicit paradigm override (`imperative` or `sdp`). */
+    paradigm?: PipelineParadigm;
+    /** Optional pipeline YAML text used to build an `SdpExecutionPlan` in SDP mode. */
+    yamlContent?: string;
 }
 
 /** Parsed and normalized LLM response of the Spark architecture agent. */
@@ -88,6 +123,71 @@ export interface SparkArchitectureResponse {
     passed: boolean;
     summary: string;
     findings: EvaluatorFinding[];
+}
+
+/**
+ * Resolves the active paradigm from explicit options, pipeline YAML, or repository files.
+ *
+ * @param files - Generated files.
+ * @param yamlContent - Optional pipeline YAML string.
+ * @param explicit - Optional explicit paradigm override.
+ * @returns Resolved `PipelineParadigm`.
+ */
+export function resolveSparkArchitectureParadigm(
+    files: readonly Pick<GeneratedFileCandidate, 'filename'>[],
+    yamlContent?: string,
+    explicit?: PipelineParadigm
+): PipelineParadigm {
+    if (explicit === 'sdp' || explicit === 'imperative') {
+        return explicit;
+    }
+    if (yamlContent && yamlContent.trim()) {
+        try {
+            const parsed = YAML.parse(yamlContent) as Record<string, unknown> | null;
+            const pCfg =
+                parsed && typeof parsed.pipelineConfig === 'object' && parsed.pipelineConfig !== null
+                    ? (parsed.pipelineConfig as Record<string, unknown>)
+                    : undefined;
+            if (parsed?.paradigm === 'sdp' || pCfg?.paradigm === 'sdp') {
+                return 'sdp';
+            }
+            if (parsed?.paradigm === 'imperative' || pCfg?.paradigm === 'imperative') {
+                return 'imperative';
+            }
+        } catch {
+            // Fall through to file-based auto-detection.
+        }
+    }
+    return isSdpGeneratedProject(files) ? 'sdp' : 'imperative';
+}
+
+/**
+ * Builds an `SdpExecutionPlan` from pipeline YAML when valid nodes exist.
+ *
+ * @param yamlContent - Raw pipeline YAML string.
+ * @returns Computed `SdpExecutionPlan`, or null when YAML is empty or malformed.
+ */
+function tryBuildSdpPlanFromYaml(yamlContent?: string): SdpExecutionPlan | null {
+    if (!yamlContent || !yamlContent.trim()) {
+        return null;
+    }
+    try {
+        const parsed = YAML.parse(yamlContent) as Record<string, unknown> | null;
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.nodes) || parsed.nodes.length === 0) {
+            return null;
+        }
+        const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+        const nodes: DagNode[] = (parsed.nodes as unknown[])
+            .filter((n): n is Record<string, unknown> => isRec(n) && n.id !== undefined && n.id !== null)
+            .map((n) => ({ ...n, id: String(n.id) }));
+        const edges: DagEdge[] = (Array.isArray(parsed.edges) ? (parsed.edges as unknown[]) : [])
+            .filter(isRec)
+            .map((e) => ({ ...e, source: String(e.source ?? ''), target: String(e.target ?? '') }));
+        const jobConfig = isRec(parsed.jobConfig) ? parsed.jobConfig : undefined;
+        return buildSdpPlan(nodes, edges, jobConfig);
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -110,7 +210,7 @@ export function isPythonTestFile(filename: string): boolean {
  */
 export function getPipelineSourceFiles(files: GeneratedFileCandidate[]): GeneratedFileCandidate[] {
     return files.filter(
-        f => f.filename.endsWith('.py') && !f.filename.endsWith('__init__.py') && !isPythonTestFile(f.filename)
+        (f) => f.filename.endsWith('.py') && !f.filename.endsWith('__init__.py') && !isPythonTestFile(f.filename)
     );
 }
 
@@ -123,8 +223,8 @@ export function getPipelineSourceFiles(files: GeneratedFileCandidate[]): Generat
 export function selectMainPipelineFile(files: GeneratedFileCandidate[]): GeneratedFileCandidate | undefined {
     const sources = getPipelineSourceFiles(files);
     return (
-        sources.find(f => f.filename.replace(/\\/g, '/').endsWith('src/pipeline.py')) ??
-        sources.find(f => /(^|\/)pipeline\.py$/.test(f.filename.replace(/\\/g, '/'))) ??
+        sources.find((f) => f.filename.replace(/\\/g, '/').endsWith('src/pipeline.py')) ??
+        sources.find((f) => /(^|\/)pipeline\.py$/.test(f.filename.replace(/\\/g, '/'))) ??
         sources[0]
     );
 }
@@ -209,12 +309,12 @@ function findLines(file: GeneratedFileCandidate, pattern: RegExp): { line: numbe
 
 /** Row-at-a-time Python UDF declarations (`@udf`, `udf(`, `F.udf(`). Excludes `pandas_udf`. */
 const PYTHON_UDF_PATTERN = /(?:^\s*@(?:F\.|functions\.)?udf\b(?!_))|(?:(?<![\w.])(?:F\.|functions\.)?udf\s*\()|(?:\b(?:F|functions)\.udf\s*\()/;
-/** Driver collection calls that the Catalyst skill bans in pipeline code. */
+/** Driver collection calls banned in pipeline code. */
 const DRIVER_COLLECT_PATTERN = /\.(collect|toPandas)\s*\(\s*\)/;
 /** RDD and SparkContext APIs that fail on Spark Connect and break Catalyst pushdown. */
 const RDD_PATTERN = /\.(rdd|sparkContext)\b/;
-/** I/O calls that make `transform(dfs, config)` impure. */
-const TRANSFORM_IO_PATTERN = /\bspark\.(read|readStream)\b|\bspark\.table\s*\(|\.(write|writeStream)\b|\.(saveAsTable|insertInto|writeTo)\s*\(/;
+/** I/O calls that make `transform(dfs, config)` or `src/transforms.py` impure. */
+const TRANSFORM_IO_PATTERN = /\bspark\.(read|readStream)\b|\bspark\.table\s*\(|\.(write|writeStream|writeTo)\b|\.(saveAsTable|insertInto)\s*\(/;
 /** Cache calls. */
 const CACHE_PATTERN = /\.(cache\s*\(\s*\)|persist\s*\()/g;
 /** Unpersist calls. */
@@ -252,13 +352,19 @@ function countMatches(files: GeneratedFileCandidate[], pattern: RegExp): number 
  * Collects deterministic facts about the generated repository for the LLM prompt.
  *
  * @param files - All generated files.
+ * @param paradigm - Optional explicit paradigm override.
  * @returns Static signals.
  */
-export function collectSparkArchitectureSignals(files: GeneratedFileCandidate[]): SparkArchitectureSignals {
+export function collectSparkArchitectureSignals(
+    files: GeneratedFileCandidate[],
+    paradigm?: PipelineParadigm
+): SparkArchitectureSignals {
     const sources = getPipelineSourceFiles(files);
     const main = selectMainPipelineFile(files);
-    const anyLine = (pattern: RegExp): boolean => sources.some(f => findLines(f, pattern).length > 0);
-    return {
+    const anyLine = (pattern: RegExp): boolean => sources.some((f) => findLines(f, pattern).length > 0);
+    const resolvedParadigm = resolveSparkArchitectureParadigm(files, undefined, paradigm);
+
+    const base: SparkArchitectureSignals = {
         pipelineFile: main?.filename,
         hasReadSources: !!main && extractPythonFunctionBody(main.content, 'read_sources') !== null,
         hasTransform: !!main && extractPythonFunctionBody(main.content, 'transform') !== null,
@@ -270,6 +376,30 @@ export function collectSparkArchitectureSignals(files: GeneratedFileCandidate[])
         unpersistCalls: countMatches(sources, UNPERSIST_PATTERN),
         pythonUdfCount: sources.reduce((n, f) => n + findLines(f, PYTHON_UDF_PATTERN).length, 0),
     };
+
+    if (resolvedParadigm === 'sdp') {
+        const specFile = files.find((f) => {
+            const norm = f.filename.replace(/\\/g, '/').replace(/^\.\//, '');
+            return norm === 'spark-pipeline.yml' || norm === 'spark-pipeline.yaml';
+        });
+        const transformModules = files.filter((f) => {
+            const norm = f.filename.replace(/\\/g, '/').replace(/^\.\//, '');
+            return /^transformations\/.+\.py$/.test(norm) && !norm.endsWith('/__init__.py');
+        });
+        const pureHelper = files.find(
+            (f) => f.filename.replace(/\\/g, '/').replace(/^\.\//, '') === 'src/transforms.py'
+        );
+        return {
+            ...base,
+            paradigm: 'sdp',
+            sdpSpecFile: specFile?.filename,
+            sdpTransformationFiles: transformModules.length,
+            hasPureTransformsModule:
+                !!pureHelper && /^\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/m.test(pureHelper.content),
+        };
+    }
+
+    return base;
 }
 
 /**
@@ -289,69 +419,18 @@ function staticFinding(
 }
 
 /**
- * Runs the deterministic Spark architecture checks.
- *
- * Rules:
- * 1. D3 separation: the main file defines `read_sources`, `transform`, and `write_sinks`.
- * 2. Pure transform: `transform` performs no reads or writes.
- * 3. No driver collection (`.collect()`, `.toPandas()`) in pipeline code.
- * 4. No RDD or SparkContext APIs in pipeline code.
- * 5. Row-at-a-time Python UDFs are flagged for built-in replacement (MINOR).
- * 6. Every `.cache()` / `.persist()` needs an `.unpersist()`.
- * 7. Delta writes inside `foreachBatch` set `txnVersion` and `txnAppId`. `txnVersion` is not a constant.
- * 8. Streaming event-time windows and deduplication need `withWatermark`.
- * 9. No Scala 2.12 or Spark 3.x JARs. No duplicate pre-installed connectors on Managed Spark.
- * 10. No classpath configuration in Python code. Runner scripts deliver JARs.
+ * Runs deterministic Catalyst and Managed Spark classpath checks shared by both paradigms.
  *
  * @param files - All generated files.
- * @returns High-precision findings.
+ * @param sources - Non-test Python source files.
+ * @returns Shared Catalyst and classpath findings.
  */
-export function runSparkArchitectureStaticChecks(files: GeneratedFileCandidate[]): EvaluatorFinding[] {
+function runSharedCatalystAndClasspathChecks(
+    files: GeneratedFileCandidate[],
+    sources: GeneratedFileCandidate[]
+): EvaluatorFinding[] {
     const findings: EvaluatorFinding[] = [];
-    const sources = getPipelineSourceFiles(files);
-    const main = selectMainPipelineFile(files);
 
-    // 1. and 2. D3 separation and pure transform.
-    if (main) {
-        const missing = ['read_sources', 'transform', 'write_sinks'].filter(
-            fn => extractPythonFunctionBody(main.content, fn) === null
-        );
-        if (missing.length > 0) {
-            findings.push(staticFinding('SEPARATION', 1, {
-                category: 'ARCHITECTURE',
-                severity: 'MAJOR',
-                file: main.filename,
-                description: `Pipeline file does not define ${missing.map(m => `\`${m}\``).join(', ')}.`,
-                rationale: 'Decision D3 requires read_sources(spark, config), pure transform(dfs, config), and write_sinks(dfs, config) so tests verify transformations offline.',
-            }));
-        }
-        const transformBody = extractPythonFunctionBody(main.content, 'transform');
-        if (transformBody) {
-            if (!/^\s*dfs\b/.test(transformBody.params) && transformBody.params !== '') {
-                findings.push(staticFinding('TRANSFORM-SIGNATURE', 1, {
-                    category: 'ARCHITECTURE',
-                    severity: 'MAJOR',
-                    file: main.filename,
-                    line: transformBody.defLine,
-                    evidence: `def transform(${transformBody.params})`,
-                    description: 'transform() does not take the DataFrame dictionary `dfs` as its first parameter.',
-                    rationale: 'Decision D3 fixes the signature transform(dfs, config) so tests pass in-memory DataFrames.',
-                }));
-            }
-            const ioLines = transformBody.lines.filter(l => TRANSFORM_IO_PATTERN.test(stripPythonComment(l.text)));
-            ioLines.forEach((l, idx) => findings.push(staticFinding('TRANSFORM-IO', idx + 1, {
-                category: 'ARCHITECTURE',
-                severity: 'MAJOR',
-                file: main.filename,
-                line: l.line,
-                evidence: l.text.trim(),
-                description: 'transform() performs source or sink I/O.',
-                rationale: 'transform(dfs, config) must be pure. Reads belong in read_sources() and writes belong in write_sinks().',
-            })));
-        }
-    }
-
-    // 3. to 5. Catalyst rules on pipeline code.
     let collectIdx = 0;
     let rddIdx = 0;
     let udfIdx = 0;
@@ -391,73 +470,6 @@ export function runSparkArchitectureStaticChecks(files: GeneratedFileCandidate[]
         }
     }
 
-    // 6. Cache and unpersist pairing.
-    const signals = collectSparkArchitectureSignals(files);
-    if (signals.cacheCalls > 0 && signals.unpersistCalls === 0) {
-        const first = sources.map(f => ({ f, hits: findLines(f, /\.(cache\s*\(\s*\)|persist\s*\()/) })).find(x => x.hits.length > 0);
-        findings.push(staticFinding('CACHE-UNPERSIST', 1, {
-            category: 'ARCHITECTURE',
-            severity: 'MAJOR',
-            file: first?.f.filename ?? signals.pipelineFile ?? 'src/pipeline.py',
-            line: first?.hits[0].line,
-            evidence: first?.hits[0].evidence,
-            description: `Pipeline caches ${signals.cacheCalls} DataFrame(s) but never calls .unpersist().`,
-            rationale: 'Cached DataFrames hold executor memory until the session ends. Call .unpersist() in write_sinks() after the last consumer sink writes.',
-        }));
-    }
-
-    // 7. foreachBatch idempotency.
-    let txnIdx = 0;
-    for (const file of sources) {
-        if (findLines(file, /\.foreachBatch\s*\(/).length === 0 || findLines(file, DELTA_WRITE_PATTERN).length === 0) {
-            continue;
-        }
-        const hasVersion = findLines(file, /['"]txnVersion['"]/).length > 0;
-        const hasAppId = findLines(file, /['"]txnAppId['"]/).length > 0;
-        if (!hasVersion || !hasAppId) {
-            const missing = [!hasVersion ? 'txnVersion' : '', !hasAppId ? 'txnAppId' : ''].filter(Boolean).join(' and ');
-            findings.push(staticFinding('FOREACHBATCH-TXN', ++txnIdx, {
-                category: 'ARCHITECTURE',
-                severity: 'MAJOR',
-                file: file.filename,
-                line: findLines(file, /\.foreachBatch\s*\(/)[0].line,
-                description: `foreachBatch writes Delta without ${missing}.`,
-                rationale: 'A retried micro-batch writes duplicate rows. Set .option("txnVersion", str(batch_id)) and .option("txnAppId", txn_app_id) on each Delta write.',
-            }));
-        }
-        for (const hit of findLines(file, /['"]txnVersion['"]\s*,\s*(?:['"][^'"]*['"]|\d)/)) {
-            findings.push(staticFinding('FOREACHBATCH-TXN', ++txnIdx, {
-                category: 'ARCHITECTURE',
-                severity: 'MAJOR',
-                file: file.filename,
-                line: hit.line,
-                evidence: hit.evidence,
-                description: 'txnVersion is a constant instead of the micro-batch id.',
-                rationale: 'A constant txnVersion makes Delta skip every batch after the first. Bind txnVersion to str(batch_id).',
-            }));
-        }
-    }
-
-    // 8. Watermark presence for streaming event-time state.
-    if (signals.isStreaming && !signals.usesWatermark) {
-        let wmIdx = 0;
-        for (const file of sources) {
-            const hit = findLines(file, EVENT_TIME_STATEFUL_PATTERN)[0];
-            if (hit) {
-                findings.push(staticFinding('WATERMARK', ++wmIdx, {
-                    category: 'ARCHITECTURE',
-                    severity: 'MAJOR',
-                    file: file.filename,
-                    line: hit.line,
-                    evidence: hit.evidence,
-                    description: 'Streaming event-time window or deduplication runs without withWatermark().',
-                    rationale: 'Decision D8 requires .withWatermark(event_time_col, delay) before stateful operations. Without it, state grows without bound and append output never finalizes.',
-                }));
-            }
-        }
-    }
-
-    // 9. and 10. Managed Spark classpath rules.
     let jarIdx = 0;
     for (const file of files) {
         if (file.filename.toLowerCase().endsWith('.md')) {
@@ -521,7 +533,293 @@ export function runSparkArchitectureStaticChecks(files: GeneratedFileCandidate[]
 }
 
 /**
- * Builds the Spark architecture LLM prompt.
+ * Runs deterministic Spark Declarative Pipelines (SDP) architecture checks.
+ *
+ * @param files - All generated files.
+ * @param yamlContent - Optional input `.spark` YAML to verify `SdpExecutionPlan` coverage.
+ * @returns High-precision SDP architecture findings.
+ */
+export function runSdpArchitectureStaticChecks(
+    files: GeneratedFileCandidate[],
+    yamlContent?: string
+): EvaluatorFinding[] {
+    const findings: EvaluatorFinding[] = [];
+    const sources = getPipelineSourceFiles(files);
+
+    // 1. Validate spark-pipeline.yml schema and static-setting ban.
+    const specFiles = files.filter((f) => {
+        const norm = f.filename.replace(/\\/g, '/').replace(/^\.\//, '');
+        return norm === 'spark-pipeline.yml' || norm === 'spark-pipeline.yaml';
+    });
+    if (specFiles.length > 1) {
+        findings.push(staticFinding('SDP-SPEC', 1, {
+            category: 'ARCHITECTURE',
+            severity: 'CRITICAL',
+            file: specFiles[1].filename,
+            description: 'MULTIPLE_PIPELINE_SPEC_FILES_FOUND: Project contains both spark-pipeline.yml and spark-pipeline.yaml.',
+            rationale: 'Keep exactly one SDP spec file at the repository root.',
+        }));
+    } else if (specFiles.length === 1) {
+        const specViolations = validateSdpSpecYaml(specFiles[0].filename, specFiles[0].content);
+        specViolations.forEach((v, idx) => {
+            findings.push(staticFinding('SDP-SPEC', idx + 1, {
+                category: 'ARCHITECTURE',
+                severity: 'CRITICAL',
+                file: v.file,
+                evidence: v.evidence,
+                description: v.message,
+                rationale: 'spark-pipeline.yml must declare only allowed keys, string configuration values, and zero static Spark settings.',
+            }));
+        });
+    }
+
+    // 2. Scan transformation and helper Python modules for SDP purity and Databricks API bans.
+    const pyViolations = scanSdpPythonViolations(files);
+    pyViolations.forEach((v, idx) => {
+        findings.push(staticFinding('SDP-PURITY', idx + 1, {
+            category: 'ARCHITECTURE',
+            severity: 'CRITICAL',
+            file: v.file,
+            line: v.line,
+            evidence: v.evidence,
+            description: v.message,
+            rationale: 'SDP dataset functions must return lazy DataFrames without mutating session state, executing actions, or calling Databricks-only APIs.',
+        }));
+    });
+
+    // 3. Verify src/transforms.py remains pure and performs no external I/O or @dp registration.
+    const helperFile = files.find(
+        (f) => f.filename.replace(/\\/g, '/').replace(/^\.\//, '') === 'src/transforms.py'
+    );
+    if (helperFile) {
+        let helperIoIdx = 0;
+        for (const hit of findLines(helperFile, TRANSFORM_IO_PATTERN)) {
+            findings.push(staticFinding('SDP-HELPER-IO', ++helperIoIdx, {
+                category: 'ARCHITECTURE',
+                severity: 'MAJOR',
+                file: helperFile.filename,
+                line: hit.line,
+                evidence: hit.evidence,
+                description: 'src/transforms.py performs Spark table or storage I/O.',
+                rationale: 'src/transforms.py must hold pure DataFrame helper functions so tests/test_transforms.py runs offline with in-memory DataFrames.',
+            }));
+        }
+    }
+
+    // 4. Check @dp.materialized_view vs @dp.table query-type alignment inside transformations/*.py.
+    const transformationFiles = files.filter((f) => {
+        const norm = f.filename.replace(/\\/g, '/').replace(/^\.\//, '');
+        return /^transformations\/.+\.py$/.test(norm) && !norm.endsWith('/__init__.py');
+    });
+    let flowTypeIdx = 0;
+    for (const tfFile of transformationFiles) {
+        const cleanedLines = stripPythonCommentsAndDocstrings(tfFile.content);
+        for (let i = 0; i < cleanedLines.length; i++) {
+            const line = cleanedLines[i];
+            const isMvDecorator = /@\s*dp\s*\.\s*materialized_view\b/.test(line);
+            const isTableDecorator = /@\s*dp\s*\.\s*table\b/.test(line);
+            if (!isMvDecorator && !isTableDecorator) {
+                continue;
+            }
+            // Find the decorated def line and inspect its body.
+            let defName: string | undefined;
+            for (let j = i + 1; j < Math.min(i + 15, cleanedLines.length); j++) {
+                const defMatch = /^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(cleanedLines[j]);
+                if (defMatch) {
+                    defName = defMatch[1];
+                    break;
+                }
+            }
+            if (!defName) {
+                continue;
+            }
+            const body = extractPythonFunctionBody(cleanedLines.join('\n'), defName);
+            if (!body) {
+                continue;
+            }
+            const bodyText = body.lines.map((l) => l.text).join('\n');
+            if (isMvDecorator && /\.readStream\b/.test(bodyText)) {
+                findings.push(staticFinding('SDP-QUERY-TYPE', ++flowTypeIdx, {
+                    category: 'ARCHITECTURE',
+                    severity: 'CRITICAL',
+                    file: tfFile.filename,
+                    line: body.defLine,
+                    evidence: `def ${defName}(...)`,
+                    description: `INVALID_FLOW_QUERY_TYPE.STREAMING_RELATION_FOR_MATERIALIZED_VIEW: Materialized view '${defName}' reads a stream via readStream.`,
+                    rationale: 'Materialized views in SDP must return batch DataFrames read via spark.read.',
+                }));
+            } else if (isTableDecorator && /\bspark\s*\.\s*read\b(?!Stream)/.test(bodyText) && !/\.readStream\b/.test(bodyText)) {
+                findings.push(staticFinding('SDP-QUERY-TYPE', ++flowTypeIdx, {
+                    category: 'ARCHITECTURE',
+                    severity: 'CRITICAL',
+                    file: tfFile.filename,
+                    line: body.defLine,
+                    evidence: `def ${defName}(...)`,
+                    description: `INVALID_FLOW_QUERY_TYPE.BATCH_RELATION_FOR_STREAMING_TABLE: Streaming table '${defName}' reads a batch relation via spark.read without readStream.`,
+                    rationale: 'Streaming tables (@dp.table) in SDP must return streaming DataFrames read via spark.readStream.',
+                }));
+            }
+        }
+    }
+
+    // 5. Check SdpExecutionPlan compatibility when pipeline YAML is available.
+    const sdpPlan = tryBuildSdpPlanFromYaml(yamlContent);
+    if (sdpPlan && !sdpPlan.isCompatible) {
+        sdpPlan.blockingIssues.forEach((issue, idx) => {
+            findings.push(staticFinding('SDP-PLAN', idx + 1, {
+                category: 'ARCHITECTURE',
+                severity: 'CRITICAL',
+                file: 'pipeline.spark',
+                description: `${issue.code}: ${issue.message}`,
+                rationale: 'Pipeline graph violates an Apache Spark 4.2 Spark Declarative Pipelines compatibility ceiling.',
+            }));
+        });
+    }
+
+    // 6. Run shared Catalyst and classpath checks.
+    findings.push(...runSharedCatalystAndClasspathChecks(files, sources));
+
+    return findings;
+}
+
+/**
+ * Runs the deterministic Spark architecture checks for Imperative or SDP repositories.
+ *
+ * @param files - All generated files.
+ * @param options - Optional paradigm override and pipeline YAML context.
+ * @returns High-precision findings.
+ */
+export function runSparkArchitectureStaticChecks(
+    files: GeneratedFileCandidate[],
+    options?: SparkArchitectureCheckOptions
+): EvaluatorFinding[] {
+    const paradigm = resolveSparkArchitectureParadigm(files, options?.yamlContent, options?.paradigm);
+    if (paradigm === 'sdp') {
+        return runSdpArchitectureStaticChecks(files, options?.yamlContent);
+    }
+
+    const findings: EvaluatorFinding[] = [];
+    const sources = getPipelineSourceFiles(files);
+    const main = selectMainPipelineFile(files);
+
+    // 1. and 2. D3 separation and pure transform.
+    if (main) {
+        const missing = ['read_sources', 'transform', 'write_sinks'].filter(
+            (fn) => extractPythonFunctionBody(main.content, fn) === null
+        );
+        if (missing.length > 0) {
+            findings.push(staticFinding('SEPARATION', 1, {
+                category: 'ARCHITECTURE',
+                severity: 'MAJOR',
+                file: main.filename,
+                description: `Pipeline file does not define ${missing.map((m) => `\`${m}\``).join(', ')}.`,
+                rationale: 'Decision D3 requires read_sources(spark, config), pure transform(dfs, config), and write_sinks(dfs, config) so tests verify transformations offline.',
+            }));
+        }
+        const transformBody = extractPythonFunctionBody(main.content, 'transform');
+        if (transformBody) {
+            if (!/^\s*dfs\b/.test(transformBody.params) && transformBody.params !== '') {
+                findings.push(staticFinding('TRANSFORM-SIGNATURE', 1, {
+                    category: 'ARCHITECTURE',
+                    severity: 'MAJOR',
+                    file: main.filename,
+                    line: transformBody.defLine,
+                    evidence: `def transform(${transformBody.params})`,
+                    description: 'transform() does not take the DataFrame dictionary `dfs` as its first parameter.',
+                    rationale: 'Decision D3 fixes the signature transform(dfs, config) so tests pass in-memory DataFrames.',
+                }));
+            }
+            const ioLines = transformBody.lines.filter((l) => TRANSFORM_IO_PATTERN.test(stripPythonComment(l.text)));
+            ioLines.forEach((l, idx) => findings.push(staticFinding('TRANSFORM-IO', idx + 1, {
+                category: 'ARCHITECTURE',
+                severity: 'MAJOR',
+                file: main.filename,
+                line: l.line,
+                evidence: l.text.trim(),
+                description: 'transform() performs source or sink I/O.',
+                rationale: 'transform(dfs, config) must be pure. Reads belong in read_sources() and writes belong in write_sinks().',
+            })));
+        }
+    }
+
+    // 3. to 5. and 9. to 10. Shared Catalyst and Managed Spark classpath rules.
+    const sharedFindings = runSharedCatalystAndClasspathChecks(files, sources);
+    const catalystFindings = sharedFindings.filter((f) => f.category === 'IDIOMATIC_SPARK');
+    const classpathFindings = sharedFindings.filter((f) => f.category !== 'IDIOMATIC_SPARK');
+    findings.push(...catalystFindings);
+
+    // 6. Cache and unpersist pairing.
+    const signals = collectSparkArchitectureSignals(files, 'imperative');
+    if (signals.cacheCalls > 0 && signals.unpersistCalls === 0) {
+        const first = sources.map((f) => ({ f, hits: findLines(f, /\.(cache\s*\(\s*\)|persist\s*\()/) })).find((x) => x.hits.length > 0);
+        findings.push(staticFinding('CACHE-UNPERSIST', 1, {
+            category: 'ARCHITECTURE',
+            severity: 'MAJOR',
+            file: first?.f.filename ?? signals.pipelineFile ?? 'src/pipeline.py',
+            line: first?.hits[0].line,
+            evidence: first?.hits[0].evidence,
+            description: `Pipeline caches ${signals.cacheCalls} DataFrame(s) but never calls .unpersist().`,
+            rationale: 'Cached DataFrames hold executor memory until the session ends. Call .unpersist() in write_sinks() after the last consumer sink writes.',
+        }));
+    }
+
+    // 7. foreachBatch idempotency.
+    let txnIdx = 0;
+    for (const file of sources) {
+        if (findLines(file, /\.foreachBatch\s*\(/).length === 0 || findLines(file, DELTA_WRITE_PATTERN).length === 0) {
+            continue;
+        }
+        const hasVersion = findLines(file, /['"]txnVersion['"]/).length > 0;
+        const hasAppId = findLines(file, /['"]txnAppId['"]/).length > 0;
+        if (!hasVersion || !hasAppId) {
+            const missing = [!hasVersion ? 'txnVersion' : '', !hasAppId ? 'txnAppId' : ''].filter(Boolean).join(' and ');
+            findings.push(staticFinding('FOREACHBATCH-TXN', ++txnIdx, {
+                category: 'ARCHITECTURE',
+                severity: 'MAJOR',
+                file: file.filename,
+                line: findLines(file, /\.foreachBatch\s*\(/)[0].line,
+                description: `foreachBatch writes Delta without ${missing}.`,
+                rationale: 'A retried micro-batch writes duplicate rows. Set .option("txnVersion", str(batch_id)) and .option("txnAppId", txn_app_id) on each Delta write.',
+            }));
+        }
+        for (const hit of findLines(file, /['"]txnVersion['"]\s*,\s*(?:['"][^'"]*['"]|\d)/)) {
+            findings.push(staticFinding('FOREACHBATCH-TXN', ++txnIdx, {
+                category: 'ARCHITECTURE',
+                severity: 'MAJOR',
+                file: file.filename,
+                line: hit.line,
+                evidence: hit.evidence,
+                description: 'txnVersion is a constant instead of the micro-batch id.',
+                rationale: 'A constant txnVersion makes Delta skip every batch after the first. Bind txnVersion to str(batch_id).',
+            }));
+        }
+    }
+
+    // 8. Watermark presence for streaming event-time state.
+    if (signals.isStreaming && !signals.usesWatermark) {
+        let wmIdx = 0;
+        for (const file of sources) {
+            const hit = findLines(file, EVENT_TIME_STATEFUL_PATTERN)[0];
+            if (hit) {
+                findings.push(staticFinding('WATERMARK', ++wmIdx, {
+                    category: 'ARCHITECTURE',
+                    severity: 'MAJOR',
+                    file: file.filename,
+                    line: hit.line,
+                    evidence: hit.evidence,
+                    description: 'Streaming event-time window or deduplication runs without withWatermark().',
+                    rationale: 'Decision D8 requires .withWatermark(event_time_col, delay) before stateful operations. Without it, state grows without bound and append output never finalizes.',
+                }));
+            }
+        }
+    }
+
+    findings.push(...classpathFindings);
+    return findings;
+}
+
+/**
+ * Builds the Spark architecture LLM prompt for Imperative PySpark or Spark Declarative Pipelines.
  *
  * @param language - Target language label.
  * @param yamlContent - Original pipeline YAML.
@@ -529,6 +827,7 @@ export function runSparkArchitectureStaticChecks(files: GeneratedFileCandidate[]
  * @param staticFindings - Findings from the static layer.
  * @param signals - Static signals.
  * @param sparkVersion - Target Apache Spark version.
+ * @param paradigm - Optional paradigm override (`imperative` or `sdp`).
  * @returns Prompt text.
  */
 export function buildSparkArchitecturePrompt(
@@ -537,8 +836,81 @@ export function buildSparkArchitecturePrompt(
     files: GeneratedFileCandidate[],
     staticFindings: EvaluatorFinding[],
     signals: SparkArchitectureSignals,
-    sparkVersion: string = DEFAULT_SPARK_VERSION
+    sparkVersion: string = DEFAULT_SPARK_VERSION,
+    paradigm?: PipelineParadigm
 ): string {
+    const resolvedParadigm = resolveSparkArchitectureParadigm(
+        files,
+        yamlContent,
+        paradigm ?? signals.paradigm
+    );
+
+    if (resolvedParadigm === 'sdp') {
+        const sdpPlan = tryBuildSdpPlanFromYaml(yamlContent);
+        const sdpPlanSummary = sdpPlan
+            ? JSON.stringify(
+                  {
+                      isCompatible: sdpPlan.isCompatible,
+                      datasets: sdpPlan.datasets,
+                      warnings: sdpPlan.warnings,
+                  },
+                  null,
+                  2
+              )
+            : 'not available';
+
+        return `You are the Principal Spark Declarative Pipelines (SDP) Architecture Evaluator Agent.
+Your responsibility is auditing a generated Apache Spark 4.2+ Spark Declarative Pipelines (\`pyspark.pipelines\` / \`spark-pipeline.yml\`) repository for SDP graph correctness, dataset-function purity, and Catalyst optimization defects.
+
+=== TARGET LANGUAGE & PARADIGM ===
+${language} (Apache Spark 4.2+ Spark Declarative Pipelines)
+==================================
+
+=== INPUT PIPELINE YAML ===
+${yamlContent}
+===========================
+
+=== DETERMINISTIC SDP EXECUTION PLAN ===
+${sdpPlanSummary}
+========================================
+
+=== GENERATED SOURCE FILES & ARTIFACTS (LINE NUMBERED) ===
+${formatFilesWithLineNumbers(files)}
+==========================================================
+
+=== STATIC ANALYSIS SIGNALS (DETERMINISTIC) ===
+${JSON.stringify(signals, null, 2)}
+
+=== STATIC FINDINGS ALREADY RECORDED (DO NOT REPEAT) ===
+${JSON.stringify(staticFindings.map((f) => ({ id: f.id, file: f.file, line: f.line, description: f.description })), null, 2)}
+========================================================
+
+Audit the code against the following Spark Declarative Pipelines Architecture Checklist:
+1. **Dataset Type & Flow Semantics:**
+   - Streaming tables (\`@dp.table\`, \`dp.create_streaming_table\` + \`@dp.append_flow\`) read streaming inputs via \`spark.readStream\`.
+   - Materialized views (\`@dp.materialized_view\`) read batch inputs via \`spark.read\` and never use \`readStream\`.
+   - Auto CDC SCD Type 1 flows declare \`dp.create_streaming_table\` first and register \`dp.create_auto_cdc_flow(..., stored_as_scd_type=1)\` with unqualified column names.
+   - External sinks use \`dp.create_sink(name, format, options)\` paired with \`@dp.append_flow(target=name)\`.
+2. **Dataset Function Purity & Testable Helpers:**
+   - \`transformations/*.py\` binds \`spark = SparkSession.active()\` (or uses injected \`spark\`) and never calls \`SparkSession.builder\`, \`spark.conf.set\`, \`createOrReplaceTempView\`, \`spark.udf.register\`, writers (\`.write\`, \`.writeStream\`, \`.writeTo\`, \`saveAsTable\`), eager actions (\`.collect()\`, \`.count()\`, \`.show()\`, \`.toPandas()\`), or \`.schema\` / \`.columns\`.
+   - \`src/transforms.py\` isolates pure DataFrame transformation helpers tested offline in \`tests/test_transforms.py\`.
+3. **OSS Apache Spark 4.2 API Fidelity:**
+   - Zero Databricks DLT APIs (\`dlt\`, \`@dp.view\`, \`@dp.expect*\`, \`dp.apply_changes\`, \`append_flow(once=...)\`, \`stored_as_scd_type=2\`, \`format("cloudFiles")\`).
+4. **Spec & Catalog Rules (\`spark-pipeline.yml\`):**
+   - Only allowed top-level keys (\`name\`, \`storage\`, \`catalog\`, \`database\`, \`schema\`, \`configuration\`, \`libraries\`).
+   - \`configuration\` values are strings and contain zero static Spark keys (\`spark.jars*\`, \`spark.sql.extensions\`, \`spark.driver.*\`, \`spark.executor.*\`). Static properties belong in \`sdp_stage.pipeline.yaml\` \`execution_config.properties\` or \`run_sdp_dataproc.sh\` \`--conf\`.
+   - File streams specify an explicit \`.schema(...)\`. Streaming aggregations, deduplication, and stream-stream joins apply \`.withWatermark(...)\`.
+5. **Catalyst Optimization Rules:**
+   - Built-in \`pyspark.sql.functions\` over row-at-a-time Python UDFs, early filter/projection pushdown, and single-pass \`.withColumns({...})\`.
+
+Instructions:
+- Report only NEW defects that the static findings above do not cover.
+- Cite the exact 1-indexed line number and verbatim evidence from the line-numbered listing.
+- Use category \`ARCHITECTURE\` for SDP dataset, spec, purity, streaming, and classpath defects. Use \`IDIOMATIC_SPARK\` for Catalyst optimization defects.
+- Severity: CRITICAL for runtime failure or data loss or duplication, MAJOR for a correctness risk or performance anti-pattern, MINOR for style.
+- Set \`passed\` to false if any CRITICAL or MAJOR defect exists.`;
+    }
+
     return `You are the Principal Spark Architecture Evaluator Agent.
 Your responsibility is auditing a generated Apache Spark ${sparkVersion} (PySpark 4.x DataFrame, Catalyst SQL, and Structured Streaming) repository for architecture and Catalyst optimization defects.
 
@@ -558,7 +930,7 @@ ${formatFilesWithLineNumbers(files)}
 ${JSON.stringify(signals, null, 2)}
 
 === STATIC FINDINGS ALREADY RECORDED (DO NOT REPEAT) ===
-${JSON.stringify(staticFindings.map(f => ({ id: f.id, file: f.file, line: f.line, description: f.description })), null, 2)}
+${JSON.stringify(staticFindings.map((f) => ({ id: f.id, file: f.file, line: f.line, description: f.description })), null, 2)}
 ========================================================
 
 Audit the code against the following Spark Architecture Checklist:
@@ -701,8 +1073,8 @@ export function mergeArchitectureFindings(
     staticFindings: EvaluatorFinding[],
     llmFindings: EvaluatorFinding[]
 ): EvaluatorFinding[] {
-    const ids = new Set(staticFindings.map(f => f.id));
-    return [...staticFindings, ...llmFindings.filter(f => !ids.has(f.id))];
+    const ids = new Set(staticFindings.map((f) => f.id));
+    return [...staticFindings, ...llmFindings.filter((f) => !ids.has(f.id))];
 }
 
 /**
@@ -712,7 +1084,7 @@ export function mergeArchitectureFindings(
  * @returns True when a blocking finding exists.
  */
 function hasBlockingFinding(findings: EvaluatorFinding[]): boolean {
-    return findings.some(f => f.severity === 'CRITICAL' || f.severity === 'MAJOR');
+    return findings.some((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR');
 }
 
 /**
@@ -722,17 +1094,30 @@ function hasBlockingFinding(findings: EvaluatorFinding[]): boolean {
  * @param language - Target language label.
  * @param yamlContent - Original pipeline YAML.
  * @param files - All generated files.
+ * @param options - Optional paradigm override.
+ * @param options.paradigm - Explicit paradigm override.
  * @returns Specialist evaluation result.
  */
 export async function evaluateSparkArchitecture(
     ai: GoogleGenAI,
     language: 'Java' | 'Python',
     yamlContent: string,
-    files: GeneratedFileCandidate[]
+    files: GeneratedFileCandidate[],
+    options?: { paradigm?: PipelineParadigm }
 ): Promise<SpecialistAgentResult> {
-    const staticFindings = runSparkArchitectureStaticChecks(files);
-    const signals = collectSparkArchitectureSignals(files);
-    const prompt = buildSparkArchitecturePrompt(language, yamlContent, files, staticFindings, signals);
+    const paradigm = resolveSparkArchitectureParadigm(files, yamlContent, options?.paradigm);
+    const staticFindings = runSparkArchitectureStaticChecks(files, { paradigm, yamlContent });
+    const signals = collectSparkArchitectureSignals(files, paradigm);
+    const sparkVersion = paradigm === 'sdp' ? '4.2' : DEFAULT_SPARK_VERSION;
+    const prompt = buildSparkArchitecturePrompt(
+        language,
+        yamlContent,
+        files,
+        staticFindings,
+        signals,
+        sparkVersion,
+        paradigm
+    );
 
     try {
         const response = await generateContentWithRetry(ai, {

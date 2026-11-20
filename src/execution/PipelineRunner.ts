@@ -16,6 +16,7 @@ import { execFile, spawn, type ChildProcess, type ExecFileException } from 'chil
 import { findGcloudPath } from '../cli/cliResolver';
 import { getGcloudProject } from '../cli/gcloudClient';
 import { applyRuntimeVariables, type RuntimeVariable } from '../security/envSanitizer';
+import type { PipelineParadigm, SdpJobConfigFields } from '../shared/types';
 import { detectDataflowJob, detectSparkJob } from './jobIdDetector';
 
 /** Project placeholder used by generated configs before a real project is chosen. */
@@ -25,7 +26,7 @@ export const PLACEHOLDER_PROJECT_ID = 'YOUR_PROJECT_ID';
 export const DEFAULT_RUN_REGION = 'us-central1';
 
 /** Job configuration fields the runner reads from the webview's run request. */
-export interface RunnerJobConfig {
+export interface RunnerJobConfig extends SdpJobConfigFields {
     /** Runner name: 'Local' | 'DataprocCluster' | 'ServerlessSpark' (or legacy 'DirectRunner' | 'Spark' | 'Dataflow'). */
     runner?: string;
     /** Explicit GCP project; wins over the gcloud default (F6). */
@@ -64,15 +65,96 @@ export interface RunnerJobConfig {
     useSparkConnect?: boolean;
     /** Spark Connect session template resource name or ID, exported as SPARK_CONNECT_SESSION_TEMPLATE. */
     sessionTemplate?: string;
+    /** Pipeline paradigm ('imperative' by default, or 'sdp' for Spark Declarative Pipelines). */
+    paradigm?: PipelineParadigm;
+}
+
+/** Plain Spark / SDP identifier pattern (`[A-Za-z_][A-Za-z0-9_]*`). */
+const SAFE_SDP_IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Sanitizes a list of SDP dataset names for `--refresh` / `--full-refresh` exports.
+ * Drops blank strings, invalid identifiers, `__spark_autocdc_` internal tables, and duplicates.
+ *
+ * @param datasets Raw dataset list from `jobConfig`.
+ * @returns Sanitized unique dataset identifiers.
+ */
+function sanitizeSdpDatasetList(datasets: readonly unknown[] | undefined): string[] {
+    if (!Array.isArray(datasets)) {
+        return [];
+    }
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const entry of datasets) {
+        if (typeof entry !== 'string') {
+            continue;
+        }
+        const trimmed = entry.trim();
+        if (
+            !trimmed ||
+            !SAFE_SDP_IDENTIFIER_REGEX.test(trimmed) ||
+            trimmed.toLowerCase().startsWith('__spark_autocdc_') ||
+            seen.has(trimmed)
+        ) {
+            continue;
+        }
+        seen.add(trimmed);
+        out.push(trimmed);
+    }
+    return out;
+}
+
+/**
+ * Serializes `sdpStaticSparkConf` (`Record<string, string>` or comma/newline string) into a
+ * safe comma-separated `key=value` string without control characters.
+ *
+ * @param raw Static Spark configuration from `jobConfig`.
+ * @returns Comma-separated `key=value` entries, or undefined when empty.
+ */
+function formatSdpStaticSparkConf(raw: Record<string, string> | string | undefined): string | undefined {
+    if (!raw) {
+        return undefined;
+    }
+    const pairs: string[] = [];
+    if (typeof raw === 'string') {
+        for (const piece of raw.split(/[,\n]+/)) {
+            const trimmed = piece.trim();
+            if (trimmed && trimmed.includes('=') && !/[\r\n\0]/.test(trimmed)) {
+                pairs.push(trimmed);
+            }
+        }
+    } else if (typeof raw === 'object' && !Array.isArray(raw)) {
+        for (const [k, v] of Object.entries(raw)) {
+            const key = k.trim();
+            const val = String(v ?? '').trim();
+            if (key && val && !/[\r\n\0,]/.test(key) && !/[\r\n\0,]/.test(val)) {
+                pairs.push(`${key}=${val}`);
+            }
+        }
+    }
+    return pairs.length > 0 ? pairs.join(',') : undefined;
 }
 
 /**
  * Returns the runner script filenames to look for, in priority order.
  *
  * @param runner Runner name from the job config.
+ * @param paradigm Optional pipeline paradigm (`'imperative'` | `'sdp'`).
  * @returns Candidate script names (empty for unknown runners).
  */
-export function runnerScriptCandidates(runner: string): string[] {
+export function runnerScriptCandidates(runner: string, paradigm?: string): string[] {
+    if (paradigm === 'sdp') {
+        if (runner === 'Local' || runner === 'DirectRunner') {
+            return ['run_sdp_local.sh', 'run_local.sh'];
+        }
+        if (runner === 'DataprocCluster') {
+            return ['run_sdp_dataproc.sh', 'run_dataproc_cluster.sh'];
+        }
+        if (runner === 'ServerlessSpark' || runner === 'Spark') {
+            return ['run_sdp_serverless.sh', 'run_sdp_local.sh', 'run_serverless_spark.sh'];
+        }
+        return [];
+    }
     if (runner === 'Local' || runner === 'DirectRunner') {
         return ['run_local.sh', 'run_directrunner.sh'];
     }
@@ -114,9 +196,19 @@ export function findRunnerScript(
  * execution log header.
  *
  * @param runner Runner name.
+ * @param paradigm Optional pipeline paradigm (`'imperative'` | `'sdp'`).
  * @returns A shell-comment description line.
  */
-export function describeRunner(runner: string): string {
+export function describeRunner(runner: string, paradigm?: string): string {
+    if (paradigm === 'sdp') {
+        if (runner === 'Local' || runner === 'DirectRunner') {
+            return '# Running Spark Declarative Pipeline via Local Spark 4.2 Connect';
+        }
+        if (runner === 'DataprocCluster') {
+            return '# Submitting Spark Declarative Pipeline to Google Cloud Dataproc 4.0 Cluster';
+        }
+        return '# Running Spark Declarative Pipeline Stage (Managed Data Pipelines / Serverless Spark 4.0)';
+    }
     if (runner === 'Local') {
         return '# Using Local PySpark / Spark Connect Runner (Local Machine)';
     }
@@ -270,9 +362,73 @@ export function buildRunnerEnvironment(options: RunnerEnvironmentOptions): Runne
         }
         if (jobConfig.useSparkConnect === true) {
             env['USE_SPARK_CONNECT'] = 'true';
+        } else if (jobConfig.useSparkConnect === false) {
+            env['USE_SPARK_CONNECT'] = 'false';
         }
         if (jobConfig.sessionTemplate) {
             env['SPARK_CONNECT_SESSION_TEMPLATE'] = jobConfig.sessionTemplate;
+        }
+
+        // Spark Declarative Pipelines (SDP) sanitized environment exports (SDP8).
+        if (jobConfig.sdpCommand === 'run' || jobConfig.sdpCommand === 'dry-run') {
+            env['SDP_COMMAND'] = jobConfig.sdpCommand;
+        }
+        if (typeof jobConfig.sdpStorage === 'string') {
+            const trimmedStorage = jobConfig.sdpStorage.trim();
+            if (trimmedStorage && !/[\r\n\0]/.test(trimmedStorage)) {
+                env['SDP_STORAGE'] = trimmedStorage;
+            }
+        }
+        if (typeof jobConfig.sdpCatalog === 'string') {
+            const trimmedCatalog = jobConfig.sdpCatalog.trim();
+            if (SAFE_SDP_IDENTIFIER_REGEX.test(trimmedCatalog)) {
+                env['SDP_CATALOG'] = trimmedCatalog;
+            }
+        }
+        if (typeof jobConfig.sdpDatabase === 'string') {
+            const trimmedDatabase = jobConfig.sdpDatabase.trim();
+            if (SAFE_SDP_IDENTIFIER_REGEX.test(trimmedDatabase)) {
+                env['SDP_DATABASE'] = trimmedDatabase;
+            }
+        }
+        if (typeof jobConfig.sdpCreateNamespace === 'boolean') {
+            env['SDP_CREATE_NAMESPACE'] = jobConfig.sdpCreateNamespace ? 'true' : 'false';
+        }
+        const staticConf = formatSdpStaticSparkConf(jobConfig.sdpStaticSparkConf);
+        if (staticConf) {
+            env['SPARK_PROPERTIES'] = env['SPARK_PROPERTIES']
+                ? `${env['SPARK_PROPERTIES']},${staticConf}`
+                : staticConf;
+        }
+
+        // Refresh flags apply only to `run` (never `dry-run`) and prevent conflicting combinations.
+        if (jobConfig.sdpCommand !== 'dry-run') {
+            if (jobConfig.sdpRefreshMode === 'full_refresh_all') {
+                env['SDP_FULL_REFRESH_ALL'] = 'true';
+                delete env['SDP_REFRESH'];
+                delete env['SDP_FULL_REFRESH'];
+            } else if (jobConfig.sdpRefreshMode === 'refresh') {
+                const refreshDatasets = sanitizeSdpDatasetList(jobConfig.sdpRefreshDatasets);
+                if (refreshDatasets.length > 0) {
+                    env['SDP_REFRESH'] = refreshDatasets.join(',');
+                }
+            } else if (jobConfig.sdpRefreshMode === 'full_refresh') {
+                const fullRefreshDatasets = sanitizeSdpDatasetList(jobConfig.sdpFullRefreshDatasets);
+                if (fullRefreshDatasets.length > 0) {
+                    env['SDP_FULL_REFRESH'] = fullRefreshDatasets.join(',');
+                }
+            } else if (jobConfig.sdpRefreshMode === undefined) {
+                const fullSet = new Set(sanitizeSdpDatasetList(jobConfig.sdpFullRefreshDatasets));
+                const refreshOnly = sanitizeSdpDatasetList(jobConfig.sdpRefreshDatasets).filter(
+                    (name) => !fullSet.has(name)
+                );
+                if (refreshOnly.length > 0) {
+                    env['SDP_REFRESH'] = refreshOnly.join(',');
+                }
+                if (fullSet.size > 0) {
+                    env['SDP_FULL_REFRESH'] = [...fullSet].join(',');
+                }
+            }
         }
     }
     return { env, rejectedKeys };

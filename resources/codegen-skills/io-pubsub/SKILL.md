@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative, sdp]
   transforms: [PubSubSource, PubSubSink]
   preloadWhen: []
   sources:
@@ -15,6 +16,7 @@ metadata:
   validated: true
 ---
 
+> **SDP Mode Note (`paradigm: sdp`)**: In Spark Declarative Pipelines mode, only the source reader from this skill applies inside `@dp.table` or `@dp.materialized_view` dataset functions. Imperative `write_sinks` and `foreachBatch` sink patterns are unsupported in SDP.
 # Google Cloud Pub/Sub Source (`PubSubSource`)
 
 Use these rules when generating PySpark {{spark_version}} code for a Google Cloud Pub/Sub source node (`PubSubSource` or `PubSubIO`).

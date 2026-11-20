@@ -2,7 +2,7 @@
 name: "Apache Spark Pipeline Designer"
 author: "Mike Nimer <mikenimer@google.com>"
 description: "Unified UI/UX design system and token specification for the visual Apache Spark and Managed Spark pipeline builder VS Code extension."
-version: "2.0.0"
+version: "2.1.0"
 colors:
   canvas-bg: "#0d1117"
   workbench-bg: "#161b22"
@@ -95,74 +95,50 @@ components:
 
 ## Overview
 
-Architectural clarity meets developer precision. The Dataflow Pipeline Designer provides an intuitive, high-contrast visual IDE for authoring, configuring, and inspecting Apache Beam directed acyclic graphs (DAGs).
+The Apache Spark Pipeline Designer provides a high-contrast visual IDE for authoring, configuring, and inspecting Imperative PySpark 4.x and Spark Declarative Pipelines (SDP, Apache Spark 4.2+) directed acyclic graphs (DAGs).
 
 ### Design Principles
-1. **8pt Grid Discipline**: All paddings, margins, component heights, and gaps follow multiples of `8px` (with `4px` half-steps reserved for compact badges, inputs, and borders).
-2. **Semantic VS Code Theming**: Rather than hardcoding fixed colors, all UI surfaces, borders, and typography derive from CSS custom properties (`--vscode-*`), supporting **Dark+**, **Light+**, **High Contrast Dark (WCAG AAA)**, and **High Contrast Light (WCAG AAA)**.
-3. **Tri-Color DAG Taxonomy**: Pipeline stages are visually instantly identifiable via strict category coding:
+1. **8pt Grid Discipline**: All paddings, margins, component heights, and gaps follow multiples of `8px`, with `4px` half-steps reserved for compact badges, inputs, and borders.
+2. **Semantic VS Code Theming**: All UI surfaces, borders, and typography derive from CSS custom properties (`--vscode-*`), supporting Dark+, Light+, High Contrast Dark (WCAG AAA), and High Contrast Light (WCAG AAA).
+3. **Tri-Color DAG Taxonomy**: Pipeline stages remain instantly identifiable through category color coding:
    - **Sources**: Emerald Green (`#10b981`)
    - **Transforms / Steps**: Azure Blue (`#3b82f6`)
    - **Sinks**: Rose Red (`#ef4444`)
    - **Samples**: Purple / Violet (`#a855f7`)
-4. **Data Density with Breathing Room**: Information is densely structured using compact labels and monospace values, while maintaining clean 16px section padding and clear hierarchy.
+4. **Paradigm-Aware Visual Feedback**: Switching between Imperative PySpark and Spark Declarative Pipelines updates toolbar pills, node micro-badges, palette item states, and property inspector controls in lockstep.
 
 ---
 
 ## Colors
 
-The color palette leverages deep neutral slate surfaces with category-specific vibrant accents for pipeline data flow representation.
-
 ### Surfaces & Neutrals
-- **Canvas Background (`{colors.canvas-bg}` / `--vscode-canvas-bg`):** Deep charcoal/slate foundation (`#0d1117`) for the infinite React Flow canvas.
-- **Workbench & Sidebars (`{colors.workbench-bg}` / `--vscode-workbench-bg`):** `#161b22` providing contrast against the canvas.
-- **Card Surfaces (`{colors.card-bg}` / `--vscode-card-bg`):** `#161b22` for floating node cards, draggable palette items, and controls.
-- **Subcards & Code Containers (`{colors.subcard-bg}` / `--vscode-subcard-bg`):** `#0d1117` recessed surfaces for inputs and syntax previews.
-- **Borders (`{colors.border}` / `--vscode-border`):** Subtle dividers (`#30363d`) and hairline borders (`#21262d`).
+- **Canvas Background (`--vscode-canvas-bg`)**: Deep slate foundation (`#0d1117`) for the React Flow canvas.
+- **Workbench & Sidebars (`--vscode-workbench-bg`)**: `#161b22` providing contrast against the canvas.
+- **Card Surfaces (`--vscode-card-bg`)**: `#161b22` for floating node cards, draggable palette items, and controls.
+- **Subcards & Code Containers (`--vscode-subcard-bg`)**: `#0d1117` recessed surfaces for inputs and syntax previews.
+- **Borders (`--vscode-border`)**: Subtle dividers (`#30363d`) and hairline borders (`#21262d`).
 
 ### Pipeline Category Accents
-- **Sources (`#10b981`):** Represents data ingestion (Pub/Sub, Kafka, BigQuery Read, TextIO, FileIO, Spanner, JDBC).
-  - Background: `bg-emerald-500/10`
-  - Border: `border-emerald-500/30`
-  - Text/Badge: `text-emerald-400`
-- **Transforms & Steps (`#3b82f6`):** Represents data manipulation (ParDo, Map, FlatMap, Windowing, Aggregations, Filter, ParseMessage).
-  - Background: `bg-blue-500/10`
-  - Border: `border-blue-500/30`
-  - Text/Badge: `text-blue-400`
-- **Sinks (`#ef4444`):** Represents terminal output destinations (BigQuery Write, Pub/Sub Publish, Kafka Write, LogMessage, TextIO Sink).
-  - Background: `bg-rose-500/10`
-  - Border: `border-rose-500/30`
-  - Text/Badge: `text-rose-400`
-- **Samples (`#a855f7`):** Represents pre-built starter templates.
-  - Background: `bg-purple-500/10`
-  - Border: `border-purple-500/30`
-  - Text/Badge: `text-purple-400`
-
-### Interactive & Action Accents
-- **Highlight / Selection (`#58a6ff`):** Focus outlines, tab active indicators, and active connector edge highlights.
-- **Primary CTA (`#238636` / `#2563eb`):** High-confidence actions such as `GENERATE CODE` and `RUN NOW`.
+- **Sources (`#10b981`)**: Data ingestion (`KafkaSource`, `BigQuerySource`, `IcebergSource`, `CsvSource`, `JsonSource`, `ParquetSource`, `SpannerSource`).
+  - Background: `bg-emerald-500/10`, Border: `border-emerald-500/30`, Text: `text-emerald-400`
+- **Transforms & Steps (`#3b82f6`)**: Catalyst and streaming transformations (`Filter`, `WithColumns`, `Watermark`, `GroupByAgg`, `Join`, `MergeCdcScd`, `DataQualityAssert`).
+  - Background: `bg-blue-500/10`, Border: `border-blue-500/30`, Text: `text-blue-400`
+- **Sinks (`#ef4444`)**: Terminal output destinations (`IcebergSink`, `DeltaSink`, `BigQuerySink`, `KafkaSink`, `ParquetSink`, `ConsoleSink`).
+  - Background: `bg-rose-500/10`, Border: `border-rose-500/30`, Text: `text-rose-400`
+- **Samples (`#a855f7`)**: Starter `.spark` templates with `PySpark` or `SDP (4.2+)` paradigm badges.
+  - Background: `bg-purple-500/10`, Border: `border-purple-500/30`, Text: `text-purple-400`
 
 ---
 
-## Typography
-
-The typography system pairs **Inter** for clean UI chrome and high-legibility forms with **JetBrains Mono** for code previews, runtime variables, and technical identifiers.
-
-### Hierarchy & Scale
+## Typography & 8pt Layout Scale
 
 | Style Level | Font Family | Size | Weight | Line Height | Usage |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`display-lg`** | Inter | `1.125rem` (`18px`) | Bold (`700`) | `1.5` | Top-level drawer headers and modal titles |
 | **`body-md`** | Inter | `0.875rem` (`14px`) | Regular (`400`) | `1.25rem` | Form inputs, dropdown values, card descriptions |
 | **`label-xs`** | Inter | `0.75rem` (`12px`) | Bold (`700`) | `1rem` | Uppercase field labels and section dividers |
-| **`badge-micro`** | Inter | `0.625rem` (`10px`) | Bold (`700`) | `0.875rem` | Category pill badges, node IDs, item count badges |
-| **`code-sm`** | JetBrains Mono | `0.75rem` (`12px`) | Regular (`400`) | `1.25rem` | Generated source code preview, `$VARIABLE` chips |
-
----
-
-## Layout
-
-### 8pt Spacing Scale
+| **`badge-micro`** | Inter | `0.625rem` (`10px`) | Bold (`700`) | `0.875rem` | Paradigm pills, dataset micro-badges, count badges |
+| **`code-sm`** | JetBrains Mono | `0.75rem` (`12px`) | Regular (`400`) | `1.25rem` | Generated code preview, dataset names, `$VARIABLE` chips |
 
 | Token | Dimension | Tailwind Class | Application |
 | :--- | :--- | :--- | :--- |
@@ -170,103 +146,78 @@ The typography system pairs **Inter** for clean UI chrome and high-legibility fo
 | `sm` | `8px` | `p-2`, `gap-2` | Input padding, icon container padding, card inner gaps |
 | `md` | `12px` | `p-3`, `gap-3` | Node internal padding, property group spacing, canvas grid gap |
 | `lg` | `16px` | `p-4`, `gap-4` | Sidebar drawer padding, panel header padding, form vertical gaps |
-| `xl` | `24px` | `p-6`, `gap-6` | Major column gutters (Deployment tab 2-column layout) |
-| `2xl` | `32px` | `h-8`, `p-8` | Action button heights, tab bar headers |
+| `xl` | `24px` | `p-6`, `gap-6` | Major column gutters in Deployment tab |
+| `2xl` | `32px` | `h-8`, `p-8` | Action button heights and tab bar headers |
 | `drawer` | `320px` | `w-80` | Left node palette drawer and right property inspector width |
-
-### Canvas & Panel Layout Blueprint
-- **Center Canvas**: Infinite viewport containing React Flow `<Background gap={12} size={1} />`.
-- **Left Slide-out Palette (`w-80`)**: Fixed-width drawer with vertical rotated tab buttons on the far left.
-- **Right Property Inspector (`w-80`)**: Fixed-width slide-out drawer pinned to the right edge with `z-20`.
-- **Bottom Drawer**: Resizable container with draggable handle divider (`h-1 hover:bg-[var(--vscode-highlight)] cursor-row-resize`), defaulting to `320px` height with a full-screen toggle (`Maximize2` / `Minimize2`).
-
----
-
-## Elevation & Depth
-
-Surfaces use a combination of layered background shades and subtle drop shadows rather than heavy skeuomorphic effects.
-
-- **Canvas Level (Elevation 0)**: Flat background with subtle grid dots (`--vscode-grid-dots`).
-- **DAG Nodes & Floating Drawers (Elevation 1)**: `shadow-xl` (`box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5)`), with `border border-[var(--vscode-border)]`.
-- **Hover & Selection Rings (Elevation 2)**:
-  - Selected Source: `border-emerald-400 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/10`
-  - Selected Step: `border-blue-400 ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/10`
-  - Selected Sink: `border-red-400 ring-2 ring-red-500/50 shadow-lg shadow-red-500/10`
-- **Floating Overlays & Portals (Elevation 3)**: Tooltips rendered via React Portals directly into `document.body` with `z-50 shadow-2xl backdrop-blur-sm`.
-
----
-
-## Shapes
-
-- **Base Radius (`rounded-md`, 6px)**: Standard for DAG node cards, search input fields, and property form inputs.
-- **Small Radius (`rounded-sm`, 4px)**: Pill badges, micro badges, and connection handle socket containers.
-- **Large Radius (`rounded-lg`, 8px)**: Floating controls toolbar, minimap window, and sidebar draggable item cards.
-- **Pill / Circular (`rounded-full`, 9999px)**: React Flow connection handles (`10px x 10px` circular circles).
 
 ---
 
 ## Components
 
-### 1. DAG Node (`PipelineNode`) & Canvas Toolbar (`CanvasToolbar`)
+### 1. Canvas Toolbar (`CanvasToolbar`) & Paradigm Compatibility Modal
+- **Pipeline Mode Pill (`data-testid="toolbar-pipeline-mode"`)**: Displays `BATCH` or `STREAMING` based on deterministic streaming propagation.
+- **Paradigm Indicator & Switcher (`data-testid="toolbar-paradigm-indicator"`)**: Displays `IMPERATIVE` or `SDP (4.2+)` in the top canvas toolbar.
+  - Clicking to switch from `SDP (4.2+)` to `IMPERATIVE` succeeds immediately and records an undo snapshot.
+  - Clicking to switch from `IMPERATIVE` to `SDP (4.2+)` runs `evaluateSdpCompatibility`. If blocking constructs exist, the editor opens an accessible modal (`role="dialog"`, `data-testid="sdp-compatibility-modal"`) listing each incompatible node label, transform, and SDP ceiling reason.
+
+### 2. DAG Node (`PipelineNode`) & Micro-Badges
 - **Container**: `bg-[var(--vscode-node-bg)] border rounded-md shadow-xl p-3 flex items-center gap-3 min-w-[180px]`.
-- **Category Icon Box**: Left container with category background (`bg-*/10`), border (`border-*/30`), and 20px Lucide icon.
-- **Editable Title**: Inline double-clickable `<input className="nodrag bg-[var(--vscode-input-bg)] border border-[var(--vscode-highlight)] rounded px-1.5 py-0.5 text-sm font-bold text-[var(--vscode-text-primary)]" />` with `Enter` (commit) and `Escape` (cancel).
-- **Execution & Planner Micro-Badges**:
-  - `BATCH` vs `STREAM` (`data-testid="node-mode-badge"`): Rendered on `SOURCE` and `SINK` cards from deterministic streaming propagation.
-  - `CACHE` (`data-testid="node-cache-badge"`): Rendered on batch nodes marked for `.cache()` by `executionPlanner.ts`.
-  - `foreachBatch` (`data-testid="node-foreachbatch-badge"`): Rendered on streaming sinks grouped into `.writeStream.foreachBatch(...)`.
+- **Imperative Mode Micro-Badges**:
+  - `BATCH` / `STREAM` (`data-testid="node-mode-badge"`): Rendered on `SOURCE` and `SINK` cards.
+  - `CACHE` (`data-testid="node-cache-badge"`): Rendered on batch fan-out nodes planned by `executionPlanner.ts`.
+  - `foreachBatch` (`data-testid="node-foreachbatch-badge"`): Rendered on sinks grouped into `.writeStream.foreachBatch(...)`.
   - `BROADCAST` (`data-testid="node-broadcast-badge"`): Rendered on `Join` steps when `broadcastRight` is enabled.
   - `N-IN` (`data-testid="node-multi-input-badge"`): Rendered on multi-input steps (`UnionByName`, `SetOperation`, `SparkSqlQuery`).
-  - **Toolbar Pipeline Mode Pill** (`data-testid="toolbar-pipeline-mode"`): Displays `BATCH` or `STREAMING` in `CanvasToolbar`.
+- **SDP Mode Dataset Micro-Badges (`data-testid="node-sdp-badge"`)**:
+  - When `paradigm === 'sdp'`, `PipelineNode` suppresses `CACHE` and `foreachBatch` badges and renders deterministic SDP dataset badges from `sdpPlanner.ts`:
+    - `VIEW`: `@dp.temporary_view` non-persisted intermediate view
+    - `MV`: `@dp.materialized_view` batch recomputed table
+    - `TABLE`: `@dp.table` or `dp.create_streaming_table` + `@dp.append_flow` streaming table
+    - `CDC`: `dp.create_auto_cdc_flow` SCD Type 1 target flow
+    - `SINK`: `dp.create_sink` external streaming sink
 - **Connection Handles**:
-  - `Source`: 1 right output handle (`bg-emerald-500`). Direct `SOURCE -> SINK` connections are valid.
-  - `Step (Structural)`: 1 left target handle (`bg-blue-500`) and 1 centered right output handle (`id="valid"` at `50%`).
-  - `Step (Error-Capable)`: 1 left target handle and 2 right output handles (`id="valid"` at `30%` in green, `id="error"` DLQ at `70%` in red) when `errorOutput: true` (`Filter`, `ParsePayload`, `DataQualityAssert`, `EnforceSchemaAndCast`, `StatefulTransform`, `SparkSqlQuery`, `PandasUdfTransform`, `CustomTransform`, `SparkMlAndVertexAi`, `TextChunkAndEmbed`).
-  - `Step (Join / MergeCdcScd)`: 2 labeled left target handles (`id="left"` at `32%` and `id="right"` at `68%`), each accepting 1 upstream edge.
-  - `Step (N-Input)`: 1 left target handle accepting $N$ ordered upstream inputs (`UnionByName`, `SetOperation`, `SparkSqlQuery`).
-  - `Step (ConditionalSplit)`: Dynamic right output handles (1 per configured rule plus `id="else"`), scaling node `minHeight` on the 8pt grid.
-  - `Sink`: 1 left target handle (`bg-rose-500`).
+  - `Source`: One right output handle (`bg-emerald-500`). Direct `SOURCE -> SINK` connections are valid.
+  - `Step (Standard)`: One left target handle (`bg-blue-500`) and one right output handle (`id="valid"`).
+  - `Step (Error-Capable)`: Adds a second right handle (`id="error"` in rose/red) in imperative mode for dead-letter routing.
+  - `Step (Join / MergeCdcScd)`: Two labeled left handles (`id="left"` and `id="right"`). In SDP mode, `MergeCdcScd` requires only the `left` streaming CDC handle because SDP owns the target table.
+  - `Step (ConditionalSplit)`: Dynamic right output handles (one per rule plus `id="else"`).
+  - `Sink`: One left target handle (`bg-rose-500`).
 
-### 2. Left Node Palette (`NodesCard` & `SidebarItem`)
-- **Vertical Tab Strip**: Vertical rotated text labels (`writing-mode: vertical-rl; transform: rotate(180deg)`), category icon, and item count badge.
-- **Search Header**: Sticky top search bar with auto-filtering.
-- **Exclusive Accordions**: Expanding an accordion category automatically collapses siblings to avoid vertical scrolling overflow.
-- **Draggable Cards**: Grip handle icon, category badge, description, and direct `+` add button on hover.
+### 3. Left Node Palette (`NodesCard` & `SidebarItem`)
+- **Vertical Tab Strip**: Vertical rotated labels (`Sources`, `Steps`, `Sinks`, `Samples`), category icons, and count badges.
+- **SDP Disabled Palette State**: When `paradigm === 'sdp'`, `SidebarItem` evaluates `checkNodeSdpCompatibility` for every catalog item. Unsupported items (`foreachBatch`-only sinks, Spark ML steps, and `CachePersist`) render with `opacity-45 cursor-not-allowed` and `aria-disabled="true"`, block drag-and-drop and click-to-add actions, and display a portal `<InfoTooltip>` explaining why SDP blocks the node.
 
-### 3. Right Property Inspector (`PropertyPane` & `PropertyForm`)
-- **Header**: Category tag, editable node label, and monospace Node ID.
-- **Shared Execution & Streaming Controls**:
-  - `StepExecutionSettingsField`: Exposes `Read Mode` (`batch` vs `streaming`) on dual-mode sources and manual `Cache Output` overrides (`auto`, `true`, `false`) on batch steps.
-  - `StreamingSinkSettingsField`: Exposes per-sink `outputMode`, `triggerType`, `triggerInterval`, and `checkpointLocation` overrides on streaming sinks.
-- **Field Layout**:
-  - Stack: `flex flex-col gap-1`.
-  - Label: `text-xs font-bold uppercase text-[var(--vscode-text-muted)] flex items-center gap-1.5`.
-  - Input/Select: `bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-sm`.
-- **InfoTooltips**: Portal-rendered hoverable info popups with viewport clamping.
-- **Code Generation Instructions**: Bottom textarea for Gemini prompt customization.
-- **Runtime Variables**: Expandable drawer with clipboard copy buttons.
+### 4. Right Property Inspector (`PropertyPane` & `PropertyForm`)
+- **Imperative Shared Cards**:
+  - `StepExecutionSettingsField`: Exposes `Read Mode` (`batch` vs `streaming`) on dual-mode sources and manual `Cache Output` overrides on batch steps.
+  - `StreamingSinkSettingsField`: Exposes per-sink `outputMode`, `triggerType`, `triggerInterval`, and `checkpointLocation` on streaming sinks.
+- **SDP Inspector Swap (`paradigm === 'sdp'`)**:
+  - `StreamingSinkSettingsField` returns `null` (hiding per-sink trigger and checkpoint overrides because SDP uses pipeline-level `sdpStorage` and triggered `AvailableNow` execution).
+  - `StepExecutionSettingsField` hides manual `.cache()` controls.
+  - `SdpSinkSettingsField` renders on `SINK` nodes to configure:
+    - **Target Mode & Format**: Catalog Table (`sdpTableName`, `sdpFormat` such as `iceberg` or `delta`) vs. External Streaming Sink (`sdpSinkName`, `sdpFormat`).
+    - **Mutually Exclusive Physical Layout**: Selector for `none`, `partition_cols` (`sdpPartitionCols`), or `cluster_by` (`sdpClusterBy`), clearing the opposite field on switch to prevent `SPECIFY_CLUSTER_BY_WITH_PARTITIONED_BY_IS_NOT_ALLOWED`.
+    - **Reset Protection (`pipelines.reset.allowed`)**: Toggle (`sdpResetAllowed`) emitting `table_properties={"pipelines.reset.allowed": "false"}` for streaming catalog tables, accompanied by guidance on `INVALID_RESETTABLE_DEPENDENCY` and external sink reset limits.
 
-### 4. Bottom Panel (`BottomPanel`)
-- **Header Bar**: Horizontal tabs (`SOURCE CODE` with file count badge, `DEPLOYMENT`), plus `Maximize2` / `Minimize2` toggle button on the far right.
-- **Source Code Tab**: Split layout with target language picker (Python/Java), output folder browse button, `GENERATE CODE` CTA, and horizontal multi-file tabs with syntax-highlighted editor view.
-- **SDK Opt-In Checkbox**: Below the "Cannot Generate Code" callout, shown only when nodes lack a native connector in the target language. Label: "Generate this node / these nodes with the <Language> SDK instead of a built-in connector" (`text-[11px]`, `accent-amber-500`, `data-testid="use-sdk-for-unsupported"`). When checked, the language errors clear, Generate Code enables, and an amber review notice lists the affected nodes (`data-testid="use-sdk-notice"`).
-- **Generation Progress Line**: While code generates, the spinner panel shows the latest `codeGenerationProgress` message below the description (`text-xs text-emerald-400 mt-2`, `data-testid="generation-progress"`). The optional reviewer sends one message per step (checks, review, fix). The line clears when generation ends or stops.
-- **Deployment Tab**: 2-column runner configuration (DirectRunner, Dataflow, Serverless Spark), instance sliders, subnetwork selector, `RUN NOW` CTA, and runtime variables table.
+### 5. Bottom Panel (`SourceCodeTab` & `DeploymentTab`)
+- **Source Code Tab**: Displays output directory controls, optional `AI Code Reviewer Pass` toggle, `GENERATE CODE` CTA, live `codeGenerationProgress` line, and syntax-highlighted file tabs (`src/pipeline.py` or `spark-pipeline.yml` + `transformations/*.py`).
+- **Deployment Tab**:
+  - **Imperative Mode**: Runner picker (`Local`, `DataprocCluster`, `ServerlessSpark`), Spark 4.x runtime version selector, `standard` tier default, `checkpointRoot`, `defaultTriggerType`, `RUN NOW` CTA, and execution terminal.
+  - **SDP Mode (`SdpSettingsPanel` & `SdpRefreshControls`)**:
+    - Pipeline-level `sdpStorage` (`gs://` URI outside source folders), plain-identifier `sdpCatalog` alias (`lake`), `sdpDatabase`, BigLake Iceberg REST catalog builder (`lakehouse` `bl://` or root `gcs_bucket` `gs://<bucket>`), and static Spark property routing (`execution_config.properties` / `--conf`).
+    - Command mode (`run` vs `dry-run`), refresh mode (`incremental`, `--refresh`, `--full-refresh`, `--full-refresh-all`) with checkboxes populated strictly from graph datasets, explicit dataset-named confirmation gate before full refreshes, duplicate-delivery warning banner for external `dp.create_sink` targets, overlapping-run guard, and materialized view `TRUNCATE TABLE` operational notice.
 
 ---
 
 ## Do's and Don'ts
 
 ### Do's
-- **DO** use the 8pt grid scale (`p-2`, `p-4`, `p-6`, `gap-2`, `gap-4`) for all spacing.
-- **DO** use semantic CSS variables (`var(--vscode-*)`) so all components automatically switch between Dark, Light, and High Contrast themes.
-- **DO** map node categories strictly: Emerald for Sources, Blue for Steps, Rose/Red for Sinks.
-- **DO** render floating dropdowns and tooltips via React Portals into `document.body` to prevent clipping by scrollable containers.
-- **DO** include `<InfoTooltip text="..." />` for every transform property field.
+- **DO** use the 8pt grid scale (`p-2`, `p-3`, `p-4`, `p-6`, `gap-2`, `gap-4`) across all components.
+- **DO** use semantic CSS variables (`var(--vscode-*)`) so every surface adapts across Dark+, Light+, and High Contrast themes.
+- **DO** render floating tooltips via React Portals into `document.body` (`<InfoTooltip>`) to prevent container clipping.
+- **DO** update `jobConfig` via functional state updaters (`setJobConfig((prev) => ({ ...prev, ... }))`).
 
 ### Don'ts
-- **DON'T** use inline styles (`style={{ ... }}`) except for dynamic coordinates during drag-resize operations.
 - **DON'T** hardcode static hex colors (`#ffffff`, `#000000`) for surfaces, borders, or text.
-- **DON'T** use inline event handlers; use named or memoized event callbacks.
-- **DON'T** introduce arbitrary non-8pt padding values (e.g., avoid `p-[7px]`, `m-[13px]`).
-- **DON'T** use two-way data binding; emit changes up via `onChange` and pass state down.
+- **DON'T** introduce arbitrary off-grid spacing values.
+- **DON'T** duplicate container-managed cards (`NodeDocsCard`, `StepExecutionSettingsField`, `StreamingSinkSettingsField`, `SdpSinkSettingsField`) inside individual node property forms.

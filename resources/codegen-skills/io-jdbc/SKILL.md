@@ -6,6 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
+  paradigms: [imperative, sdp]
   transforms: [JdbcSource, JdbcSink]
   preloadWhen: []
   sources:
@@ -14,6 +15,7 @@ metadata:
   validated: true
 ---
 
+> **SDP Mode Note (`paradigm: sdp`)**: In Spark Declarative Pipelines mode, only the source reader from this skill applies inside `@dp.table` or `@dp.materialized_view` dataset functions. Imperative `write_sinks` and `foreachBatch` sink patterns are unsupported in SDP.
 # Generic Relational JDBC Connector (`JdbcSource` and `JdbcSink`)
 
 Use these rules when generating PySpark 4.x code for `JdbcSource` and `JdbcSink` nodes across PostgreSQL, MySQL, Oracle, SQL Server, and IBM DB2.

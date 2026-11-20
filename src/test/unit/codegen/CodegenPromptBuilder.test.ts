@@ -14,7 +14,15 @@
  */
 
 import * as path from 'path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('vscode', async () =>
+    (await import('../helpers/vscodeMock')).createVscodeMock({
+        workspace: { workspaceFolders: [] },
+    })
+);
+
+import { handleRegenerateCode, PYTHON_STRATEGY } from '../../../codeGeneration';
 import YAML from 'yaml';
 import { CodegenSkillCatalog, buildSkill, clearCodegenSkillCatalogCache } from '../../../codegen/CodegenSkillCatalog';
 import {
@@ -383,6 +391,310 @@ jobConfig:
         expect(built.prompt).toContain('#### Template: run_dataproc_cluster.sh');
         expect(built.prompt).toContain('#### Template: run_serverless_spark.sh');
         expect(built.prompt).toContain('#### Template: Dockerfile');
+    });
+
+    it('builds SDP prompt with ## SDP Execution Plan, quarantine datasets, Auto CDC SCD1, and SDP skills (SDP7)', () => {
+        const bundledSkillsRoot = path.join(__dirname, '..', '..', '..', '..', 'resources', 'codegen-skills');
+        clearCodegenSkillCatalogCache();
+        const sdpYaml = [
+            'paradigm: sdp',
+            'nodes:',
+            '  - id: src_cdc',
+            '    data:',
+            '      type: SOURCE',
+            '      label: Customer CDC JSON',
+            '      spark_transform: JsonSource',
+            '      properties:',
+            '        readMode: streaming',
+            '        path: gs://raw-bucket/customers/',
+            '  - id: step_dq',
+            '    data:',
+            '      type: STEP',
+            '      label: Validate Customers',
+            '      spark_transform: DataQualityAssert',
+            '      properties:',
+            '        failurePolicy: route_to_dlq',
+            '        expectations:',
+            '          - { name: id_present, column: customer_id, checkType: not_null }',
+            '  - id: step_cdc',
+            '    data:',
+            '      type: STEP',
+            '      label: Customer Upsert',
+            '      spark_transform: MergeCdcScd',
+            '      properties:',
+            '        scdType: scd1',
+            '        keyColumns: [customer_id]',
+            '        sequenceColumn: updated_at',
+            '  - id: sink_silver',
+            '    data:',
+            '      type: SINK',
+            '      label: Silver Customers',
+            '      spark_transform: IcebergSink',
+            '      properties:',
+            '        sdpTableName: silver_customers',
+            '        sdpFormat: iceberg',
+            'edges:',
+            '  - { id: e1, source: src_cdc, target: step_dq }',
+            '  - { id: e2, source: step_dq, target: step_cdc, sourceHandle: valid, targetHandle: left }',
+            '  - { id: e3, source: step_cdc, target: sink_silver }',
+            'jobConfig:',
+            '  runner: ServerlessSpark',
+            '  runtimeVersion: "4.0"',
+            '  projectId: retail-prod',
+            '  sdpStorage: gs://retail-sdp/state/customers',
+            '  sdpCatalog: lake',
+            '  sdpDatabase: crm',
+            '  sdpBigLakeMode: lakehouse',
+            '  sdpBigLakeProject: retail-prod',
+            '  sdpBigLakeCatalogId: crm_catalog',
+            '',
+        ].join('\n');
+
+        const built = buildPromptFromPipelineYaml({
+            skillsRoot: bundledSkillsRoot,
+            yamlText: sdpYaml,
+            language: 'PySpark',
+        });
+
+        expect(built.detection.paradigm).toBe('sdp');
+        expect(built.sdpPlan).toBeDefined();
+        expect(built.sdpPlan?.isCompatible).toBe(true);
+        expect(built.selectedSkills).toContain('sdp-core');
+        expect(built.selectedSkills).toContain('sdp-spec');
+        expect(built.selectedSkills).toContain('sdp-auto-cdc');
+        expect(built.selectedSkills).toContain('sdp-quality-quarantine');
+        expect(built.selectedSkills).not.toContain('core-streaming');
+        expect(built.selectedSkills).not.toContain('runner-local');
+        expect(built.selectedSkills).not.toContain('runner-serverless-spark');
+
+        expect(built.prompt).toContain('## SDP Execution Plan');
+        expect(built.prompt).not.toContain('## Execution Plan\n');
+        expect(built.prompt).toContain('storage: gs://retail-sdp/state/customers');
+        expect(built.prompt).toContain('bl://projects/retail-prod/catalogs/crm_catalog');
+        expect(built.prompt).toContain('_quarantine');
+        expect(built.prompt).toContain('dp.create_auto_cdc_flow');
+        expect(built.prompt).toContain('stored_as_scd_type=1');
+        expect(built.prompt).toContain('src/transforms.py');
+        expect(built.prompt).toContain('tests/test_transforms.py');
+    });
+
+    it('preserves SDP file paths in PYTHON_STRATEGY and blocks incompatible SDP pipelines before calling Gemini (SDP7)', async () => {
+        expect(
+            PYTHON_STRATEGY.routeFilename(
+                'transformations/pipeline.py',
+                'pipeline.py',
+                'transformations',
+                'retail_sdp'
+            )
+        ).toBe('transformations/pipeline.py');
+        expect(
+            PYTHON_STRATEGY.routeFilename('spark-pipeline.yml', 'spark-pipeline.yml', '.', 'retail_sdp')
+        ).toBe('spark-pipeline.yml');
+        expect(
+            PYTHON_STRATEGY.routeFilename('sdp_stage.pipeline.yaml', 'sdp_stage.pipeline.yaml', '.', 'retail_sdp')
+        ).toBe('sdp_stage.pipeline.yaml');
+        expect(PYTHON_STRATEGY.routeFilename('transforms.py', 'transforms.py', '.', 'retail_sdp')).toBe(
+            'src/transforms.py'
+        );
+        expect(
+            PYTHON_STRATEGY.routeFilename('test_transforms.py', 'test_transforms.py', '.', 'retail_sdp')
+        ).toBe('tests/test_transforms.py');
+        expect(
+            PYTHON_STRATEGY.isMainPipelineFile('transformations/pipeline.py', 'retail_sdp', 'existing_transforms')
+        ).toBe(true);
+        expect(
+            PYTHON_STRATEGY.isMainPipelineFile('src/transforms.py', 'retail_sdp', 'from pyspark import pipelines as dp')
+        ).toBe(false);
+
+        const postToWebview = vi.fn().mockResolvedValue(true);
+        const incompatibleSdpYaml = [
+            'paradigm: sdp',
+            'nodes:',
+            '  - id: s1',
+            '    data: { type: SOURCE, label: Kafka, spark_transform: KafkaSource }',
+            '  - id: k1',
+            '    data: { type: SINK, label: Spanner, spark_transform: SpannerSink }',
+            'edges:',
+            '  - { id: e1, source: s1, target: k1 }',
+            'jobConfig:',
+            '  runner: ServerlessSpark',
+            '  runtimeVersion: "4.0"',
+            '',
+        ].join('\n');
+
+        await handleRegenerateCode({
+            message: {
+                data: incompatibleSdpYaml,
+                filename: 'bad_sdp.spark',
+                language: 'PySpark',
+                outputFolder: 'out',
+            },
+            context: {} as never,
+            uri: { fsPath: '/tmp/bad_sdp.spark' } as never,
+            postToWebview,
+            outputChannel: { appendLine: vi.fn() } as never,
+        });
+
+        expect(postToWebview).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'codeRegenerated',
+                success: false,
+                error: expect.stringContaining('Spanner'),
+            })
+        );
+    });
+
+    it('normalizes default Local and DataprocCluster SDP jobConfig to Spark 4.2 profiles while blocking explicit pre-4.2 versions', async () => {
+        const bundledSkillsRoot = path.join(__dirname, '..', '..', '..', '..', 'resources', 'codegen-skills');
+        clearCodegenSkillCatalogCache();
+
+        const makeSdpYaml = (jobConfigBlock: string) =>
+            [
+                'paradigm: sdp',
+                'nodes:',
+                '  - id: s1',
+                '    data: { type: SOURCE, label: Orders CSV, spark_transform: CsvSource, properties: { readMode: streaming } }',
+                '  - id: k1',
+                '    data: { type: SINK, label: Bronze Parquet, spark_transform: ParquetSink }',
+                'edges:',
+                '  - { id: e1, source: s1, target: k1 }',
+                jobConfigBlock,
+                '',
+            ].join('\n');
+
+        // 1. Local without runtimeVersion normalizes to local_4.2_connect and omits Iceberg defaults for non-Iceberg graphs
+        const localUnset = buildPromptFromPipelineYaml({
+            skillsRoot: bundledSkillsRoot,
+            yamlText: makeSdpYaml('jobConfig:\n  runner: Local'),
+            language: 'PySpark',
+            sparkVersion: '4.0',
+        });
+        expect(localUnset.sdpPlan?.isCompatible).toBe(true);
+        expect(localUnset.sdpPlan?.blockingIssues).toEqual([]);
+        expect(localUnset.sdpPlan?.runtimeArtifacts.profile.id).toBe('local_4.2_connect');
+        expect(localUnset.prompt).toContain('Profile: `local_4.2_connect`');
+        expect(localUnset.prompt).toContain('pyspark[connect]==4.2.*');
+        expect(localUnset.prompt).toContain('pyyaml>=6.0');
+        expect(localUnset.prompt).not.toContain('pyspark[connect]==4.0.*');
+        expect(localUnset.prompt).toContain('"usesIceberg": false');
+        expect(localUnset.prompt).toContain('"bigLakeMode": "none"');
+        expect(localUnset.prompt).toContain('"catalog": "spark_catalog"');
+        expect(localUnset.prompt).toContain('"staticRunnerProperties": {}');
+
+        // 1b. Iceberg SDP pipeline includes IcebergSparkSessionExtensions and defaults bigLakeMode to lakehouse
+        const icebergLocal = buildPromptFromPipelineYaml({
+            skillsRoot: bundledSkillsRoot,
+            yamlText: [
+                'paradigm: sdp',
+                'nodes:',
+                '  - id: s1',
+                '    data: { type: SOURCE, label: Orders Iceberg, spark_transform: IcebergSource }',
+                '  - id: k1',
+                '    data: { type: SINK, label: Silver Iceberg, spark_transform: IcebergSink }',
+                'edges:',
+                '  - { id: e1, source: s1, target: k1 }',
+                'jobConfig:',
+                '  runner: DirectRunner',
+                '',
+            ].join('\n'),
+            language: 'PySpark',
+            sparkVersion: '4.0',
+        });
+        expect(icebergLocal.sdpPlan?.isCompatible).toBe(true);
+        expect(icebergLocal.sdpPlan?.runtimeArtifacts.profile.id).toBe('local_4.2_connect');
+        expect(icebergLocal.sdpPlan?.runtimeArtifacts.profile.runner).toBe('Local');
+        expect(icebergLocal.prompt).toContain('"usesIceberg": true');
+        expect(icebergLocal.prompt).toContain('"bigLakeMode": "lakehouse"');
+        expect(icebergLocal.prompt).toContain('"catalog": "lake"');
+        expect(icebergLocal.prompt).toContain(
+            '"spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"'
+        );
+        expect(icebergLocal.prompt).toContain('"pyspark[connect]==4.2.*"');
+        expect(icebergLocal.prompt).toContain('"pyyaml>=6.0"');
+        expect(icebergLocal.prompt).toContain('"zstandard>=0.25.0"');
+        expect(icebergLocal.prompt).toContain('"pytest>=8.0.0"');
+
+        // 2. Local with default webview placeholder runtimeVersion: "4.0" normalizes to local_4.2_connect
+        const localPlaceholder = buildPromptFromPipelineYaml({
+            skillsRoot: bundledSkillsRoot,
+            yamlText: makeSdpYaml('jobConfig:\n  runner: Local\n  runtimeVersion: "4.0"'),
+            language: 'PySpark',
+        });
+        expect(localPlaceholder.sdpPlan?.isCompatible).toBe(true);
+        expect(localPlaceholder.sdpPlan?.blockingIssues).toEqual([]);
+        expect(localPlaceholder.sdpPlan?.runtimeArtifacts.profile.id).toBe('local_4.2_connect');
+
+        // 3. DataprocCluster without runtimeVersion normalizes to cluster_4.0
+        const clusterUnset = buildPromptFromPipelineYaml({
+            skillsRoot: bundledSkillsRoot,
+            yamlText: makeSdpYaml('jobConfig:\n  runner: DataprocCluster'),
+            language: 'PySpark',
+        });
+        expect(clusterUnset.sdpPlan?.isCompatible).toBe(true);
+        expect(clusterUnset.sdpPlan?.runtimeArtifacts.profile.id).toBe('cluster_4.0');
+
+        // 4. Explicit pre-4.2 versions still fail with SDP_SPARK_42_REQUIRED
+        for (const badBlock of [
+            'jobConfig:\n  runner: ServerlessSpark\n  runtimeVersion: "3.0"',
+            'jobConfig:\n  runner: DataprocCluster\n  runtimeVersion: "3.0"',
+            'jobConfig:\n  runner: Local\n  runtimeVersion: "4.0.1"',
+        ]) {
+            const blocked = buildPromptFromPipelineYaml({
+                skillsRoot: bundledSkillsRoot,
+                yamlText: makeSdpYaml(badBlock),
+                language: 'PySpark',
+            });
+            expect(blocked.sdpPlan?.isCompatible).toBe(false);
+            expect(blocked.sdpPlan?.blockingIssues.map((i) => i.code)).toContain(
+                'SDP_SPARK_42_REQUIRED'
+            );
+        }
+
+        // 5. handleRegenerateCode pre-flight passes runner: Local without SDP_SPARK_42_REQUIRED while rejecting explicit 3.0
+        const localPreflightPost = vi.fn().mockResolvedValue(true);
+        await handleRegenerateCode({
+            message: {
+                data: makeSdpYaml(
+                    'jobConfig:\n  runner: Local\n  sdpStorage: gs://my-sdp/checkpoints'
+                ),
+                filename: 'local_sdp.spark',
+                language: 'PySpark',
+                outputFolder: '',
+            },
+            context: {} as never,
+            postToWebview: localPreflightPost,
+            outputChannel: { appendLine: vi.fn() } as never,
+        });
+        expect(localPreflightPost).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'codeRegenerated',
+                success: false,
+                error: 'Could not determine output folder.',
+            })
+        );
+
+        const explicitDowngradePost = vi.fn().mockResolvedValue(true);
+        await handleRegenerateCode({
+            message: {
+                data: makeSdpYaml(
+                    'jobConfig:\n  runner: ServerlessSpark\n  runtimeVersion: "3.0"\n  sdpStorage: gs://my-sdp/checkpoints'
+                ),
+                filename: 'downgraded_sdp.spark',
+                language: 'PySpark',
+                outputFolder: 'out',
+            },
+            context: {} as never,
+            uri: { fsPath: '/tmp/downgraded_sdp.spark' } as never,
+            postToWebview: explicitDowngradePost,
+            outputChannel: { appendLine: vi.fn() } as never,
+        });
+        expect(explicitDowngradePost).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'codeRegenerated',
+                success: false,
+                error: expect.stringContaining('SDP_SPARK_42_REQUIRED'),
+            })
+        );
     });
 });
 

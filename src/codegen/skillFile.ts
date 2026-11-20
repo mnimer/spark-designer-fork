@@ -18,6 +18,7 @@
  *   usedBy: [generator, reviewer]
  *   languages: [python]
  *   runners: [all]
+ *   paradigms: [imperative, sdp]
  *   transforms: []
  *   preloadWhen: []
  *   sources:
@@ -62,6 +63,7 @@ export const SKILL_METADATA_KEYS: ReadonlySet<string> = new Set([
     'usedBy',
     'languages',
     'runners',
+    'paradigms',
     'transforms',
     'preloadWhen',
     'sources',

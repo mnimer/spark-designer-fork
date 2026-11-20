@@ -59,7 +59,12 @@ export interface BottomPanelRuntimeVariablesSlice {
  * Pipeline configuration slice of the BottomPanel context.
  */
 export interface BottomPanelPipelineConfigSlice {
-  config: { language: 'Python' | 'Java'; outputFolder: string; needsRebuild: boolean };
+  config: {
+    language: 'Python' | 'Java';
+    outputFolder: string;
+    needsRebuild: boolean;
+    paradigm?: 'imperative' | 'sdp';
+  };
   setLanguage: (lang: 'Python' | 'Java') => void;
   setOutputFolder: (folder: string) => void;
   setPipelineConfig?: (config: any) => void;

@@ -1,0 +1,170 @@
+paradigm: sdp
+
+pipelineConfig:
+  language: PySpark
+
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  projectId: my-gcp-project
+  region: us-central1
+  jobId: sdp-auto-cdc-scd1
+  depsBucket: gs://my-spark-deps-bucket
+  sdpStorage: gs://my-sdp-checkpoints/customer-cdc
+  sdpCatalog: lake
+  sdpDatabase: crm_silver
+  sdpBigLakeMode: lakehouse
+  sdpBigLakeProject: my-gcp-project
+  sdpBigLakeCatalogId: crm_lakehouse
+
+runtimeVariables:
+  - key: CDC_SOURCE_URI
+    value: gs://my-crm-landing/customer-cdc/
+  - key: SDP_STORAGE
+    value: gs://my-sdp-checkpoints/customer-cdc
+  - key: SDP_CATALOG
+    value: lake
+  - key: SDP_DATABASE
+    value: crm_silver
+  - key: BIGLAKE_WAREHOUSE
+    value: bl://projects/my-gcp-project/catalogs/crm_lakehouse
+
+nodes:
+  - id: src_cdc_json
+    type: pipeline
+    position:
+      x: 80
+      y: 180
+    data:
+      label: Customer CDC JSON Stream
+      type: SOURCE
+      iconName: FileCode
+      spark_transform: JsonSource
+      supportedReadModes:
+        - batch
+        - streaming
+      defaultReadMode: streaming
+      properties:
+        readMode: streaming
+        storageBackend: gcs
+        path: gs://my-crm-landing/customer-cdc/
+        pathGlobFilter: cdc-*.json
+        mode: PERMISSIVE
+        sdpDatasetName: raw_customer_cdc
+        schemaString: customer_id STRING, email STRING, tier STRING, op STRING, updated_at STRING
+        schemaFields:
+          - name: customer_id
+            type: STRING
+            nullable: false
+          - name: email
+            type: STRING
+            nullable: true
+          - name: tier
+            type: STRING
+            nullable: true
+          - name: op
+            type: STRING
+            nullable: false
+          - name: updated_at
+            type: STRING
+            nullable: false
+
+  - id: step_normalize_cdc
+    type: pipeline
+    position:
+      x: 380
+      y: 180
+    data:
+      label: Normalize Sequence Timestamp
+      type: STEP
+      iconName: Wrench
+      spark_transform: WithColumns
+      properties:
+        sdpDatasetName: staged_customer_cdc
+        columns:
+          - name: updated_at
+            expression: to_timestamp(updated_at)
+            castType: TIMESTAMP
+          - name: email
+            expression: lower(trim(email))
+            castType: STRING
+
+  - id: step_filter_keys
+    type: pipeline
+    position:
+      x: 680
+      y: 180
+    data:
+      label: Filter Valid Keys & Sequence
+      type: STEP
+      iconName: Filter
+      spark_transform: Filter
+      errorOutput: true
+      properties:
+        sdpDatasetName: bronze_customer_cdc
+        mode: sql
+        condition: customer_id IS NOT NULL AND updated_at IS NOT NULL
+
+  - id: step_auto_cdc_scd1
+    type: pipeline
+    position:
+      x: 980
+      y: 180
+    data:
+      label: Auto CDC SCD Type 1 Flow
+      type: STEP
+      iconName: GitMerge
+      spark_transform: MergeCdcScd
+      properties:
+        scdType: scd1
+        keyColumns:
+          - customer_id
+        sequenceColumn: updated_at
+        cdcFormat: custom_op
+        operationColumn: op
+        deleteValues: DELETE
+        actionColumn: _scd_action
+
+  - id: sink_silver_customers
+    type: pipeline
+    position:
+      x: 1280
+      y: 180
+    data:
+      label: Silver Customers Iceberg Table
+      type: SINK
+      iconName: Database
+      spark_transform: IcebergSink
+      streamingSinkMode: native
+      properties:
+        catalogName: lake
+        catalogType: biglake
+        catalogUri: https://biglake.googleapis.com/iceberg/v1/restcatalog
+        namespace: crm_silver
+        table: silver_customers
+        warehouse: gs://my-crm-lakehouse-warehouse
+        warehouseLocation: gs://my-crm-lakehouse-warehouse
+        writeOperation: merge
+        mergeKeys: customer_id
+        authMode: default
+        sdpTableName: silver_customers
+        sdpFormat: iceberg
+
+edges:
+  - id: e_json_to_normalize
+    source: src_cdc_json
+    target: step_normalize_cdc
+  - id: e_normalize_to_filter
+    source: step_normalize_cdc
+    sourceHandle: valid
+    target: step_filter_keys
+  - id: e_filter_to_cdc
+    source: step_filter_keys
+    sourceHandle: valid
+    target: step_auto_cdc_scd1
+    targetHandle: left
+  - id: e_cdc_to_iceberg
+    source: step_auto_cdc_scd1
+    sourceHandle: valid
+    target: sink_silver_customers

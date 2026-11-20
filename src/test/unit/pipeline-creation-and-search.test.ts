@@ -7,21 +7,37 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import YAML from 'yaml';
 
 // Mock vscode module
-const { mockFindFiles } = vi.hoisted(() => ({
-    mockFindFiles: vi.fn().mockResolvedValue([])
-}));
+const { mockFindFiles, mockShowQuickPick, mockShowSaveDialog, mockExecuteCommand, mockRegisterCommand } =
+    vi.hoisted(() => ({
+        mockFindFiles: vi.fn().mockResolvedValue([]),
+        mockShowQuickPick: vi.fn(),
+        mockShowSaveDialog: vi.fn(),
+        mockExecuteCommand: vi.fn().mockResolvedValue(undefined),
+        mockRegisterCommand: vi.fn()
+    }));
 
 vi.mock('vscode', async () => (await import('./helpers/vscodeMock')).createVscodeMock({
+    commands: {
+        registerCommand: mockRegisterCommand,
+        executeCommand: mockExecuteCommand
+    },
+    window: {
+        showQuickPick: mockShowQuickPick,
+        showSaveDialog: mockShowSaveDialog
+    },
     workspace: {
-        findFiles: mockFindFiles
+        findFiles: mockFindFiles,
+        onDidRenameFiles: vi.fn().mockReturnValue({ dispose: vi.fn() })
     }
 }));
 
 import {
+    activate,
     getInitialPipelineContent,
     PIPELINE_SEARCH_EXCLUDE_DIRS,
     PIPELINE_SEARCH_EXCLUDE_PATTERN,
@@ -29,23 +45,25 @@ import {
     SPARK_EDITOR_VIEW_TYPE
 } from '../../extension';
 
-describe('Finding A8 — Starter Pipeline YAML Serialization', () => {
+describe('Finding A8 & SDP1 — Starter Pipeline YAML Serialization and Paradigm Prompt', () => {
     it('serializes new pipeline as YAML instead of JSON (simple case)', () => {
         const content = getInitialPipelineContent();
         // A JSON document starts with '{', YAML does not
         expect(content.trim().startsWith('{')).toBe(false);
         // Valid YAML document
+        expect(content).toContain('paradigm: imperative');
         expect(content).toContain('nodes: []');
         expect(content).toContain('edges: []');
         expect(content).toContain('pipelineConfig:');
         expect(content).toContain('jobConfig:');
     });
 
-    it('parses back with YAML.parse to exact expected shape and defaults (extreme case)', () => {
+    it('parses back with YAML.parse to exact expected shape and defaults for imperative and sdp (extreme case)', () => {
         const content = getInitialPipelineContent();
         const parsed = YAML.parse(content);
 
         expect(parsed).toEqual({
+            paradigm: 'imperative',
             nodes: [],
             edges: [],
             runtimeVariables: [],
@@ -64,15 +82,46 @@ describe('Finding A8 — Starter Pipeline YAML Serialization', () => {
                 subnetwork: ''
             }
         });
+
+        const sdpContent = getInitialPipelineContent('sdp');
+        const parsedSdp = YAML.parse(sdpContent);
+        expect(parsedSdp).toEqual({
+            paradigm: 'sdp',
+            nodes: [],
+            edges: [],
+            runtimeVariables: [],
+            pipelineConfig: {
+                language: 'PySpark',
+                outputFolder: '',
+                needsRebuild: false
+            },
+            jobConfig: {
+                runner: 'ServerlessSpark',
+                runtimeVersion: '4.0',
+                machineType: 'n1-standard-1',
+                minInstances: 1,
+                maxInstances: 10,
+                gcsStagingPath: '',
+                network: '',
+                subnetwork: ''
+            }
+        });
     });
 
-    it('emits keys in the same order as the webview PipelineState (consistency case)', () => {
-        // NOTE: toEqual above is order-insensitive, but the point of A8 is that a brand new
-        // file is byte-indistinguishable from a saved one. The webview serializes
-        // PipelineState (webview/src/hooks/usePipelinePersistence.ts) with a plain
-        // YAML.stringify, so key order is part of the contract, not cosmetic.
+    it('emits keys in the same order as the webview PipelineState with paradigm first (consistency case)', () => {
         const parsed = YAML.parse(getInitialPipelineContent());
         expect(Object.keys(parsed)).toEqual([
+            'paradigm',
+            'nodes',
+            'edges',
+            'runtimeVariables',
+            'jobConfig',
+            'pipelineConfig'
+        ]);
+
+        const parsedSdp = YAML.parse(getInitialPipelineContent('sdp'));
+        expect(Object.keys(parsedSdp)).toEqual([
+            'paradigm',
             'nodes',
             'edges',
             'runtimeVariables',
@@ -82,10 +131,60 @@ describe('Finding A8 — Starter Pipeline YAML Serialization', () => {
     });
 
     it('is byte-identical when re-serialized with YAML.stringify (failure / consistency case)', () => {
-        const content = getInitialPipelineContent();
-        const parsed = YAML.parse(content);
-        const reSerialized = YAML.stringify(parsed);
-        expect(content).toBe(reSerialized);
+        for (const mode of ['imperative', 'sdp'] as const) {
+            const content = getInitialPipelineContent(mode);
+            const parsed = YAML.parse(content);
+            const reSerialized = YAML.stringify(parsed);
+            expect(content).toBe(reSerialized);
+        }
+    });
+
+    it('prompts for paradigm via QuickPick in createNewPipeline and aborts cleanly on cancel (SDP1)', async () => {
+        mockRegisterCommand.mockClear();
+        mockShowQuickPick.mockReset();
+        mockShowSaveDialog.mockReset();
+        mockExecuteCommand.mockClear();
+
+        const subscriptions: { dispose?: () => void }[] = [];
+        activate({ subscriptions } as never);
+
+        const registeredCall = mockRegisterCommand.mock.calls.find(
+            (call) => call[0] === 'spark-pipeline-builder.createNewPipeline'
+        );
+        expect(registeredCall).toBeDefined();
+        const createNewPipelineHandler = registeredCall![1] as () => Promise<void>;
+
+        // 1. User cancels QuickPick -> no save dialog and no file write
+        mockShowQuickPick.mockResolvedValueOnce(undefined);
+        await createNewPipelineHandler();
+        expect(mockShowSaveDialog).not.toHaveBeenCalled();
+        expect(mockExecuteCommand).not.toHaveBeenCalled();
+
+        // 2. User picks Spark Declarative Pipelines (SDP) -> writes paradigm: sdp file and opens editor
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdp-new-pipeline-'));
+        const targetPath = path.join(tmpDir, 'medallion.spark');
+        try {
+            mockShowQuickPick.mockImplementationOnce(async (items: Array<{ paradigm: string; label: string }>) => {
+                expect(items).toHaveLength(2);
+                expect(items[0].label).toContain('Imperative PySpark');
+                expect(items[1].label).toContain('Spark Declarative Pipelines');
+                return items[1];
+            });
+            mockShowSaveDialog.mockResolvedValueOnce({ fsPath: targetPath });
+
+            await createNewPipelineHandler();
+
+            expect(fs.existsSync(targetPath)).toBe(true);
+            const written = fs.readFileSync(targetPath, 'utf-8');
+            expect(written).toBe(getInitialPipelineContent('sdp'));
+            expect(mockExecuteCommand).toHaveBeenCalledWith(
+                'vscode.openWith',
+                expect.objectContaining({ fsPath: targetPath }),
+                SPARK_EDITOR_VIEW_TYPE
+            );
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
     });
 });
 

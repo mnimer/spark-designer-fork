@@ -177,6 +177,9 @@ describe('resolveRuntimeProfile', () => {
           'hadoop-aws',
           'hadoop-azure',
         ],
+        sdpSupported: true,
+        sdpNotes:
+          'Supports Spark Declarative Pipelines via Managed Data Pipelines sdp stages or Serverless Spark 4.0.',
       });
     }
   });
@@ -200,6 +203,9 @@ describe('resolveRuntimeProfile', () => {
           'hadoop-aws',
           'hadoop-azure',
         ],
+        sdpSupported: false,
+        sdpNotes:
+          'Spark Declarative Pipelines requires Apache Spark 4.2+ (Serverless Runtime 4.0+).',
       });
     }
   });
@@ -222,6 +228,7 @@ describe('resolveRuntimeProfile', () => {
           'hadoop-aws',
           'hadoop-azure',
         ],
+        sdpSupported: false,
       });
       expect(profile.defaultTier).toBeUndefined();
     }
@@ -239,6 +246,7 @@ describe('resolveRuntimeProfile', () => {
         javaVersion: '21',
         scalaVersion: '2.13',
         preinstalledConnectors: [],
+        sdpSupported: false,
       });
       expect(profile.defaultTier).toBeUndefined();
     }
@@ -968,8 +976,14 @@ describe('versionMatrix boundary and failure conditions (T1)', () => {
     const managed = (Object.keys(RUNTIME_PROFILES) as SparkRuntimeTarget[]).filter((target) =>
       isManagedSparkRuntime(target)
     );
-    expect(managed.sort()).toEqual(['cluster_3.0', 'serverless_3.0', 'serverless_4.0']);
+    expect(managed.sort()).toEqual([
+      'cluster_3.0',
+      'cluster_4.0',
+      'serverless_3.0',
+      'serverless_4.0',
+    ]);
     expect(isManagedSparkRuntime('local')).toBe(false);
+    expect(isManagedSparkRuntime('local_4.2_connect')).toBe(false);
   });
 
   it('falls back to the local profile for an unknown target and to builtin for an unknown transform', () => {

@@ -148,6 +148,7 @@ export async function runReviewerPass(options: ReviewerPassOptions): Promise<Rev
                     language: toSkillLanguage(options.language),
                     baseName: options.baseName,
                     runnerFiles: reviewerPrompt.templateFiles,
+                    paradigm: reviewerPrompt.detection.paradigm,
                 }),
             onProgress: options.onProgress,
             abortSignal: options.abortSignal,
