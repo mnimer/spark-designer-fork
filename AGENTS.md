@@ -20,6 +20,7 @@ Detailed rules live in `.agents/rules/`. If your tool does not load that folder 
 | Rule File | Trigger | Scope |
 | :--- | :--- | :--- |
 | `git-workflow.md` | `always_on` | Commit policy, commit message format, no remote fetch/push, squash-merged `develop` base. |
+| `graphify.md` | `always_on` | Query `graphify-out/` knowledge graph before broad searches and refresh with `graphify update .` after edits. |
 | `toolchain-and-verification.md` | `always_on` | Airlock `node_modules` bootstrap, `git grep` search, root vs. `webview/` toolchain, verification gate. |
 | `documentation-style.md` | `always_on` | Single-header author credit, ASD-STE100 style, living docs sync. |
 | `model-selection.md` | `always_on` | Valid Gemini model, forbidden models, global Vertex AI endpoint. |
@@ -29,3 +30,9 @@ Detailed rules live in `.agents/rules/`. If your tool does not load that folder 
 | `custom-editor-activation.md` | `model_decision` | `SPARK_EDITOR_VIEW_TYPE` sync, restored `.spark` tab upgrade, `PIPELINE_FILE_EXT` normalization, and zero-`.beam` rule. |
 | `deployment-state-and-runners.md` | `model_decision` | Functional `jobConfig` updaters and runner script allowlist. |
 | `codegen-skill-library.md` | `model_decision` | Codegen skill invariants, transform sync, byte-identical runner templates, no undocumented fallbacks. |
+
+## Knowledge Graph (`graphify-out/`)
+
+- When `graphify-out/graph.json` exists, run `graphify query "<question>"` (or `graphify path "<A>" "<B>"` and `graphify explain "<concept>"`) before running broad `git grep` searches for architectural or cross-file questions.
+- Read `graphify-out/GRAPH_REPORT.md` for high-level architecture orientation when targeted graph queries do not provide enough context.
+- After editing code files, run `graphify update .` to refresh the AST graph without model calls. Git hooks also refresh `graphify-out/` after commit, checkout, merge, and rebase.

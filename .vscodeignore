@@ -3,6 +3,7 @@
 .github/**
 .agents/**
 .gemini/**
+graphify-out/**
 src/**
 tsconfig.json
 tsconfig.integration.json
