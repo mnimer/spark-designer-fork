@@ -30,7 +30,7 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 > - `DOC1–DOC6`: Documentation & Walkthroughs (6 tasks)
 > - `EXT1–EXT8`: Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (8 tasks)
 > - `SDP1–SDP12`: Spark Declarative Pipelines (SDP) Mode (12 tasks)
-> - `CLN1–CLN10`: Final Cleanup, Repository Hygiene & Branch Consolidation (10 tasks)
+> - `CLN1–CLN11`: Final Cleanup, Repository Hygiene & Branch Consolidation (11 tasks)
 > - `V2`: Phase-2 Deferred Backlog (8 items)
 
 ### Phase 0 — Repository Scaffold & Hygiene (`S0`–`S11`)
@@ -317,9 +317,9 @@ Planned as a follow-on release after Phases 9–11. Imperative PySpark stays the
 | [SDP11](#sdp11) | 📦 Sample | Add two bundled SDP samples: a BigLake Iceberg medallion pipeline (file stream to bronze streaming table, silver streaming table, gold materialized view) and an Auto CDC SCD Type 1 pipeline with delete tombstones and out-of-order sequence numbers. | ⬜ Not Started |
 | [SDP12](#sdp12) | 📖 Docs | Document the Imperative vs. SDP decision guide, SDP ceilings, and triggered execution model in `ARCHITECTURE.md`, `DESIGN.md` (paradigm indicator, dataset badges, greyed palette), `README.md`, and a new walkthrough step. | ⬜ Not Started |
 
-### Phase 13 — Final Cleanup, Repository Hygiene & Branch Consolidation (`CLN1`–`CLN10`)
+### Phase 13 — Final Cleanup, Repository Hygiene & Branch Consolidation (`CLN1`–`CLN11`)
 
-Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. Code cleanup (`CLN1`–`CLN7`) ships as one squash-merged PR. Git cleanup (`CLN8`–`CLN10`) runs after that PR merges. The end state on GitHub is exactly two branches: `main` and `develop`.
+Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. Code cleanup (`CLN1`–`CLN7` and `CLN11`) ships as one squash-merged PR. Git cleanup (`CLN8`–`CLN10`) runs after that PR merges. The end state on GitHub is exactly two branches: `main` and `develop`.
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
@@ -333,6 +333,7 @@ Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. C
 | [CLN8](#cln8) | 🌿 Git | Clean up local worktrees and branches. For each phase branch, confirm its work is on `develop` (squash merges hide ancestry, so compare with `git diff develop <branch>` or the merged PR). Run `git worktree remove` for every folder under `~/.gemini/jetski/worktrees/apache-spark-designer/` and any `swarm-*` or scratch worktree after confirming no active agent session uses it, then `git worktree prune` and `git branch -D` for every branch except `main` and `develop`. Sync local `main` with `origin/main`. | ⬜ Not Started |
 | [CLN9](#cln9) | 🌿 Git | User action (agent shells cannot push): delete every remote branch except `main` and `develop` with `git push origin --delete <branch>`, enable the GitHub setting **Automatically delete head branches**, run `git fetch --prune`, and confirm `git ls-remote --heads origin` lists only `main` and `develop`. | ⬜ Not Started |
 | [CLN10](#cln10) | 🌿 Git | Promote `develop` to `main`. `origin/main` (`c5601a2`, bot-generated README) shares no history with `develop`, so GitHub cannot open a PR between them. Merge locally with `git merge --allow-unrelated-histories develop` on `main` (keep the `develop` README), let the user push `main`, and tag the release. Decide whether GitHub's default branch stays `main` or becomes `develop`, so new PRs target `develop` by default. | ⬜ Not Started |
+| [CLN11](#cln11) | 🧹 Cleanup | Stop test runs from filling the disk. Make the integration harness (`pytest-runner.ts`, E2E suites) and generated-project checks reuse one shared Python virtualenv, pip cache, Ivy cache, and JDK under a single cache root, and delete per-run `.venv`, `.spark-ivy`, and XDG cache folders after each run. Update the `phase-swarm-execution` skill to remove phase worktrees and swarm branches as soon as a phase PR merges, and to report free disk space before spawning workers. | ⬜ Not Started |
 
 ### Phase-2 Deferred Backlog (`V2`)
 
