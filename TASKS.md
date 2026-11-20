@@ -31,6 +31,7 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 > - `EXT1–EXT8`: Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (8 tasks)
 > - `SDP1–SDP12`: Spark Declarative Pipelines (SDP) Mode (12 tasks)
 > - `CLN1–CLN11`: Final Cleanup, Repository Hygiene & Branch Consolidation (11 tasks)
+> - `MOD1`: Dynamic Codegen Model Discovery (1 task)
 > - `V2`: Phase-2 Deferred Backlog (8 items)
 
 ### Phase 0 — Repository Scaffold & Hygiene (`S0`–`S11`)
@@ -334,6 +335,14 @@ Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. C
 | [CLN9](#cln9) | 🌿 Git | User action (agent shells cannot push): delete every remote branch except `main` and `develop` with `git push origin --delete <branch>`, enable the GitHub setting **Automatically delete head branches**, run `git fetch --prune`, and confirm `git ls-remote --heads origin` lists only `main` and `develop`. | ⬜ Not Started |
 | [CLN10](#cln10) | 🌿 Git | Promote `develop` to `main`. `origin/main` (`c5601a2`, bot-generated README) shares no history with `develop`, so GitHub cannot open a PR between them. Merge locally with `git merge --allow-unrelated-histories develop` on `main` (keep the `develop` README), let the user push `main`, and tag the release. Decide whether GitHub's default branch stays `main` or becomes `develop`, so new PRs target `develop` by default. | ⬜ Not Started |
 | [CLN11](#cln11) | 🧹 Cleanup | Stop test runs from filling the disk. Make the integration harness (`pytest-runner.ts`, E2E suites) and generated-project checks reuse one shared Python virtualenv, pip cache, Ivy cache, and JDK under a single cache root, and delete per-run `.venv`, `.spark-ivy`, and XDG cache folders after each run. Update the `phase-swarm-execution` skill to remove phase worktrees and swarm branches as soon as a phase PR merges, and to report free disk space before spawning workers. | ⬜ Not Started |
+
+### Phase 14 — Dynamic Codegen Model Discovery (`MOD1`)
+
+Independent feature task that can ship in its own PR before Phase 13 branch consolidation.
+
+| # | Type | Task | Status |
+| :--- | :--- | :--- | :--- |
+| [MOD1](#mod1) | 🧠 Codegen | Fetch available Gemini code-generation models dynamically via `@google/genai` `ai.models.list({ config: { queryBase: true } })` (using Vertex AI `location: 'global'` or Gemini Developer API, with offline fallback to `DEFAULT_GEMINI_MODEL`). Filter out deprecated `gemini-1.*`/`gemini-2.*`, embedding, media, and live-only models, rank by descending version, and default to the latest Flash-class model (for example `gemini-4-hydrogen` over `gemini-3.8-flash`). Wire the four IPC discovery registries (`protocol.ts`, `messageRouter.ts`, `useAssetLoader.ts`, `extension.ts`), add a model selector with refresh in `GeneratorSettings.tsx`, show the active selection in `SourceCodeTab.tsx`, pass the selected model through `regenerateCode` into `executeCodeGeneration()` and `runReviewerPass()`, and add unit tests for filtering, Flash-default ranking, and offline fallback. | ⬜ Not Started |
 
 ### Phase-2 Deferred Backlog (`V2`)
 
