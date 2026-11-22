@@ -116,6 +116,9 @@ function getGeneratedFilePriority(file: string, language: 'Python' | 'Java'): nu
     normalized.toLowerCase().includes('/test/') ||
     normalized.toLowerCase().includes('/tests/');
 
+  if (lower === 'pipeline.ipynb' || lower.endsWith('.ipynb')) {
+    return 0;
+  }
   if (lower === 'pipeline.py' || lower === 'pipeline.java') {
     return isTargetSource ? 0 : 1;
   }

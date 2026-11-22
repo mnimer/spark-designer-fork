@@ -10,6 +10,7 @@
 export interface FileColorInfo {
   readonly category:
     | 'python'
+    | 'notebook'
     | 'java'
     | 'test'
     | 'terraform'
@@ -135,7 +136,19 @@ export function getFileColorInfo(fileName: string): FileColorInfo {
     };
   }
 
-  // 8. Python source files
+  // 8. Jupyter Notebooks (.ipynb)
+  if (ext === 'ipynb') {
+    return {
+      category: 'notebook',
+      badgeLabel: 'IPYNB',
+      iconColor: 'text-purple-400',
+      badgeClass: 'bg-purple-950/60 text-purple-300 border-purple-500/40',
+      tabActiveClass: 'bg-[#0d1117] text-white border-t-2 border-purple-400 font-semibold',
+      dotColor: 'bg-purple-400',
+    };
+  }
+
+  // 9. Python source files
   if (ext === 'py') {
     return {
       category: 'python',
@@ -200,6 +213,9 @@ export function getFileDescription(fileName: string): string {
   if (lower === 'sdp_stage.pipeline.yaml' || lower === 'sdp_stage.pipeline.yml') {
     return 'Managed Data Pipelines SDP stage definition';
   }
+  if (lower.endsWith('.ipynb')) {
+    return 'Interactive Jupyter Notebook (Vertex AI Workbench / Colab Enterprise)';
+  }
   if (lower.endsWith('.py')) {
     return 'PySpark pipeline implementation';
   }
@@ -247,6 +263,9 @@ export function getFileDescription(fileName: string): string {
   }
   if (lower === 'run_sdp_serverless.sh') {
     return 'Serverless Spark Declarative Pipeline submission script';
+  }
+  if (lower === 'run_notebook.sh') {
+    return 'Jupyter Notebook execution & JupyterLab runner script';
   }
   return `${baseName} file`;
 }

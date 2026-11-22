@@ -32,6 +32,7 @@ import { GoogleGenAI } from '@google/genai';
 import {
     isSdpGeneratedProject,
     scanSdpPythonViolations,
+    scanSdpSqlViolations,
     stripPythonCommentsAndDocstrings,
     validateSdpSpecYaml,
 } from '../../../codegen/ReadOnlyCheckRunner';
@@ -584,6 +585,20 @@ export function runSdpArchitectureStaticChecks(
             evidence: v.evidence,
             description: v.message,
             rationale: 'SDP dataset functions must return lazy DataFrames without mutating session state, executing actions, or calling Databricks-only APIs.',
+        }));
+    });
+
+    // 2b. Scan SDP SQL transformation files for Spark 4.2 SqlGraphRegistrationContext rules.
+    const sqlViolations = scanSdpSqlViolations(files);
+    sqlViolations.forEach((v, idx) => {
+        findings.push(staticFinding('SDP-SQL', idx + 1, {
+            category: 'ARCHITECTURE',
+            severity: 'CRITICAL',
+            file: v.file,
+            line: v.line,
+            evidence: v.evidence,
+            description: v.message,
+            rationale: 'SDP SQL files must use valid Spark 4.2 CREATE STREAMING TABLE, MATERIALIZED VIEW, TEMPORARY VIEW, or CREATE FLOW ... BY NAME syntax.',
         }));
     });
 

@@ -146,9 +146,18 @@ export interface SparkPipelineStreamingDefaults {
 }
 
 /**
+ * Canonical allowlist of supported pipeline authoring and code generation paradigms.
+ */
+export const SUPPORTED_PIPELINE_PARADIGMS = [
+    'imperative',
+    'sdp',
+    'notebook',
+] as const;
+
+/**
  * Pipeline authoring and code generation paradigm.
  */
-export type PipelineParadigm = 'imperative' | 'sdp';
+export type PipelineParadigm = (typeof SUPPORTED_PIPELINE_PARADIGMS)[number];
 
 /**
  * Default pipeline paradigm for new and existing Spark pipelines.
@@ -156,9 +165,29 @@ export type PipelineParadigm = 'imperative' | 'sdp';
 export const DEFAULT_PIPELINE_PARADIGM: PipelineParadigm = 'imperative';
 
 /**
+ * Normalizes a candidate paradigm identifier to `'imperative'`, `'sdp'`, or `'notebook'`.
+ * If the value is not a recognized paradigm, return `'imperative'`.
+ *
+ * @param paradigm Candidate paradigm identifier from serialized pipeline config or IPC payload.
+ * @returns Canonical `PipelineParadigm` value.
+ */
+export function normalizePipelineParadigm(paradigm?: unknown): PipelineParadigm {
+    if (typeof paradigm === 'string') {
+        const normalized = paradigm.trim().toLowerCase();
+        if (normalized === 'sdp') {
+            return 'sdp';
+        }
+        if (normalized === 'notebook') {
+            return 'notebook';
+        }
+    }
+    return DEFAULT_PIPELINE_PARADIGM;
+}
+
+/**
  * Dataset micro-badge rendered on canvas nodes in Spark Declarative Pipelines mode.
  */
-export type SdpDatasetBadge = 'VIEW' | 'MV' | 'TABLE' | 'CDC' | 'SINK';
+export type SdpDatasetBadge = 'VIEW' | 'MV' | 'TABLE' | 'CDC' | 'SINK' | 'HYBRID';
 
 /**
  * Canonical Spark Declarative Pipelines dataset or flow registration kind.
@@ -169,7 +198,18 @@ export type SdpDatasetKind =
     | 'streaming_table'
     | 'append_flow'
     | 'auto_cdc'
-    | 'external_sink';
+    | 'external_sink'
+    | 'hybrid_companion';
+
+/**
+ * Transformation output format emitted for Spark Declarative Pipelines (`V2.7`).
+ */
+export type SdpOutputFormat = 'python' | 'sql' | 'mixed';
+
+/**
+ * Data quality enforcement strategy in Spark Declarative Pipelines (`V2.8`).
+ */
+export type SdpQualityMode = 'quarantine' | 'expectations';
 
 /**
  * BigLake Iceberg REST catalog integration mode for SDP pipelines.
@@ -216,6 +256,12 @@ export interface SdpJobConfigFields {
     sdpFullRefreshDatasets?: string[];
     /** True when standalone runners execute CREATE NAMESPACE IF NOT EXISTS before running. */
     sdpCreateNamespace?: boolean;
+    /** True when foreachBatch-only sinks generate a companion imperative job alongside SDP (V2.6). */
+    sdpHybridForeachBatch?: boolean;
+    /** Output format for SDP transformation files: Python, SQL, or mixed (V2.7). */
+    sdpOutputFormat?: SdpOutputFormat;
+    /** Data quality strategy in SDP mode: quarantine datasets or sdp_extensions.expectations (V2.8). */
+    sdpQualityMode?: SdpQualityMode;
 }
 
 /**

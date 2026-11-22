@@ -36,6 +36,7 @@ import {
     isSdpDryRunEnvironmentSkip,
     isSdpGeneratedProject,
     scanSdpPythonViolations,
+    scanSdpSqlViolations,
     stripPythonCommentsAndDocstrings,
     validateSdpSpecYaml,
 } from '../../../codegen/ReadOnlyCheckRunner';
@@ -378,14 +379,22 @@ export function checkDeliverableCompleteness(
         if (!hasSpec) {
             missing.push('Missing mandatory deliverable: spark-pipeline.yml');
         }
-        const hasTransformation = normalizedPaths.some(
+        const hasPyTransformation = normalizedPaths.some(
             (p) => /^transformations\/.+\.py$/.test(p) && !p.endsWith('/__init__.py')
         );
-        if (!hasTransformation) {
-            missing.push('Missing mandatory deliverable: transformations/*.py');
+        const hasSqlTransformation = normalizedPaths.some((p) => /^transformations\/.+\.sql$/i.test(p));
+        if (!hasPyTransformation && !hasSqlTransformation) {
+            missing.push('Missing mandatory deliverable: transformations/*.py or transformations/*.sql');
         }
         for (const req of REQUIRED_SDP_DELIVERABLES) {
             if (req === 'spark-pipeline.yml') {
+                continue;
+            }
+            if (
+                !hasPyTransformation &&
+                hasSqlTransformation &&
+                (req === 'src/transforms.py' || req === 'tests/test_transforms.py')
+            ) {
                 continue;
             }
             if (req === 'sdp_stage.pipeline.yaml') {
@@ -542,24 +551,46 @@ export function checkSdpStructureAndSpec(files: GeneratedFileCandidate[]): Evalu
         const norm = normalizeGeneratedPath(f.filename);
         return /^transformations\/.+\.py$/.test(norm) && !norm.endsWith('/__init__.py');
     });
-    if (transformationFiles.length > 0) {
-        const hasRegistration = transformationFiles.some((f) => {
+    const sqlTransformationFiles = files.filter((f) => {
+        const norm = normalizeGeneratedPath(f.filename);
+        return /^transformations\/.+\.sql$/i.test(norm);
+    });
+    if (transformationFiles.length > 0 || sqlTransformationFiles.length > 0) {
+        const hasPyRegistration = transformationFiles.some((f) => {
             const cleaned = stripPythonCommentsAndDocstrings(f.content).join('\n');
             return (
                 /@\s*dp\s*\.\s*(?:table|materialized_view|temporary_view|append_flow)\b/.test(cleaned) ||
                 /\bdp\s*\.\s*create_(?:streaming_table|auto_cdc_flow|sink)\s*\(/.test(cleaned)
             );
         });
-        if (!hasRegistration) {
+        const hasSqlRegistration = sqlTransformationFiles.some((f) =>
+            /\bCREATE\s+(?:STREAMING\s+TABLE|MATERIALIZED\s+VIEW|TEMPORARY\s+VIEW|VIEW|FLOW)\b/i.test(
+                f.content
+            )
+        );
+        if (!hasPyRegistration && !hasSqlRegistration) {
             findings.push({
                 id: 'STRUCT-SDP-NO-DATASETS',
                 category: 'ARCHITECTURE',
                 severity: 'CRITICAL',
-                file: transformationFiles[0].filename,
-                description: 'transformations/*.py declares no @dp.* or dp.create_* datasets or flows',
-                rationale: 'SDP transformation modules must register datasets via pyspark.pipelines decorators or registration calls.',
+                file: (transformationFiles[0] ?? sqlTransformationFiles[0]).filename,
+                description: 'transformations/* declares no Python @dp.* / dp.create_* or SQL CREATE STREAMING TABLE / MATERIALIZED VIEW / FLOW datasets',
+                rationale: 'SDP transformation modules must register datasets via pyspark.pipelines decorators or SDP SQL DDL statements.',
             });
         }
+    }
+
+    for (const [idx, sqlViolation] of scanSdpSqlViolations(files).entries()) {
+        findings.push({
+            id: `SDP-SQL-${sqlViolation.code}-${idx + 1}`,
+            category: 'ARCHITECTURE',
+            severity: 'CRITICAL',
+            file: sqlViolation.file,
+            line: sqlViolation.line,
+            evidence: sqlViolation.evidence,
+            description: sqlViolation.message,
+            rationale: 'SDP SQL files must follow Apache Spark 4.2 SqlGraphRegistrationContext rules.',
+        });
     }
 
     const helperFile = files.find((f) => normalizeGeneratedPath(f.filename) === 'src/transforms.py');

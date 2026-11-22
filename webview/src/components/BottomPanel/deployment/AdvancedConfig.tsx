@@ -11,6 +11,7 @@ import { SdpSettingsPanel } from './SdpSettingsPanel';
 import { hasIcebergGraphNodes } from '../../../utils/sdpConfigValidation';
 import { useAssetLoader } from '../../../hooks/useAssetLoader';
 import type {
+  PipelineParadigm,
   SdpJobConfigFields,
   SparkPipelineStreamingDefaults,
   SparkStreamingTriggerType,
@@ -95,8 +96,8 @@ export interface AdvancedConfigProps {
   sessionTemplates?: SessionTemplateOption[];
   /** Optional list of discovered GCP regions for DataprocCluster mode. */
   regions?: string[];
-  /** Optional pipeline paradigm ('imperative' | 'sdp'). */
-  paradigm?: 'imperative' | 'sdp';
+  /** Optional pipeline paradigm ('imperative' | 'sdp' | 'notebook'). */
+  paradigm?: PipelineParadigm;
   /** Optional graph nodes for SDP Iceberg runtime and storage path checks. */
   nodes?: readonly unknown[];
   /** Optional resolved GCP project identifier fallback. */

@@ -157,7 +157,7 @@ The Apache Spark Pipeline Designer provides a high-contrast visual IDE for Apach
 ### 1. Canvas Toolbar (`CanvasToolbar`) & Paradigm Compatibility Modal
 - **Floating Control Bar (`data-testid="canvas-toolbar"`)**: Anchors Undo, Redo, Auto Layout, Zoom, and MiniMap controls at `top-3 right-3`.
 - **Pipeline Mode Pill (`data-testid="toolbar-pipeline-mode"`)**: Displays `BATCH` or `STREAMING` from deterministic streaming propagation (`computeStreamingNodeSet`).
-- **Paradigm Indicator & Switcher (`data-testid="toolbar-paradigm-indicator"`)**: Displays `IMPERATIVE` (blue pill) or `SDP (4.2+)` (amber pill).
+- **Output Paradigm Dropdown (`data-testid="toolbar-paradigm-indicator"`)**: Opens a 3-option menu (`IMPERATIVE` blue pill, `SDP (4.2+)` amber pill, and `NOTEBOOK (.IPYNB)` purple pill).
   - When the user switches from `SDP (4.2+)` to `IMPERATIVE`, the editor updates immediately and records an undo snapshot.
   - When the user switches from `IMPERATIVE` to `SDP (4.2+)`, the editor runs `evaluateSdpCompatibility`.
   - If blocking constructs exist, the editor opens an accessible modal (`role="dialog"`, `data-testid="sdp-compatibility-modal"`). The modal lists each incompatible node label, transform, and SDP ceiling reason.
@@ -185,6 +185,7 @@ All micro-badges use compact `10px` (`text-[10px]`) bold pill styling (`px-1 py-
 | **`TABLE`** | `node-sdp-badge` | When `paradigm === 'sdp'` on `@dp.table` or `dp.create_streaming_table` + `@dp.append_flow` | `bg-emerald-500/15 border-emerald-500/40 text-emerald-300` |
 | **`CDC`** | `node-sdp-badge` | When `paradigm === 'sdp'` on `dp.create_auto_cdc_flow` SCD Type 1 flows | `bg-amber-500/15 border-amber-500/40 text-amber-300` |
 | **`SINK`** | `node-sdp-badge` | When `paradigm === 'sdp'` on `dp.create_sink` external streaming sinks | `bg-rose-500/15 border-rose-500/40 text-rose-300` |
+| **`HYBRID`** | `node-sdp-badge` | When `paradigm === 'sdp'` and `sdpHybridForeachBatch` is enabled on `foreachBatch`-only sinks routed to a companion imperative job | `bg-orange-500/15 border-orange-500/40 text-orange-300` |
 
 - When `paradigm === 'sdp'`, `PipelineNode` suppresses `CACHE` and `foreachBatch` pills and renders deterministic `node-sdp-badge` tokens from `sdpPlanner.ts`.
 

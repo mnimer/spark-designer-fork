@@ -44,6 +44,8 @@ export interface SidebarItemProps {
   description?: string;
   /** Active pipeline authoring paradigm ('imperative' default or 'sdp') */
   paradigm?: PipelineParadigm;
+  /** True when hybrid foreachBatch companion sinks are enabled in SDP mode (V2.6) */
+  allowHybridForeachBatch?: boolean;
   /** Explicit disabled override flag */
   disabled?: boolean;
   /** Explanatory tooltip message when disabled */
@@ -98,6 +100,7 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   badge,
   description,
   paradigm = 'imperative',
+  allowHybridForeachBatch = false,
   disabled,
   disabledReason,
   onDragStart,
@@ -107,7 +110,11 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   const IconComponent = getNodeIcon(iconName, Box);
   const theme = getThemeClasses(type);
   const sdpCompatibility =
-    paradigm === 'sdp' ? checkNodeSdpCompatibility(sparkTransform, type) : undefined;
+    paradigm === 'sdp'
+      ? checkNodeSdpCompatibility(sparkTransform, type, undefined, {
+          allowHybridForeachBatch,
+        })
+      : undefined;
   const isDisabled = Boolean(disabled || (sdpCompatibility && !sdpCompatibility.supported));
   const effectiveDisabledReason =
     disabledReason ||

@@ -6,7 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [all]
   runners: [all]
-  paradigms: [imperative, sdp]
+  paradigms: [imperative, sdp, notebook]
   transforms: []
   preloadWhen: []
   sources:
@@ -17,7 +17,7 @@ metadata:
 ---
 You are a Senior Apache Spark 4.x and Google Cloud Managed Spark Data Engineer. Convert the visual `.spark` pipeline YAML and deterministic execution plan below into a complete, production-ready PySpark {{spark_version}} repository.
 
-Check the top-level `paradigm` field in the pipeline YAML (`imperative` by default, or `sdp` when `## SDP Execution Plan` is present) and generate the deliverables for that paradigm only.
+Check the top-level `paradigm` field in the pipeline YAML (`imperative` by default, `sdp` when `## SDP Execution Plan` is present, or `notebook` for Jupyter Notebook `.ipynb` output) and generate the deliverables for that paradigm only.
 
 ### 1. Output JSON Contract
 
@@ -51,6 +51,16 @@ When `paradigm` is `sdp` and `## SDP Execution Plan` is provided (Apache Spark 4
 7. `run_sdp_local.sh` — Executable local Spark 4.2 Spark Connect runner (`spark-pipelines dry-run` / `run` plus `--test` offline `pytest` mode) (`runner-sdp`).
 8. `run_sdp_dataproc.sh` — Executable standalone self-managed Dataproc image `4.0` (`4.0-debian13`, `--optional-components=ICEBERG`) launch script for development (`runner-sdp`).
 9. `README.md` — Concise SDP architecture, BigLake Iceberg REST catalog and 4-part downstream BigQuery/`dbt` contract, refresh safety rules, testing, and deployment guide.
+
+### 2C. Required Project Deliverables (Jupyter Notebook Paradigm — `paradigm: notebook`)
+
+When `paradigm` is `notebook`, generate an interactive Jupyter Notebook project for Vertex AI Workbench, Colab Enterprise, and local JupyterLab instead of `src/pipeline.py`:
+1. `pipeline.ipynb` — Valid nbformat 4.5 JSON notebook (`"nbformat": 4, "nbformat_minor": 5`) with Markdown architecture overview, `"parameters"`-tagged configuration cell, `SparkSession.getActiveSession()` / builder initialization, per-source ingestion cells, transformation cells delegating to `src/transforms.py`, and sink write + `.unpersist()` cleanup cells (`notebook-core`).
+2. `src/transforms.py` — Pure, stateless PySpark DataFrame transformation helper functions imported by `pipeline.ipynb` with zero external cloud I/O and zero `SparkSession.builder` calls.
+3. `tests/test_transforms.py` — Offline `pytest` unit test suite testing every helper function in `src.transforms` using an in-memory local `SparkSession` fixture.
+4. `requirements.txt` — Python dependencies including `pyspark=={{spark_version}}.*`, `jupyterlab>=4.0.0`, `nbconvert>=7.0.0`, `pytest>=8.0.0`, and any connector packages listed in `ExecutionPlan.runtimeArtifacts.pipPackages`.
+5. `run_notebook.sh` — Executable Jupyter Notebook runner script supporting default headless execution (`jupyter nbconvert --execute`), interactive JupyterLab (`--lab`), and offline unit tests (`--test`) (`runner-notebook`).
+6. `README.md` — Concise guide covering Vertex AI Workbench, Colab Enterprise (Dataproc Serverless Interactive Session), local JupyterLab (`./run_notebook.sh --lab`), headless execution (`./run_notebook.sh`), and offline unit tests (`./run_notebook.sh --test`).
 
 ### 3. Mandatory 3-Phase Testable Separation in `src/pipeline.py` (Imperative Mode)
 

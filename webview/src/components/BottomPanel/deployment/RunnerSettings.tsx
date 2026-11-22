@@ -8,6 +8,7 @@
 import React from 'react';
 import {
   normalizeSparkRunner,
+  type PipelineParadigm,
   type SparkRunnerType,
 } from '../../../utils/sharedTypes';
 import type { BottomPanelContextValue } from '../BottomPanelContext';
@@ -25,8 +26,8 @@ export interface RunnerSettingsProps {
   runner?: string;
   /** State updater callback for modifying the parent job configuration. */
   setJobConfig: BottomPanelContextValue['jobConfig']['set'];
-  /** Optional pipeline paradigm ('imperative' | 'sdp'). */
-  paradigm?: 'imperative' | 'sdp';
+  /** Optional pipeline paradigm ('imperative' | 'sdp' | 'notebook'). */
+  paradigm?: PipelineParadigm;
 }
 
 /**

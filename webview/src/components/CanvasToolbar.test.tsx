@@ -100,7 +100,7 @@ describe('CanvasToolbar', () => {
     expect(screen.queryByTestId('mini-map')).not.toBeInTheDocument();
   });
 
-  it('renders IMPERATIVE vs SDP (4.2+) paradigm indicator and fires onParadigmChange (SDP1)', () => {
+  it('renders 3-option generated output dropdown (Imperative, SDP, Notebook) and fires onParadigmChange (SDP1, V2.1)', () => {
     const onParadigmChange = vi.fn();
     const { rerender } = render(
       <CanvasToolbar
@@ -115,9 +115,22 @@ describe('CanvasToolbar', () => {
 
     const indicator = screen.getByTestId('toolbar-paradigm-indicator');
     expect(indicator).toHaveTextContent('IMPERATIVE');
-    fireEvent.click(indicator);
-    expect(onParadigmChange).toHaveBeenCalledWith('sdp');
+    expect(indicator).toHaveAttribute('aria-expanded', 'false');
 
+    // Open dropdown and verify all 3 options are listed
+    fireEvent.click(indicator);
+    expect(indicator).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('toolbar-paradigm-menu')).toBeInTheDocument();
+    expect(screen.getByTestId('paradigm-option-imperative')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('paradigm-option-sdp')).toBeInTheDocument();
+    expect(screen.getByTestId('paradigm-option-notebook')).toBeInTheDocument();
+
+    // Pick SDP
+    fireEvent.click(screen.getByTestId('paradigm-option-sdp'));
+    expect(onParadigmChange).toHaveBeenCalledWith('sdp');
+    expect(screen.queryByTestId('toolbar-paradigm-menu')).not.toBeInTheDocument();
+
+    // Rerender as SDP and pick Notebook (.ipynb)
     onParadigmChange.mockClear();
     rerender(
       <CanvasToolbar
@@ -133,6 +146,30 @@ describe('CanvasToolbar', () => {
 
     expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('SDP (4.2+)');
     fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    fireEvent.click(screen.getByTestId('paradigm-option-notebook'));
+    expect(onParadigmChange).toHaveBeenCalledWith('notebook');
+
+    // Rerender as Notebook (.ipynb) and switch back to Imperative
+    onParadigmChange.mockClear();
+    rerender(
+      <CanvasToolbar
+        canUndo={false}
+        canRedo={false}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onAutoLayout={vi.fn()}
+        paradigm="notebook"
+        onParadigmChange={onParadigmChange}
+      />
+    );
+
+    expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('NOTEBOOK (.IPYNB)');
+    fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('toolbar-paradigm-menu')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    fireEvent.click(screen.getByTestId('paradigm-option-imperative'));
     expect(onParadigmChange).toHaveBeenCalledWith('imperative');
   });
 });

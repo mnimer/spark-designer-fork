@@ -256,6 +256,20 @@ describe('pipelineConfigReducer', () => {
       });
     });
 
+    it('switches paradigm to notebook and preserves referential equality when already notebook (V2.1)', () => {
+      const next = pipelineConfigReducer(baseConfig, {
+        type: 'setParadigm',
+        paradigm: 'notebook',
+      });
+      expect(next).toEqual({
+        language: 'Python',
+        outputFolder: 'output/dir',
+        needsRebuild: true,
+        paradigm: 'notebook',
+      });
+      expect(pipelineConfigReducer(next, { type: 'setParadigm', paradigm: 'notebook' })).toBe(next);
+    });
+
     it('preserves referential equality when paradigm is already effective imperative or sdp', () => {
       expect(
         pipelineConfigReducer(baseConfig, { type: 'setParadigm', paradigm: 'imperative' })

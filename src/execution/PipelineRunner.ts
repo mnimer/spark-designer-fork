@@ -139,10 +139,13 @@ function formatSdpStaticSparkConf(raw: Record<string, string> | string | undefin
  * Returns the runner script filenames to look for, in priority order.
  *
  * @param runner Runner name from the job config.
- * @param paradigm Optional pipeline paradigm (`'imperative'` | `'sdp'`).
+ * @param paradigm Optional pipeline paradigm (`'imperative'` | `'sdp'` | `'notebook'`).
  * @returns Candidate script names (empty for unknown runners).
  */
 export function runnerScriptCandidates(runner: string, paradigm?: string): string[] {
+    if (paradigm === 'notebook') {
+        return ['run_notebook.sh', 'run_local.sh'];
+    }
     if (paradigm === 'sdp') {
         if (runner === 'Local') {
             return ['run_sdp_local.sh', 'run_local.sh'];
@@ -193,10 +196,13 @@ export function findRunnerScript(
  * execution log header.
  *
  * @param runner Runner name.
- * @param paradigm Optional pipeline paradigm (`'imperative'` | `'sdp'`).
+ * @param paradigm Optional pipeline paradigm (`'imperative'` | `'sdp'` | `'notebook'`).
  * @returns A shell-comment description line.
  */
 export function describeRunner(runner: string, paradigm?: string): string {
+    if (paradigm === 'notebook') {
+        return '# Executing Jupyter Notebook Pipeline (Vertex AI Workbench / Colab Enterprise / Local Jupyter)';
+    }
     if (paradigm === 'sdp') {
         if (runner === 'Local') {
             return '# Running Spark Declarative Pipeline via Local Spark 4.2 Connect';

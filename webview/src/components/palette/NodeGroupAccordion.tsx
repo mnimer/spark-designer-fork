@@ -24,6 +24,8 @@ export interface NodeGroupAccordionProps {
   activeTab?: string | null;
   /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
   paradigm?: PipelineParadigm;
+  /** True when hybrid foreachBatch companion sinks are enabled in SDP mode (V2.6). */
+  allowHybridForeachBatch?: boolean;
   /** Callback invoked when the accordion open state is toggled by the user. */
   onToggle: (open: boolean) => void;
   /** Handler invoked when a node card drag starts. */
@@ -55,6 +57,7 @@ export const NodeGroupAccordion: React.FC<NodeGroupAccordionProps> = ({
   groupName,
   activeTab,
   paradigm = 'imperative',
+  allowHybridForeachBatch = false,
   onToggle,
   onDragStart,
   onAddNode,
@@ -102,6 +105,7 @@ export const NodeGroupAccordion: React.FC<NodeGroupAccordionProps> = ({
               badge={item.badge}
               description={item.description}
               paradigm={paradigm}
+              allowHybridForeachBatch={allowHybridForeachBatch}
               onDragStart={onDragStart}
               onAddNode={onAddNode}
             />

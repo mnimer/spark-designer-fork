@@ -215,7 +215,8 @@ function pruneEmptyDirectories(targetFolderPath: string, deletedRelPaths: string
 export function executeScopedCleanup(
     targetFolderPath: string,
     manifest: GenerationManifest,
-    requestedLanguage: string
+    requestedLanguage: string,
+    requestedParadigm?: string
 ): { removed: number; modifiedFiles: string[] } {
     const designerOutputChannel = tryGetDesignerOutputChannel();
     let entries: string[] = [];
@@ -238,7 +239,7 @@ export function executeScopedCleanup(
         }
     }
 
-    const plan = planCleanup(manifest, requestedLanguage, entries, currentHashes);
+    const plan = planCleanup(manifest, requestedLanguage, entries, currentHashes, requestedParadigm);
 
     let removed = 0;
     // Records what actually left the disk so we know which directories to re-test for
@@ -285,6 +286,10 @@ export function executeScopedCleanup(
         designerOutputChannel?.appendLine(
             `[generation] Language switch ${manifest.language} -> ${requestedLanguage}: removed ${removed} entries including build artifacts.`
         );
+    } else if (plan.isParadigmSwitch && requestedParadigm) {
+        designerOutputChannel?.appendLine(
+            `[generation] Paradigm switch ${manifest.paradigm || 'imperative'} -> ${requestedParadigm}: removed ${removed} entries including stale runtime artifacts.`
+        );
     }
     return { removed, modifiedFiles: plan.modifiedFiles };
 }
@@ -301,10 +306,11 @@ export function writeGenerationManifest(
     targetFolderPath: string,
     pipelineId: string,
     language: string,
-    written: Array<{ path: string; content: string }>
+    written: Array<{ path: string; content: string }>,
+    paradigm?: string
 ): void {
     try {
-        const manifest = buildManifest(pipelineId, language, written);
+        const manifest = buildManifest(pipelineId, language, written, paradigm);
         fs.writeFileSync(
             path.join(targetFolderPath, MANIFEST_FILENAME),
             JSON.stringify(manifest, null, 2),

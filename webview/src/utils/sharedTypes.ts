@@ -19,6 +19,8 @@ export type {
     PipelineParadigm,
     SdpDatasetBadge,
     SdpDatasetKind,
+    SdpOutputFormat,
+    SdpQualityMode,
     SdpBigLakeMode,
     SdpRefreshMode,
     SdpCommandMode,

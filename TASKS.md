@@ -29,7 +29,7 @@ Legend: `⬜ Not Started` · `🟦 In Progress` · `⏸️ Deferred` · `✅ Don
 > - `DOC1–DOC6`: Documentation & Walkthroughs (6 tasks)
 > - `EXT1–EXT8`: Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (8 tasks)
 > - `SDP1–SDP12`: Spark Declarative Pipelines (SDP) Mode (12 tasks)
-> - `CLN1–CLN11`: Final Cleanup, Repository Hygiene & Branch Consolidation (11 tasks)
+> - `CLN1–CLN11`: Final Cleanup, Repository Hygiene & Branch Consolidation (10 tasks)
 > - `MOD1`: Dynamic Codegen Model Discovery (1 task)
 > - `V2`: Phase-2 Deferred Backlog (8 items)
 
@@ -319,7 +319,7 @@ Planned as a follow-on release after Phases 9–11. Imperative PySpark stays the
 
 ### Phase 13 — Final Cleanup, Repository Hygiene & Branch Consolidation (`CLN1`–`CLN11`)
 
-Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. Code cleanup (`CLN1`–`CLN7` and `CLN11`) ships as one squash-merged PR. Git cleanup (`CLN8`–`CLN10`) runs after that PR merges. The end state on GitHub is exactly two branches: `main` and `develop`.
+Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. Code cleanup (`CLN1`–`CLN7` and `CLN11`) ships as one squash-merged PR. Git cleanup (`CLN8`–`CLN9`) runs after that PR merges. The end state on GitHub is exactly two branches: `main` and `develop`.
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
@@ -330,9 +330,8 @@ Run this phase last, after the Phase 10 and Phase 12 PRs merge into `develop`. C
 | [CLN5](#cln5) | 🧹 Cleanup | Delete Beam-era npm scripts that target nonexistent folders (`test:integration:java`, `:python`, `:sources`, `:sinks`, `:steps`, and their `:java`/`:python` variants) from `package.json`. Keep `test:integration`, `:watch`, `:e2e`, and `:pytest`. Fix `.vscodeignore` (`TASK.md` becomes `TASKS.md`, drop `.gemini/**`) and verify the `vsce package` VSIX contains only runtime files. | ✅ Done |
 | [CLN6](#cln6) | 🧹 Cleanup | Fix the webview lint debt so `npm --prefix webview run lint` exits `0` (216 errors and 7 warnings on `develop` at `9710dce`, mostly `no-explicit-any`), remove file-level `no-explicit-any` disables where types allow (50 files), and reduce root `npm run lint` warnings (367 at `9710dce`). | ✅ Done |
 | [CLN7](#cln7) | 🧹 Cleanup | Consolidate compatibility shims and agent docs: replace imports of the `src/dagValidator.ts` re-export shim and merge `src/constants.ts` into `src/core/constants.ts`. Deduplicate `phase-swarm-execution` and `spark-connector-authoring` skill text that repeats `.agents/rules/`, and refresh the `TASKS.md` header (title and baseline metadata). Run the full verification gate. | ✅ Done |
-| [CLN8](#cln8) | 🌿 Git | Clean up local worktrees and branches. For each phase branch, confirm its work is on `develop` (squash merges hide ancestry, so compare with `git diff develop <branch>` or the merged PR). Run `git worktree remove` for every folder under `~/.gemini/jetski/worktrees/apache-spark-designer/` and any `swarm-*` or scratch worktree after confirming no active agent session uses it, then `git worktree prune` and `git branch -D` for every branch except `main` and `develop`. Sync local `main` with `origin/main`. | 🟦 In Progress |
-| [CLN9](#cln9) | 🌿 Git | User action (agent shells cannot push): delete every remote branch except `main` and `develop` with `git push origin --delete <branch>`, enable the GitHub setting **Automatically delete head branches**, run `git fetch --prune`, and confirm `git ls-remote --heads origin` lists only `main` and `develop`. | 🟦 In Progress |
-| [CLN10](#cln10) | 🌿 Git | Promote `develop` to `main`. `origin/main` (`c5601a2`, bot-generated README) shares no history with `develop`, so GitHub cannot open a PR between them. Merge locally with `git merge --allow-unrelated-histories develop` on `main` (keep the `develop` README), let the user push `main`, and tag the release. Decide whether GitHub's default branch stays `main` or becomes `develop`, so new PRs target `develop` by default. | 🟦 In Progress |
+| [CLN8](#cln8) | 🌿 Git | Clean up local worktrees and branches. For each phase branch, confirm its work is on `develop` (squash merges hide ancestry, so compare with `git diff develop <branch>` or the merged PR). Run `git worktree remove` for every folder under `~/.gemini/jetski/worktrees/apache-spark-designer/` and any `swarm-*` or scratch worktree after confirming no active agent session uses it, then `git worktree prune` and `git branch -D` for every branch except `main` and `develop`. Sync local `main` with `origin/main`. | ✅ Done |
+| [CLN9](#cln9) | 🌿 Git | User action (agent shells cannot push): delete every remote branch except `main` and `develop` with `git push origin --delete <branch>`, enable the GitHub setting **Automatically delete head branches**, run `git fetch --prune`, and confirm `git ls-remote --heads origin` lists only `main` and `develop`. | ✅ Done |
 | [CLN11](#cln11) | 🧹 Cleanup | Stop test runs from filling the disk. Make the integration harness (`pytest-runner.ts`, E2E suites) and generated-project checks reuse one shared Python virtualenv, pip cache, Ivy cache, and JDK under a single cache root, and delete per-run `.venv`, `.spark-ivy`, and XDG cache folders after each run. Update the `phase-swarm-execution` skill to remove phase worktrees and swarm branches as soon as a phase PR merges, and to report free disk space before spawning workers. | ✅ Done |
 
 ### Phase 14 — Dynamic Codegen Model Discovery (`MOD1`)
@@ -347,14 +346,14 @@ Independent feature task that can ship in its own PR before Phase 13 branch cons
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
-| `V2.1` | ⏸️ V2 | Interactive Jupyter Notebook (`.ipynb`) output mode for Vertex AI Workbench / Colab Enterprise kernels. | ⏸️ Deferred |
+| `V2.1` | ⏸️ V2 | Interactive Jupyter Notebook (`.ipynb`) output mode for Vertex AI Workbench / Colab Enterprise kernels. | ✅ Done |
 | `V2.2` | ⏸️ V2 | Scala (`sbt` / Maven) code generation using per-skill `scala.md` reference files. | ⏸️ Deferred |
 | `V2.3` | ⏸️ V2 | Live schema introspection from BigQuery / Dataplex / Iceberg catalogs to auto-populate column dropdowns in downstream Step forms. | ⏸️ Deferred |
 | `V2.4` | ⏸️ V2 | Dataproc Workflow Templates & Serverless Spark scheduled Cloud Composer / Cloud Scheduler export. | ⏸️ Deferred |
 | `V2.5` | ⏸️ V2 | Spark Event Log / Driver Log analyzer integration (`gcp-spark-troubleshooting`) inside the Deployment Execution Terminal on job failure. | ⏸️ Deferred |
-| `V2.6` | ⏸️ V2 | Hybrid SDP output: generate an SDP project for catalog datasets plus a companion imperative job for `foreachBatch`-only sinks that SDP cannot express. | ⏸️ Deferred |
-| `V2.7` | ⏸️ V2 | SDP SQL output mode: emit `transformations/*.sql` (`CREATE STREAMING TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE FLOW ... INSERT INTO ... BY NAME`) for nodes that need no Python UDFs or sinks. | ⏸️ Deferred |
-| `V2.8` | ⏸️ V2 | Optional SDP expectations support through the `sdp_extensions.expectations` library when available on the target runtime, as an alternative to quarantine datasets. | ⏸️ Deferred |
+| `V2.6` | ⏸️ V2 | Hybrid SDP output: generate an SDP project for catalog datasets plus a companion imperative job for `foreachBatch`-only sinks that SDP cannot express. | ✅ Done |
+| `V2.7` | ⏸️ V2 | SDP SQL output mode: emit `transformations/*.sql` (`CREATE STREAMING TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE FLOW ... INSERT INTO ... BY NAME`) for nodes that need no Python UDFs or sinks. | ✅ Done |
+| `V2.8` | ⏸️ V2 | Optional SDP expectations support through the `sdp_extensions.expectations` library when available on the target runtime, as an alternative to quarantine datasets. | ✅ Done |
 
 ---
 

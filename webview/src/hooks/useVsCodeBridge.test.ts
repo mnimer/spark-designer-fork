@@ -71,6 +71,18 @@ describe('findMainPipelineFile', () => {
       'transformations/bronze_orders.py'
     );
   });
+
+  it('selects pipeline.ipynb or matching .ipynb file for notebook projects (V2.1)', () => {
+    const nbFiles = ['README.md', 'src/transforms.py', 'pipeline.ipynb', 'run_notebook.sh'];
+    expect(findMainPipelineFile(nbFiles, 'Python', 'orders.spark', 'notebook')).toBe(
+      'pipeline.ipynb'
+    );
+
+    const namedNbFiles = ['README.md', 'orders.ipynb', 'src/transforms.py'];
+    expect(findMainPipelineFile(namedNbFiles, 'Python', 'orders.spark', 'notebook')).toBe(
+      'orders.ipynb'
+    );
+  });
 });
 
 describe('isPlaceholderProjectId', () => {

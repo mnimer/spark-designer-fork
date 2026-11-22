@@ -55,7 +55,7 @@ export function isPlaceholderProjectId(projectId: string | undefined): boolean {
  * @param files List of relative file paths in the generated output directory.
  * @param language Target programming language ('Python' | 'Java').
  * @param filename Optional current pipeline .spark filename used for name matching.
- * @param paradigm Optional active pipeline authoring paradigm ('imperative' | 'sdp').
+ * @param paradigm Optional active pipeline authoring paradigm ('imperative' | 'sdp' | 'notebook').
  * @returns The best matching main pipeline file path, or null if empty.
  */
 export const findMainPipelineFile = (
@@ -65,6 +65,18 @@ export const findMainPipelineFile = (
   paradigm?: PipelineParadigm
 ): string | null => {
   if (!files || files.length === 0) return null;
+
+  const notebookFiles = files.filter((f) => f.toLowerCase().endsWith('.ipynb'));
+  if (paradigm === 'notebook' && notebookFiles.length > 0) {
+    const baseStem = filename ? filename.replace(/\.spark$/i, '').toLowerCase() : '';
+    const primaryNotebook =
+      notebookFiles.find((f) => /(?:^|\/)pipeline\.ipynb$/i.test(f)) ??
+      (baseStem
+        ? notebookFiles.find((f) => f.toLowerCase().endsWith(`/${baseStem}.ipynb`) || f.toLowerCase() === `${baseStem}.ipynb`)
+        : undefined) ??
+      notebookFiles[0];
+    return primaryNotebook;
+  }
 
   const sdpSpecFile = files.find((f) => /(?:^|\/)spark-pipeline\.ya?ml$/i.test(f));
   const sdpTransformationFiles = files.filter((f) => {
@@ -340,12 +352,14 @@ export function useVsCodeBridge({
                 variables.unshift({ key: 'JOB_ID', value: defaultJobId });
               }
               setRuntimeVariables(variables);
+              const rawParadigm =
+                data.paradigm ?? data.pipelineConfig?.paradigm ?? data.jobConfig?.paradigm;
               const parsedParadigm: PipelineParadigm =
-                data.paradigm === 'sdp' ||
-                data.pipelineConfig?.paradigm === 'sdp' ||
-                data.jobConfig?.paradigm === 'sdp'
+                rawParadigm === 'sdp'
                   ? 'sdp'
-                  : 'imperative';
+                  : rawParadigm === 'notebook'
+                    ? 'notebook'
+                    : 'imperative';
               const defaultRunner = parsedParadigm === 'sdp' ? 'ServerlessSpark' : 'Local';
               const hydratedJobConfig: AdvancedJobConfig = {
                 machineType: 'n1-standard-1',
@@ -360,7 +374,7 @@ export function useVsCodeBridge({
                 runner: String(data.jobConfig?.runner || defaultRunner),
               };
               if (
-                parsedParadigm === 'imperative' &&
+                (parsedParadigm === 'imperative' || parsedParadigm === 'notebook') &&
                 hydratedJobConfig.useSparkConnect !== true &&
                 hydratedJobConfig.runtimeVersion === '4.2-connect'
               ) {

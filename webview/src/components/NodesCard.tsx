@@ -86,6 +86,8 @@ interface NodesCardProps {
   onToggleOpen?: (open: boolean) => void;
   /** Active pipeline authoring paradigm ('imperative' default or 'sdp') */
   paradigm?: PipelineParadigm;
+  /** True when hybrid foreachBatch companion sinks are enabled in SDP mode (V2.6) */
+  allowHybridForeachBatch?: boolean;
 }
 
 /**
@@ -102,6 +104,7 @@ export const NodesCard: React.FC<NodesCardProps> = ({
   isOpen: controlledIsOpen,
   onToggleOpen,
   paradigm = 'imperative',
+  allowHybridForeachBatch = false,
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -368,6 +371,7 @@ export const NodesCard: React.FC<NodesCardProps> = ({
                       groupName={`palette-${(activeTab || 'sources').toLowerCase()}`}
                       activeTab={activeTab}
                       paradigm={paradigm}
+                      allowHybridForeachBatch={allowHybridForeachBatch}
                       onToggle={(open) => handleToggleGroup(groupKey, open)}
                       onDragStart={onDragStart}
                       onAddNode={onAddNode}

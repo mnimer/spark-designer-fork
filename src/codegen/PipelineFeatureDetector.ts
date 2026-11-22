@@ -31,12 +31,14 @@
 
 import type { DagEdge, DagNode } from '../shared/dagValidator';
 import { computeStreamingNodeSet } from '../shared/sparkDagRules';
+import { getNodeCapabilities } from '../shared/sparkNodeCapabilities';
 import type { SupportedLanguage } from '../shared/types';
 import { resolveConnectorForRuntime } from '../spark/versionMatrix';
 import {
     CUSTOM_INSTRUCTION_KEYS,
     EDGE_HANDLES,
     LANGUAGE_RUNNERS,
+    NOTEBOOK_LANGUAGE_RUNNERS,
     PIPELINE_FEATURES,
     PipelineFeature,
     PYTHON_DATASOURCE_TRANSFORMS,
@@ -172,7 +174,7 @@ function usesPythonDataSource(
  * `jobConfig.paradigm`, defaulting to `'imperative'`.
  *
  * @param root Parsed pipeline document record.
- * @returns Canonical `SkillParadigm` (`'imperative'` | `'sdp'`).
+ * @returns Canonical `SkillParadigm` (`'imperative'` | `'sdp'` | `'notebook'`).
  */
 function extractParadigm(root: Record<string, unknown>): SkillParadigm {
     const candidates = [
@@ -185,6 +187,9 @@ function extractParadigm(root: Record<string, unknown>): SkillParadigm {
             const normalized = candidate.trim().toLowerCase();
             if (normalized === SKILL_PARADIGMS.sdp) {
                 return SKILL_PARADIGMS.sdp;
+            }
+            if (normalized === SKILL_PARADIGMS.notebook) {
+                return SKILL_PARADIGMS.notebook;
             }
             if (normalized === SKILL_PARADIGMS.imperative) {
                 return SKILL_PARADIGMS.imperative;
@@ -216,6 +221,22 @@ export function detectPipelineFeatures(
 
     const rawNodes = asArray(root.nodes);
     const rawEdges = asArray(root.edges);
+    const jobConfigRecord = asRecord(root.jobConfig);
+    const sdpHybridEnabled = Boolean(jobConfigRecord?.sdpHybridForeachBatch);
+    const rawSdpOutputFormat =
+        typeof jobConfigRecord?.sdpOutputFormat === 'string'
+            ? jobConfigRecord.sdpOutputFormat.trim().toLowerCase()
+            : 'python';
+    const sdpQualityMode =
+        typeof jobConfigRecord?.sdpQualityMode === 'string'
+            ? jobConfigRecord.sdpQualityMode.trim().toLowerCase()
+            : 'quarantine';
+    if (
+        paradigm === SKILL_PARADIGMS.sdp &&
+        (rawSdpOutputFormat === 'sql' || rawSdpOutputFormat === 'mixed')
+    ) {
+        features.add(PIPELINE_FEATURES.sdpSql);
+    }
     const errorSourceNodeIds = new Set<string>();
     for (const edge of rawEdges) {
         const edgeRecord = asRecord(edge);
@@ -297,7 +318,7 @@ export function detectPipelineFeatures(
             features.add(PIPELINE_FEATURES.xlang);
         }
 
-        // 2h. Spark Declarative Pipelines (SDP) feature flags (`sdp_auto_cdc`, `sdp_quarantine`).
+        // 2h. Spark Declarative Pipelines (SDP) feature flags (`sdp_auto_cdc`, `sdp_quarantine`, `sdp_hybrid`, `sdp_expectations`).
         if (paradigm === SKILL_PARADIGMS.sdp) {
             if (transformName === 'MergeCdcScd' || rawTrimmed === 'MergeCdcScd') {
                 features.add(PIPELINE_FEATURES.sdpAutoCdc);
@@ -307,12 +328,26 @@ export function detectPipelineFeatures(
                 (nodeId.length > 0 && errorSourceNodeIds.has(nodeId)) ||
                 properties?.failurePolicy === 'route_to_dlq' ||
                 properties?.quarantine === true;
-            if (
-                transformName === 'DataQualityAssert' ||
-                rawTrimmed === 'DataQualityAssert' ||
+            const isDataQualityNode =
+                transformName === 'DataQualityAssert' || rawTrimmed === 'DataQualityAssert';
+            if (isDataQualityNode && sdpQualityMode === 'expectations') {
+                features.add(PIPELINE_FEATURES.sdpExpectations);
+                if (hasDlqSplit) {
+                    features.add(PIPELINE_FEATURES.sdpQuarantine);
+                }
+            } else if (
+                isDataQualityNode ||
                 ((transformName === 'EnforceSchemaAndCast' || transformName === 'ParsePayload') && hasDlqSplit)
             ) {
                 features.add(PIPELINE_FEATURES.sdpQuarantine);
+            }
+            const isSinkNode = data.type === 'SINK' || nodeRecord?.type === 'SINK';
+            if (
+                sdpHybridEnabled &&
+                isSinkNode &&
+                getNodeCapabilities(transformName, 'SINK').streamingSinkMode === 'foreachBatch'
+            ) {
+                features.add(PIPELINE_FEATURES.sdpHybrid);
             }
         }
     }
@@ -325,11 +360,14 @@ export function detectPipelineFeatures(
         }
     }
 
-    // 4. Runners: SDP uses `SDP_LANGUAGE_RUNNERS` (`sdp`), while imperative gets all language runners.
+    // 4. Runners: SDP uses `SDP_LANGUAGE_RUNNERS`, notebook uses `NOTEBOOK_LANGUAGE_RUNNERS`,
+    //    and imperative receives all standard language runners.
     const runners =
         paradigm === SKILL_PARADIGMS.sdp
             ? new Set<SkillRunner>(SDP_LANGUAGE_RUNNERS[skillLanguage])
-            : new Set<SkillRunner>(LANGUAGE_RUNNERS[skillLanguage]);
+            : paradigm === SKILL_PARADIGMS.notebook
+                ? new Set<SkillRunner>(NOTEBOOK_LANGUAGE_RUNNERS[skillLanguage])
+                : new Set<SkillRunner>(LANGUAGE_RUNNERS[skillLanguage]);
 
     return {
         language: skillLanguage,

@@ -8,10 +8,11 @@
 
 ## High-Level Overview
 
-The Apache Spark / Managed Spark Pipeline Builder is a VS Code extension for designing, validating, generating, and running Apache Spark 4.x pipelines. One `.spark` custom editor supports two execution paradigms:
+The Apache Spark / Managed Spark Pipeline Builder is a VS Code extension for designing, validating, generating, and running Apache Spark 4.x pipelines. One `.spark` custom editor supports three generated output paradigms:
 
 - **Imperative PySpark (`paradigm: imperative`, default)**: Generates `src/pipeline.py`, `tests/test_pipeline.py`, `Dockerfile`, and runner scripts for Local PySpark, Dataproc Clusters, and GCP Serverless Spark.
 - **Spark Declarative Pipelines (`paradigm: sdp`, Spark 4.2+)**: Generates `spark-pipeline.yml`, `transformations/*.py` (`from pyspark import pipelines as dp`), pure `src/transforms.py` helpers, `tests/test_transforms.py`, and SDP runners.
+- **Jupyter Notebook (`paradigm: notebook`, `.ipynb`)**: Generates `pipeline.ipynb` (nbformat 4.5 for Vertex AI Workbench, Colab Enterprise, and local JupyterLab), pure `src/transforms.py` helpers, `tests/test_transforms.py`, and `run_notebook.sh`.
 
 ---
 
@@ -135,7 +136,7 @@ The webview renders inside a sandboxed browser frame built with React 19, React 
 | Component / Hook | Architectural Responsibility |
 | :--- | :--- |
 | `App.tsx` & `pipelineConfigReducer.ts` | Coordinates graph state (`usePipelineGraph`), undo/redo snapshots (`useUndoRedoHistory`), paradigm transitions, and functional `jobConfig` updates. |
-| `CanvasToolbar.tsx` | Displays the pipeline `BATCH`/`STREAM` badge, switches between `Imperative` and `SDP` paradigms, triggers DAG auto-layout, and surfaces validation counts. |
+| `CanvasToolbar.tsx` | Displays the pipeline `BATCH`/`STREAM` badge, provides the 3-option output dropdown (`Imperative`, `SDP (4.2+)`, `Notebook (.ipynb)`), triggers DAG auto-layout, and surfaces validation counts. |
 | `PipelineNode.tsx` | Renders custom React Flow cards with `BATCH`/`STREAM` pills, `CACHE`/`foreachBatch` or SDP dataset badges, `left`/`right`/`BROADCAST` handles, dynamic `ConditionalSplit` handles, and `error` DLQ handles. |
 | `NodesCard.tsx` & `catalog/` | Provides searchable `Sources` (40), `Steps` (33), `Sinks` (38), and `Samples` tabs, greying out incompatible nodes in SDP mode with explanatory tooltips. |
 | `PropertyPane.tsx` & `PropertyForm.tsx` | Lazy-loads per-node forms from `propertyFormRegistry.ts` alongside shared `StorageBackendFields`, `StreamingSinkSettingsField`, `SdpSinkSettingsField`, and `SecretManagerAuthFields`. |
@@ -315,6 +316,10 @@ In SDP mode, `checkNodeSdpCompatibility` and `buildSdpPlan` enforce nine OSS Apa
 | `dp.create_streaming_table` + `@dp.append_flow` | `append_flow` | `TABLE` | `UnionByName` or multi-branch streaming fan-in targeting one streaming table. |
 | `dp.create_streaming_table` + `dp.create_auto_cdc_flow` | `auto_cdc` | `CDC` | `MergeCdcScd` (`scd1`, `left` handle only) paired with a `MERGE`-capable `IcebergSink` or `DeltaSink`. |
 | `dp.create_sink` + `@dp.append_flow` | `external_sink` | `SINK` | External streaming sinks (`KafkaSink`, `BigQuerySink`, `PulsarSink`, `EventHubsSink`, file sinks, `ConsoleSink`). |
+| Companion imperative `foreachBatch` job | `hybrid_companion` | `HYBRID` | Optional `V2.6` mode (`sdpHybridForeachBatch: true`): unlocks `foreachBatch`-only sinks and generates `companion/sink_job.py` + `run_companion_sinks.sh` reading persisted SDP catalog datasets. |
+
+- **SDP SQL Output Mode (`V2.7`)**: Set `jobConfig.sdpOutputFormat` to `'sql'` or `'mixed'` to emit declarative SQL in `transformations/*.sql`. Python-only constructs (`dp.create_sink`, `dp.create_auto_cdc_flow`, `cluster_by`, Python UDFs, and `sdp_extensions.expectations`) remain in `transformations/*.py`.
+- **Optional Expectations (`V2.8`)**: Set `jobConfig.sdpQualityMode` to `'expectations'` to emit `sdp_extensions.expectations` (`@dq.expect*`) decorators below `@dp.*` dataset decorators.
 
 ### 5.4 Managed Data Pipelines `sdp` Stage vs. Standalone Dataproc `4.0` vs. Local `4.2`
 
@@ -460,7 +465,7 @@ sequenceDiagram
 ### 7.1 Single-Prompt Skill Assembly (`CodegenPromptBuilder.ts` & `ReadOnlyCheckRunner.ts`)
 
 1. Redact sensitive node properties with `redactPipelineDocument` before building the prompt.
-2. Detect pipeline features, runner family, and paradigm (`imperative` or `sdp`) via `PipelineFeatureDetector`.
+2. Detect pipeline features, runner family, and paradigm (`imperative`, `sdp`, or `notebook`) via `PipelineFeatureDetector`.
 3. Inject the deterministic `ExecutionPlan` (`buildExecutionPlan`) or `SdpExecutionPlan` (`buildSdpPlan`) Markdown summary and JSON block.
 4. Select matching `resources/codegen-skills/` entries in deterministic `SKILL_KIND_ORDER` (`common`, `language`, `runner`, `io`, `transform`, `crosscutting`, `review`, `gate`).
 5. Resolve `{{spark_version}}` inside skill text only, preserving user `.spark` YAML and `{{pipeline_name}}`, `{{pipeline_class_name}}`, and `{{gcs_staging_path}}` verbatim.

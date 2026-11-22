@@ -49,6 +49,7 @@ import {
     MODEL_FACING_PLACEHOLDERS,
     READ_ONLY_CHECK_LIMITS,
     SkillLanguage,
+    SkillParadigm,
 } from './codegenConfig';
 
 /** One generated file matching the structured output schema. */
@@ -150,8 +151,8 @@ export interface CheckRequest {
     baseName: string;
     /** Runner files that must exist (template file names of the selected runner skills). */
     runnerFiles: readonly string[];
-    /** Optional pipeline paradigm (`imperative` or `sdp`). Auto-detects SDP when omitted. */
-    paradigm?: 'imperative' | 'sdp';
+    /** Optional pipeline paradigm (`imperative`, `sdp`, or `notebook`). Auto-detects when omitted. */
+    paradigm?: SkillParadigm;
     /** Optional shared cache root directory override for pip and Ivy caches. */
     cacheRoot?: string;
 }
@@ -256,12 +257,12 @@ export function isStaticSdpSparkConfigKey(key: string): boolean {
  */
 export function isSdpGeneratedProject(
     files: readonly Pick<GeneratedFile, 'filename'>[],
-    paradigm?: 'imperative' | 'sdp'
+    paradigm?: SkillParadigm
 ): boolean {
     if (paradigm === 'sdp') {
         return true;
     }
-    if (paradigm === 'imperative') {
+    if (paradigm === 'imperative' || paradigm === 'notebook') {
         return false;
     }
     for (const file of files) {
@@ -278,6 +279,88 @@ export function isSdpGeneratedProject(
         }
     }
     return false;
+}
+
+/**
+ * Determines whether a set of generated files represents a Jupyter Notebook (`.ipynb`) project.
+ *
+ * @param files Generated files.
+ * @param paradigm Optional explicit paradigm override.
+ * @returns True when Notebook validation rules apply.
+ */
+export function isNotebookGeneratedProject(
+    files: readonly Pick<GeneratedFile, 'filename'>[],
+    paradigm?: SkillParadigm
+): boolean {
+    if (paradigm === 'notebook') {
+        return true;
+    }
+    if (paradigm === 'imperative' || paradigm === 'sdp') {
+        return false;
+    }
+    return files.some((file) => normalizeRelPath(file.filename).toLowerCase().endsWith('.ipynb'));
+}
+
+/**
+ * Validates a generated Jupyter Notebook (`.ipynb`) JSON payload against nbformat v4 rules.
+ *
+ * @param notebookFilename Notebook filename for diagnostics.
+ * @param content Raw notebook JSON text.
+ * @returns List of validation error strings (empty when valid).
+ */
+export function validateNotebookIpynb(notebookFilename: string, content: string): string[] {
+    const errors: string[] = [];
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(content);
+    } catch (err) {
+        return [`${notebookFilename}: invalid JSON (${(err as Error).message}).`];
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return [`${notebookFilename}: root must be a JSON object.`];
+    }
+
+    const doc = parsed as Record<string, unknown>;
+    if (doc.nbformat !== 4) {
+        errors.push(`${notebookFilename}: nbformat must be 4 (found ${String(doc.nbformat)}).`);
+    }
+    if (!Array.isArray(doc.cells) || doc.cells.length === 0) {
+        errors.push(`${notebookFilename}: cells must be a non-empty array.`);
+        return errors;
+    }
+
+    let codeCellCount = 0;
+    const allowedCellTypes = new Set(['markdown', 'code', 'raw']);
+    for (let idx = 0; idx < doc.cells.length; idx++) {
+        const cell = doc.cells[idx];
+        if (!cell || typeof cell !== 'object' || Array.isArray(cell)) {
+            errors.push(`${notebookFilename}: cell[${idx}] must be an object.`);
+            continue;
+        }
+        const cellObj = cell as Record<string, unknown>;
+        if (typeof cellObj.cell_type !== 'string' || !allowedCellTypes.has(cellObj.cell_type)) {
+            errors.push(`${notebookFilename}: cell[${idx}] has invalid cell_type '${String(cellObj.cell_type)}'.`);
+        }
+        const validSource =
+            typeof cellObj.source === 'string' ||
+            (Array.isArray(cellObj.source) && cellObj.source.every((line) => typeof line === 'string'));
+        if (!validSource) {
+            errors.push(`${notebookFilename}: cell[${idx}] source must be a string or list of strings.`);
+        }
+        if (cellObj.cell_type === 'code') {
+            codeCellCount += 1;
+            if (!Array.isArray(cellObj.outputs)) {
+                errors.push(`${notebookFilename}: code cell[${idx}] must define an outputs array.`);
+            }
+        }
+    }
+
+    if (codeCellCount === 0) {
+        errors.push(`${notebookFilename}: notebook must contain at least one code cell.`);
+    }
+
+    return errors;
 }
 
 /**
@@ -690,6 +773,157 @@ export function scanSdpPythonViolations(files: readonly GeneratedFile[]): SdpSta
                 break;
             }
         }
+
+        // V2.8: Validate sdp_extensions.expectations (@dq.expect*) decorator placement in transformations/*.py.
+        if (isTransformationFile) {
+            for (let idx = 0; idx < cleanedLines.length; idx++) {
+                const trimmed = cleanedLines[idx].trim();
+                if (!trimmed.startsWith('@')) {
+                    continue;
+                }
+                const isDqExpect = /^@\s*dq\s*\.\s*expect(?:_[A-Za-z0-9_]+)?\b/.test(trimmed);
+                const isDpAppendFlow = /^@\s*dp\s*\.\s*append_flow\b/.test(trimmed);
+                if (!isDqExpect && !isDpAppendFlow) {
+                    continue;
+                }
+                // Inspect consecutive decorators in the same stack before the next `def`.
+                for (let nextIdx = idx + 1; nextIdx < cleanedLines.length; nextIdx++) {
+                    const nextTrimmed = cleanedLines[nextIdx].trim();
+                    if (nextTrimmed === '') {
+                        continue;
+                    }
+                    if (/^def\s+/.test(nextTrimmed)) {
+                        break;
+                    }
+                    if (!nextTrimmed.startsWith('@')) {
+                        // Continuation line of a multi-line decorator argument list.
+                        continue;
+                    }
+                    if (isDqExpect && /^@\s*dp\s*\.\s*(?:table|materialized_view|temporary_view)\b/.test(nextTrimmed)) {
+                        violations.push({
+                            code: 'SDP_EXPECTATIONS_DECORATOR_ORDER',
+                            file: file.filename,
+                            line: idx + 1,
+                            evidence: rawLines[idx].trim().slice(0, 160),
+                            message: `${file.filename}:${idx + 1}: SDP_EXPECTATIONS_DECORATOR_ORDER: Place @dq.expect* decorators BELOW @dp.table, @dp.materialized_view, or @dp.temporary_view.`,
+                        });
+                        break;
+                    }
+                    if (
+                        (isDqExpect && /^@\s*dp\s*\.\s*append_flow\b/.test(nextTrimmed)) ||
+                        (isDpAppendFlow && /^@\s*dq\s*\.\s*expect(?:_[A-Za-z0-9_]+)?\b/.test(nextTrimmed))
+                    ) {
+                        violations.push({
+                            code: 'SDP_EXPECTATIONS_ON_APPEND_FLOW',
+                            file: file.filename,
+                            line: idx + 1,
+                            evidence: rawLines[idx].trim().slice(0, 160),
+                            message: `${file.filename}:${idx + 1}: SDP_EXPECTATIONS_ON_APPEND_FLOW: @dq.expect* decorators cannot be applied to @dp.append_flow.`,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return violations;
+}
+
+/**
+ * Strips SQL line (`--`) and block comments while preserving line numbers.
+ *
+ * @param source Raw SQL file text.
+ * @returns Sanitized SQL string with comments blanked.
+ */
+function stripSqlComments(source: string): string {
+    const withoutBlocks = source.replace(/\/\*[\s\S]*?\*\//g, (block) =>
+        block.replace(/[^\n]/g, ' ')
+    );
+    return withoutBlocks.replace(/--[^\n]*/g, '');
+}
+
+/**
+ * Scans generated SDP SQL transformation files (`transformations/*.sql`) against Apache Spark 4.2
+ * `SqlGraphRegistrationContext` rules (`V2.7`).
+ *
+ * @param files Generated files.
+ * @returns List of SDP SQL violations (empty when valid).
+ */
+export function scanSdpSqlViolations(files: readonly GeneratedFile[]): SdpStaticViolation[] {
+    const violations: SdpStaticViolation[] = [];
+
+    for (const file of files) {
+        const norm = normalizeRelPath(file.filename);
+        if (!/^transformations\/.+\.sql$/i.test(norm)) {
+            continue;
+        }
+        const rawLines = file.content.split('\n');
+        const cleaned = stripSqlComments(file.content);
+        const cleanedLines = cleaned.split('\n');
+
+        const lineRules: ReadonlyArray<{ code: string; regex: RegExp; message: string }> = [
+            {
+                code: 'PIPELINE_SQL_GRAPH_ELEMENT_REGISTRATION_ERROR',
+                regex: /\bCREATE\s+(?:SCHEMA|NAMESPACE|DATABASE)\b/i,
+                message: 'PIPELINE_SQL_GRAPH_ELEMENT_REGISTRATION_ERROR: CREATE SCHEMA/NAMESPACE is forbidden in SDP .sql files. Create namespaces in runner setup scripts instead.',
+            },
+            {
+                code: 'SDP_SQL_EXPECT_UNSUPPORTED',
+                regex: /\bCONSTRAINT\s+[A-Za-z_][A-Za-z0-9_]*\s+EXPECT\b/i,
+                message: 'SDP_SQL_EXPECT_UNSUPPORTED: Databricks SQL CONSTRAINT ... EXPECT does not exist in OSS Apache Spark 4.2. Use WHERE filters or Python sdp_extensions.expectations.',
+            },
+            {
+                code: 'SDP_SQL_CLUSTER_BY_UNSUPPORTED',
+                regex: /\bCLUSTER\s+BY\b/i,
+                message: 'SDP_SQL_CLUSTER_BY_UNSUPPORTED: CLUSTER BY fails SQL registration in Apache Spark 4.2 SDP. Use Python cluster_by= instead.',
+            },
+            {
+                code: 'SDP_SQL_PIVOT_UNSUPPORTED',
+                regex: /\bPIVOT\s*\(/i,
+                message: 'SDP_SQL_PIVOT_UNSUPPORTED: PIVOT is not supported in SDP SQL files. Use Python .pivot(col, [...]) instead.',
+            },
+        ];
+
+        for (const rule of lineRules) {
+            for (let idx = 0; idx < cleanedLines.length; idx++) {
+                if (rule.regex.test(cleanedLines[idx])) {
+                    violations.push({
+                        code: rule.code,
+                        file: file.filename,
+                        line: idx + 1,
+                        evidence: rawLines[idx]?.trim().slice(0, 160),
+                        message: `${file.filename}:${idx + 1}: ${rule.message}`,
+                    });
+                    break;
+                }
+            }
+        }
+
+        // Check CREATE FLOW statements for mandatory `INSERT INTO <table> BY NAME` and banned OVERWRITE.
+        const flowRegex = /\bCREATE\s+FLOW\b[\s\S]*?(?:;|$)/gi;
+        let flowMatch: RegExpExecArray | null;
+        while ((flowMatch = flowRegex.exec(cleaned)) !== null) {
+            const stmt = flowMatch[0];
+            const lineNum = cleaned.slice(0, flowMatch.index).split('\n').length;
+            if (/\bINSERT\s+OVERWRITE\b/i.test(stmt)) {
+                violations.push({
+                    code: 'SDP_SQL_FLOW_OVERWRITE_UNSUPPORTED',
+                    file: file.filename,
+                    line: lineNum,
+                    evidence: rawLines[lineNum - 1]?.trim().slice(0, 160),
+                    message: `${file.filename}:${lineNum}: SDP_SQL_FLOW_OVERWRITE_UNSUPPORTED: CREATE FLOW does not support INSERT OVERWRITE in Apache Spark 4.2 SDP.`,
+                });
+            } else if (/\bINSERT\s+INTO\b/i.test(stmt) && !/\bBY\s+NAME\b/i.test(stmt)) {
+                violations.push({
+                    code: 'SDP_SQL_FLOW_REQUIRES_BY_NAME',
+                    file: file.filename,
+                    line: lineNum,
+                    evidence: rawLines[lineNum - 1]?.trim().slice(0, 160),
+                    message: `${file.filename}:${lineNum}: SDP_SQL_FLOW_REQUIRES_BY_NAME: CREATE FLOW ... INSERT INTO must specify BY NAME in Apache Spark 4.2 SDP.`,
+                });
+            }
+        }
     }
 
     return violations;
@@ -1001,6 +1235,9 @@ export class ReadOnlyCheckRunner {
         if (isSdpGeneratedProject(request.files, request.paradigm)) {
             return this.runSdpChecks(request);
         }
+        if (isNotebookGeneratedProject(request.files, request.paradigm)) {
+            return this.runNotebookChecks(request);
+        }
 
         const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false, request.cacheRoot);
         return [
@@ -1009,6 +1246,24 @@ export class ReadOnlyCheckRunner {
             syntaxAndPytest.syntaxResult,
             this.checkPipelineContract(request),
             this.checkTestImports(request),
+            syntaxAndPytest.pytestResult,
+        ];
+    }
+
+    /**
+     * Runs all read-only checks for a Jupyter Notebook (`.ipynb`) project.
+     *
+     * @param request Check request.
+     * @returns Ordered notebook check results.
+     */
+    private async runNotebookChecks(request: CheckRequest): Promise<CheckResult[]> {
+        const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false, request.cacheRoot);
+        return [
+            this.checkNotebookRequiredFiles(request),
+            this.checkLeftoverTokens(request.files, false),
+            syntaxAndPytest.syntaxResult,
+            this.checkNotebookContract(request.files),
+            this.checkSdpTestImports(request.files),
             syntaxAndPytest.pytestResult,
         ];
     }
@@ -1036,6 +1291,83 @@ export class ReadOnlyCheckRunner {
             execResults.pytestResult,
             dryRunResult,
         ];
+    }
+
+    /**
+     * Checks notebook required files (`requirements.txt`, `pipeline.ipynb`,
+     * `src/transforms.py`, `tests/test_transforms.py`, and runner files).
+     *
+     * @param request Check request.
+     * @returns Check result.
+     */
+    private checkNotebookRequiredFiles(request: CheckRequest): CheckResult {
+        const normalizedPaths = request.files.map((file) => normalizeRelPath(file.filename));
+        const present = new Set(normalizedPaths);
+        const missing: string[] = [];
+
+        const buildFile = LANGUAGE_BUILD_FILES[request.language];
+        if (buildFile && !present.has(buildFile)) {
+            missing.push(buildFile);
+        }
+
+        const hasNotebook = normalizedPaths.some((p) => p.toLowerCase().endsWith('.ipynb'));
+        if (!hasNotebook) {
+            missing.push('pipeline.ipynb');
+        }
+        if (!present.has('src/transforms.py')) {
+            missing.push('src/transforms.py');
+        }
+        if (!present.has('tests/test_transforms.py')) {
+            missing.push('tests/test_transforms.py');
+        }
+
+        for (const runnerFile of request.runnerFiles) {
+            if (!present.has(normalizeRelPath(runnerFile))) {
+                missing.push(runnerFile);
+            }
+        }
+
+        return missing.length === 0
+            ? { check: CHECK_IDS.requiredFiles, status: 'passed', output: '' }
+            : { check: CHECK_IDS.requiredFiles, status: 'failed', output: `Missing file(s): ${missing.join(', ')}` };
+    }
+
+    /**
+     * Validates generated `.ipynb` JSON structure and pure `src/transforms.py` helpers.
+     *
+     * @param files Generated files.
+     * @returns Check result.
+     */
+    private checkNotebookContract(files: GeneratedFile[]): CheckResult {
+        const notebookFiles = files.filter((f) => normalizeRelPath(f.filename).toLowerCase().endsWith('.ipynb'));
+        if (notebookFiles.length === 0) {
+            return {
+                check: CHECK_IDS.pipelineContract,
+                status: 'skipped',
+                output: 'No .ipynb notebook generated.',
+            };
+        }
+
+        const errors: string[] = [];
+        for (const nb of notebookFiles) {
+            errors.push(...validateNotebookIpynb(nb.filename, nb.content));
+        }
+
+        const transformsHelper = files.find((f) => normalizeRelPath(f.filename) === 'src/transforms.py');
+        if (transformsHelper) {
+            const helperCleaned = stripPythonCommentsAndDocstrings(transformsHelper.content).join('\n');
+            if (!/^\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/m.test(helperCleaned)) {
+                errors.push('src/transforms.py must define at least one pure transformation helper function.');
+            }
+        }
+
+        return errors.length === 0
+            ? { check: CHECK_IDS.pipelineContract, status: 'passed', output: '' }
+            : {
+                  check: CHECK_IDS.pipelineContract,
+                  status: 'failed',
+                  output: truncateCheckOutput(errors.join('\n')),
+              };
     }
 
     /**
@@ -1100,18 +1432,21 @@ export class ReadOnlyCheckRunner {
             missing.push('spark-pipeline.yml');
         }
 
-        const hasTransformationModule = normalizedPaths.some(
+        const hasPythonTransformation = normalizedPaths.some(
             (p) => /^transformations\/.+\.py$/.test(p) && !p.endsWith('/__init__.py')
         );
-        if (!hasTransformationModule) {
-            missing.push('transformations/*.py');
+        const hasSqlTransformation = normalizedPaths.some((p) => /^transformations\/.+\.sql$/i.test(p));
+        if (!hasPythonTransformation && !hasSqlTransformation) {
+            missing.push('transformations/*.py or transformations/*.sql');
         }
 
-        if (!present.has('src/transforms.py')) {
-            missing.push('src/transforms.py');
-        }
-        if (!present.has('tests/test_transforms.py')) {
-            missing.push('tests/test_transforms.py');
+        if (hasPythonTransformation) {
+            if (!present.has('src/transforms.py')) {
+                missing.push('src/transforms.py');
+            }
+            if (!present.has('tests/test_transforms.py')) {
+                missing.push('tests/test_transforms.py');
+            }
         }
 
         for (const runnerFile of request.runnerFiles) {
@@ -1216,30 +1551,40 @@ export class ReadOnlyCheckRunner {
      * @returns Check result.
      */
     private checkSdpPipelineContract(files: GeneratedFile[]): CheckResult {
-        const transformationFiles = files.filter((f) => {
+        const pyTransformationFiles = files.filter((f) => {
             const norm = normalizeRelPath(f.filename);
             return /^transformations\/.+\.py$/.test(norm) && !norm.endsWith('/__init__.py');
         });
-        if (transformationFiles.length === 0) {
+        const sqlTransformationFiles = files.filter((f) => {
+            const norm = normalizeRelPath(f.filename);
+            return /^transformations\/.+\.sql$/i.test(norm);
+        });
+        if (pyTransformationFiles.length === 0 && sqlTransformationFiles.length === 0) {
             return {
                 check: CHECK_IDS.pipelineContract,
                 status: 'skipped',
-                output: 'No transformations/*.py modules generated.',
+                output: 'No transformations/*.py or transformations/*.sql modules generated.',
             };
         }
 
         const errors: string[] = [];
 
-        const hasDpRegistration = transformationFiles.some((f) => {
+        const hasDpRegistration = pyTransformationFiles.some((f) => {
             const cleaned = stripPythonCommentsAndDocstrings(f.content).join('\n');
             return (
                 /@\s*dp\s*\.\s*(?:table|materialized_view|temporary_view|append_flow)\b/.test(cleaned) ||
                 /\bdp\s*\.\s*create_(?:streaming_table|auto_cdc_flow|sink)\s*\(/.test(cleaned)
             );
         });
-        if (!hasDpRegistration) {
+        const hasSqlRegistration = sqlTransformationFiles.some((f) => {
+            const cleaned = stripSqlComments(f.content);
+            return /\bCREATE\s+(?:STREAMING\s+TABLE|MATERIALIZED\s+VIEW|TEMPORARY\s+VIEW|VIEW|FLOW)\b/i.test(
+                cleaned
+            );
+        });
+        if (!hasDpRegistration && !hasSqlRegistration) {
             errors.push(
-                'transformations/*.py does not declare any @dp.table, @dp.materialized_view, @dp.temporary_view, @dp.append_flow, dp.create_streaming_table, dp.create_auto_cdc_flow, or dp.create_sink dataset.'
+                'transformations/* does not declare any Python @dp.* / dp.create_* or SQL CREATE STREAMING TABLE / MATERIALIZED VIEW / TEMPORARY VIEW / FLOW dataset.'
             );
         }
 
@@ -1252,6 +1597,9 @@ export class ReadOnlyCheckRunner {
         }
 
         for (const v of scanSdpPythonViolations(files)) {
+            errors.push(v.message);
+        }
+        for (const v of scanSdpSqlViolations(files)) {
             errors.push(v.message);
         }
 

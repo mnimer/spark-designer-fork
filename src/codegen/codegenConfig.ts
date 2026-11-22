@@ -75,9 +75,10 @@ export const SKILL_WILDCARD = 'all';
 export const SKILL_PARADIGMS = {
     imperative: 'imperative',
     sdp: 'sdp',
+    notebook: 'notebook',
 } as const;
 
-/** A skill paradigm (`imperative` | `sdp`). */
+/** A skill paradigm (`imperative` | `sdp` | `notebook`). */
 export type SkillParadigm = (typeof SKILL_PARADIGMS)[keyof typeof SKILL_PARADIGMS];
 
 /** Skill language ids, one per `SupportedLanguage`. */
@@ -97,6 +98,7 @@ export const SKILL_RUNNERS = {
     dataprocCluster: 'dataproc-cluster',
     serverlessSpark: 'serverless-spark',
     sdp: 'sdp',
+    notebook: 'notebook',
 } as const;
 
 /** A runner id. */
@@ -112,9 +114,18 @@ export const SDP_LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly Skill
     python: [SKILL_RUNNERS.sdp],
 };
 
-/** Every runner supported across imperative and SDP modes per language. */
+/** Runners that each language supports in Jupyter Notebook (`notebook`) mode. */
+export const NOTEBOOK_LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly SkillRunner[]>> = {
+    python: [SKILL_RUNNERS.notebook],
+};
+
+/** Every runner supported across imperative, SDP, and notebook modes per language. */
 export const ALL_LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly SkillRunner[]>> = {
-    python: [...LANGUAGE_RUNNERS.python, ...SDP_LANGUAGE_RUNNERS.python],
+    python: [
+        ...LANGUAGE_RUNNERS.python,
+        ...SDP_LANGUAGE_RUNNERS.python,
+        ...NOTEBOOK_LANGUAGE_RUNNERS.python,
+    ],
 };
 
 /** Pipeline features that gate skills (skill frontmatter `metadata.preloadWhen`). */
@@ -126,6 +137,9 @@ export const PIPELINE_FEATURES = {
     xlang: 'xlang',
     sdpAutoCdc: 'sdp_auto_cdc',
     sdpQuarantine: 'sdp_quarantine',
+    sdpHybrid: 'sdp_hybrid',
+    sdpSql: 'sdp_sql',
+    sdpExpectations: 'sdp_expectations',
 } as const;
 
 /** A pipeline feature. */
