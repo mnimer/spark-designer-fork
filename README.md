@@ -1,96 +1,115 @@
+<!-- Author: Mike Nimer <mikenimer@google.com> -->
+
 # Apache Spark / Managed Spark Pipeline Builder
 
 [![VS Code](https://img.shields.io/badge/VS%20Code-v1.74%2B-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-4.x%20%7C%20SDP%204.2%2B-E25A1C?logo=apachespark)](https://spark.apache.org/)
 [![Google Cloud Managed Spark](https://img.shields.io/badge/Google%20Cloud-Managed%20Spark-4285F4?logo=googlecloud)](https://cloud.google.com/dataproc-serverless)
-[![Powered by Gemini](https://img.shields.io/badge/Vertex%20AI-Gemini%203.8%20Flash-8E75B2?logo=googlegemini)](https://cloud.google.com/vertex-ai)
+[![Powered by Gemini](https://img.shields.io/badge/Vertex%20AI-Gemini%204%20Hydrogen-8E75B2?logo=googlegemini)](https://cloud.google.com/vertex-ai)
 
-**Apache Spark / Managed Spark Pipeline Builder** is a visual VS Code extension for designing, validating, generating, and deploying **Apache Spark 4.x** pipelines across **Local PySpark / Spark Connect**, **Google Cloud Dataproc Clusters**, and **Serverless for Apache Spark**.
+**Apache Spark / Managed Spark Pipeline Builder** visually designs, validates, generates, and runs **Apache Spark 4.x** pipelines inside VS Code. Target **Local PySpark / Spark Connect**, **Google Cloud Dataproc Clusters**, and **Serverless for Apache Spark** from one `.spark` YAML canvas.
 
-Design pipelines once in `.spark` YAML on an interactive React Flow canvas and synthesize either **Imperative PySpark 4.x** repositories or **Spark Declarative Pipelines (SDP, Apache Spark 4.2+)** projects with offline `pytest` suites.
+Build DAGs on an interactive React Flow canvas using **111 catalog nodes** (**40 Sources**, **33 Steps**, and **38 Sinks**). Generate **Imperative PySpark 4.x** repositories or **Spark Declarative Pipelines (SDP, Apache Spark 4.2+)** projects with offline `pytest` suites.
 
 ---
 
-## Dual Pipeline Paradigms: Imperative PySpark vs. Spark Declarative Pipelines
+## Dual Pipeline Paradigms
 
-Pick a paradigm when creating a new `.spark` pipeline or toggle paradigms from the canvas toolbar:
+Select a paradigm during `.spark` file creation, or switch paradigms directly from the canvas toolbar.
 
 | Capability | Imperative PySpark (`imperative`, Default) | Spark Declarative Pipelines (`sdp`, Spark 4.2+) |
 | :--- | :--- | :--- |
-| **Target Spark Version** | Apache Spark 4.0+ (Serverless 3.0 & 4.0, Dataproc 3.0 & 4.0, Local 4.0) | Apache Spark 4.2+ over Spark Connect (Serverless 4.0, Dataproc 4.0, Local 4.2 Connect) |
-| **Generated Deliverables** | `src/pipeline.py`, `tests/test_pipeline.py`, `requirements.txt`, `Dockerfile`, `run_local.sh`, `run_dataproc_cluster.sh`, `run_serverless_spark.sh`, `README.md` | `spark-pipeline.yml`, `transformations/*.py` (`@dp.*`), `src/transforms.py`, `tests/test_transforms.py`, `requirements.txt`, `run_sdp_local.sh`, `run_sdp_dataproc.sh`, `sdp_stage.pipeline.yaml`, `README.md` |
-| **Streaming & Batch Execution** | Batch, `availableNow`, `processingTime` micro-batches, and `continuous` triggers | Triggered `AvailableNow` runs (`@dp.table`, `@dp.materialized_view`, `@dp.temporary_view`) |
-| **CDC & SCD Support** | SCD Type 1 and SCD Type 2 merges (`MergeCdcScd`) | Managed SCD Type 1 Auto CDC (`dp.create_auto_cdc_flow`) |
-| **Sink & ML Coverage** | All native and `foreachBatch` sinks (Spanner, Cloud SQL, AlloyDB, Bigtable, JDBC, Pub/Sub) plus Spark ML and Vertex AI | Lakehouse catalog tables (BigLake Iceberg, Delta, Hudi) and streaming `dp.create_sink` connectors (Kafka, BigQuery, Pulsar, files) |
+| **Target Runtimes** | Apache Spark 4.0+ across Serverless 4.0 and 3.0, Dataproc Cluster 4.0 and 3.0, and Local 4.0. | Apache Spark 4.2+ over Spark Connect on Serverless 4.0, Dataproc Cluster 4.0, and Local 4.2 Connect. |
+| **Generated Deliverables** | `src/pipeline.py`, `tests/test_pipeline.py`, `requirements.txt`, `Dockerfile`, `run_local.sh`, `run_dataproc_cluster.sh`, `run_serverless_spark.sh`, and `README.md`. | `spark-pipeline.yml`, `transformations/*.py`, `src/transforms.py`, `tests/test_transforms.py`, `requirements.txt`, `run_sdp_local.sh`, `run_sdp_dataproc.sh`, `sdp_stage.pipeline.yaml`, and `README.md`. |
+| **Execution & Triggers** | Batch runs plus `availableNow`, `processingTime` micro-batch, and `continuous` Structured Streaming triggers. | Triggered `AvailableNow` runs over `@dp.table`, `@dp.materialized_view`, and `@dp.temporary_view` datasets. |
+| **CDC & SCD Support** | SCD Type 1 and SCD Type 2 merges via the two-input `MergeCdcScd` step. | Managed SCD Type 1 Auto CDC flows via `dp.create_auto_cdc_flow` with `left` input routing. |
+| **Sinks & AI** | All native and `foreachBatch` sinks plus Spark MLlib, XGBoost, Vertex AI, and RAG embedding steps. | Lakehouse catalog tables (BigLake Iceberg, Delta, Hudi) and streaming `dp.create_sink` connectors (Kafka, BigQuery, Pulsar, files). |
 
 ---
 
 ## Key Features
 
-- **Interactive Visual DAG Canvas (`.spark`)**
-  - Drag-and-drop Sources, Steps, and Sinks with real-time topological validation, cycle detection, watermark checks, and Undo/Redo history.
-  - Direct `SOURCE -> SINK` connections for zero-transform ingestion and replication pipelines.
-  - Paradigm-aware micro-badges: `BATCH`, `STREAM`, `CACHE`, and `foreachBatch` in Imperative mode, or `VIEW`, `MV`, `TABLE`, `CDC`, and `SINK` in SDP mode.
-  - Smart compatibility gate when switching from Imperative to SDP, plus greyed-out palette tooltips on unsupported SDP nodes.
+- **Visual `.spark` DAG Editor & Canvas Semantics**
+  - Connect **40 Sources**, **33 Steps**, and **38 Sinks** (**111 catalog nodes**) with live cycle, orphan, watermark, and checkpoint validation.
+  - Wire direct `SOURCE -> SINK` connections for zero-transform format conversion and table replication pipelines.
+  - Inspect Imperative micro-badges (`BATCH`, `STREAM`, `CACHE`, `foreachBatch`, `BROADCAST`, and `N-IN`) directly on canvas nodes.
+  - When authoring SDP pipelines, inspect dataset badges (`VIEW`, `MV`, `TABLE`, `CDC`, and `SINK`) directly on canvas nodes.
+  - Route multi-branch flows through `Join` (`left` and `right` handles), `ConditionalSplit` (dynamic rule handles plus `else`), and red `error` DLQ handles.
+  - If an Imperative graph contains unsupported SDP nodes, the compatibility gate explains each blocker before switching paradigms.
 
-- **Comprehensive Spark 4.x Catalog**
-  - **Sources**: Kafka, Pub/Sub, Kinesis, Pulsar, Event Hubs, MQTT, BigQuery, BigLake Iceberg, Delta Lake, Hudi, Hive, Parquet, ORC, Avro, CSV, JSON, Text, XML, BinaryFile, TFRecord, Spanner, Cloud SQL, AlloyDB, Generic JDBC, Snowflake, Redshift, ClickHouse, SingleStore, Bigtable, MongoDB, Firestore, Cassandra, Redis, Elasticsearch, Neo4j, REST API, SFTP, Rate, Socket, and in-memory DataFrames.
-  - **Steps**: Filter, Select, WithColumns, Rename/Drop, Enforce Schema & Cast, Handle Nulls, Parse Payload, Explode, Nested Struct/Array Ops, Conditional Split, Data Quality Assert, Watermark, GroupBy & Aggregate (with Tumbling, Sliding, and Session windows), Rollup/Cube, Window Over, Top-N, OrderBy, Deduplicate, Join (including Broadcast and Stream-Static), Merge CDC / SCD, UnionByName, Set Operations, Pivot/Unpivot, Repartition/Coalesce, Cache/Persist, Pandas UDF, Stateful Transform (`transformWithState`), Spark SQL, Feature Prep, Spark ML & Vertex AI (`gemini-4-hydrogen`), and Text Chunk & Embed.
-  - **Sinks**: Lakehouse tables (Iceberg, Delta, Hudi), warehouses and databases, streaming brokers, cloud object storage formats, Vector Store, Console, Memory, and custom `ForeachBatch`.
+- **111-Node Apache Spark 4.x Catalog**
+  - **40 Sources**: Stream from Kafka, Pub/Sub, Kinesis, Pulsar, Event Hubs, MQTT, Rate, and Socket sources. Read Iceberg, Delta Lake, Hudi, Hive, Parquet, ORC, Avro, CSV, JSON, Text, XML, BinaryFile, and TFRecord datasets. Query BigQuery, Spanner, Bigtable, Cloud SQL, AlloyDB, JDBC, Snowflake, Redshift, ClickHouse, and SingleStore. Ingest MongoDB, Firestore, Cassandra, Redis, Elasticsearch, Neo4j, REST API, SFTP, and in-memory DataFrames.
+  - **33 Steps**: Project, filter, enforce DDL schema contracts, manipulate nested structs and arrays, parse payloads, split branches, and assert data quality. Join (`left`/`right` and broadcast), merge CDC/SCD, union or intersect sets, window, aggregate (`Tumbling`, `Sliding`, `Session`), deduplicate, and pivot. Apply watermarks, `transformWithState`, Catalyst SQL, Arrow/Pandas UDFs, repartition/cache controls, Spark MLlib, Vertex AI (`gemini-4-hydrogen`), and RAG embeddings (`gemini-embedding-001`).
+  - **38 Sinks**: Write to Kafka, Pub/Sub, Kinesis, Pulsar, Event Hubs, MQTT, BigLake Iceberg, Delta Lake, Hudi, and Hive. Export Parquet, ORC, Avro, CSV, JSON, Text, XML, and TFRecord files across GCS, S3, ADLS, HDFS, or local storage. Load BigQuery, Spanner, Bigtable, Cloud SQL, AlloyDB, JDBC, Snowflake, Redshift, ClickHouse, SingleStore, NoSQL stores, Vector Store, Console, Memory, and `ForeachBatch`.
 
-- **Live Cloud Asset Discovery & Credential Safety**
-  - Queries local `gcloud` and `bq` CLIs using safe argument arrays to autocomplete BigQuery datasets and tables, Cloud Storage buckets, BigLake catalogs, Cloud SQL instances, Bigtable tables, VPC subnetworks, and Secret Manager secrets.
-  - Redacts credentials automatically (`redactPipelineDocument`) before building prompts or writing `gemini.log`.
+- **Dynamic Gemini Model Discovery & Skill-Driven Code Generation**
+  - Discover supported Gemini 3.x+ and 4.x text-generation models dynamically via `@google/genai` `ai.models.list` (`src/codegen/modelDiscovery.ts`).
+  - If your environment defines a Google Cloud project, query Vertex AI (`location: 'global'`) first, then check the Gemini Developer API.
+  - Filter out deprecated legacy models, embeddings, media generators, tuned models, and live-only endpoints automatically.
+  - Rank eligible models by descending version and select the highest-ranked Flash-class model (`gemini-4-hydrogen`) by default.
+  - If credentials or network access are unavailable, fall back offline to `gemini-4-hydrogen` (`DEFAULT_GEMINI_MODEL`).
+  - Pair modular skills (`resources/codegen-skills/`) with deterministic planners (`executionPlanner.ts`, `sdpPlanner.ts`, and `versionMatrix.ts`) during prompt construction.
+  - Isolate pure DataFrame logic in `transform(dfs, config)` (Imperative) or `src/transforms.py` (SDP) so generated `pytest` suites run offline.
+  - If you enable `sparkDesigner.codegen.enableReviewer`, run `ReadOnlyCheckRunner` (`py_compile`, purity checks, `pytest --collect-only`, and `spark-pipelines dry-run`) with Gemini fix passes.
 
-- **Skill-Driven Gemini Code Generation (`gemini-4-hydrogen`)**
-  - Uses Vertex AI (`location: 'global'`) and modular skills under `resources/codegen-skills/` paired with deterministic execution plans (`executionPlanner.ts` and `sdpPlanner.ts`).
-  - Separates pure DataFrame logic (`transform(dfs, config)` in Imperative mode and `src/transforms.py` in SDP mode) so generated `pytest` suites run offline with in-memory DataFrames.
-  - Includes an optional AI Code Reviewer Pass (`sparkDesigner.codegen.enableReviewer`) backed by `ReadOnlyCheckRunner` (`py_compile`, contract and SDP purity checks, `pytest --collect-only`, and optional `spark-pipelines dry-run`).
+- **Live GCP CLI Asset Discovery, Redaction & Manifest Protection**
+  - Execute local `gcloud` and `bq` commands using safe argument arrays without shell interpolation.
+  - Autocomplete Dataproc clusters, session templates, BigLake catalogs, BigQuery datasets and tables, GCS buckets, subnetworks, regions, and Secret Manager secrets.
+  - Redact credentials and secret values automatically via `redactPipelineDocument` before building Gemini prompts or writing `gemini.log`.
+  - Record generated file ownership in `.sparkgen.json` so subsequent generations never overwrite untracked user files.
 
-- **Integrated Runners, SDP Refresh Controls & Job Explorer**
-  - **Imperative Runners**: Local PySpark (`run_local.sh` with automatic `.venv`, JDK 17/21, and Maven Central Ivy bootstrap), Dataproc Clusters (`run_dataproc_cluster.sh`), and Serverless for Apache Spark (`run_serverless_spark.sh`, `standard` tier default).
-  - **SDP Runners & Refresh Controls**: Local Spark 4.2 Spark Connect (`run_sdp_local.sh`), Managed Data Pipelines `sdp` stage (`sdp_stage.pipeline.yaml`), and Standalone Dataproc 4.0 (`run_sdp_dataproc.sh`), with UI controls for `dry-run`, incremental `run`, `--refresh`, `--full-refresh`, and `--full-refresh-all` (with dataset-named reset confirmation and overlapping-run protection).
-  - **Spark Explorer Sidebar**: Lists workspace `*.spark` pipelines alongside live `Serverless Batches` and `Dataproc Cluster Jobs` with one-click Cloud Console links.
+- **Integrated Runners, SDP Refresh Controls & `SparkExplorer` Sidebar**
+  - **Imperative Runners**: Run `Local` (`run_local.sh` with automatic `.venv`, Eclipse Temurin JDK 21, Central Ivy bootstrap, and optional `ManagedSparkSession` Spark Connect). Submit cloud workloads to `DataprocCluster` (`run_dataproc_cluster.sh`) or `ServerlessSpark` (`run_serverless_spark.sh`, defaulting to the `standard` billing tier).
+  - **SDP Runners & Refresh Controls**: Generate Local Spark 4.2 Connect (`run_sdp_local.sh`), Managed Data Pipelines (`sdp_stage.pipeline.yaml`), and Standalone Dataproc 4.0 (`run_sdp_dataproc.sh`) runners. Trigger `dry-run`, incremental `run`, targeted `--refresh`, and confirmed `--full-refresh` or `--full-refresh-all` resets with overlapping-run protection.
+  - **`SparkExplorer` Sidebar**: Browse workspace `.spark` files, live `Serverless Batches`, and `Dataproc Cluster Jobs` with Cloud Console links and active job cancellation.
 
 ---
 
 ## Bundled Sample Pipelines (`resources/samples/`)
 
+The extension includes **six** bundled `.spark` sample pipelines and companion `.md` guides in `resources/samples/`.
+
 | Sample | Paradigm | Highlights |
 | :--- | :--- | :--- |
-| `gcs-parquet-etl.spark` | `PySpark` | Batch Cloud Storage Parquet ingestion, filter pushdown, revenue projections, daily aggregation, and partition coalescing |
-| `kafka-streaming-to-iceberg.spark` | `PySpark` | Streaming Kafka SASL_SSL consumer, corrupt JSON DLQ split, event-time watermark, tumbling window metrics, and BigLake Iceberg sink |
-| `bigquery-cloudsql-broadcast-join.spark` | `PySpark` | BigQuery fact table enriched with Cloud SQL PostgreSQL via IAM Socket Factory broadcast join and window ranking |
-| `generate-mock-data.spark` | `PySpark` | Zero-cloud, zero-JAR local streaming pipeline using Python `Faker` via `mapInPandas` to generate mock `Customer` records and log them to console every 1 second |
-| `sdp-biglake-iceberg-medallion.spark` | `SDP (4.2+)` | Streaming CSV ingestion into Bronze and Silver `@dp.table` datasets and a Gold BigLake Iceberg `@dp.materialized_view` |
-| `sdp-auto-cdc-scd1.spark` | `SDP (4.2+)` | Streaming customer CDC JSON events with delete tombstones and out-of-order timestamps merged via `dp.create_auto_cdc_flow` (SCD Type 1) |
+| `gcs-parquet-etl.spark` | `imperative` | Ingests Cloud Storage Parquet orders, pushes down filters, computes daily revenue metrics, and coalesces output files. |
+| `kafka-streaming-to-iceberg.spark` | `imperative` | Consumes Kafka SASL_SSL events, routes corrupt JSON to Console DLQ, applies a watermark, and writes windows to BigLake Iceberg. |
+| `bigquery-cloudsql-broadcast-join.spark` | `imperative` | Enriches a BigQuery fact table with Cloud SQL PostgreSQL via IAM Socket Factory broadcast join and window ranking. |
+| `generate-mock-data.spark` | `imperative` | Generates synthetic `Customer` records locally every second using Python `Faker` inside `mapInPandas` and logs micro-batches to Console. |
+| `sdp-biglake-iceberg-medallion.spark` | `sdp` | Streams CSV orders into Bronze and Silver `@dp.table` datasets and aggregates a Gold BigLake Iceberg `@dp.materialized_view`. |
+| `sdp-auto-cdc-scd1.spark` | `sdp` | Merges streaming customer CDC JSON events, delete tombstones, and out-of-order timestamps via `dp.create_auto_cdc_flow` (SCD Type 1). |
 
 ---
 
 ## Prerequisites
 
-1. **Visual Studio Code**: Version `1.74.0` or newer.
-2. **Google Cloud SDK (`gcloud` and `bq`)**: Authenticated with an active project for Vertex AI code generation and cloud deployment:
-   ```bash
-   gcloud auth login
-   gcloud auth application-default login
-   gcloud config set project <YOUR_GCP_PROJECT_ID>
-   ```
-3. **Vertex AI API**: Enable `aiplatform.googleapis.com` in your active Google Cloud project.
-4. **Local Python & Java (Optional for Local Runs & Offline Tests)**:
-   - Imperative Local mode: Python 3.10+ and JDK 17 or 21 (`run_local.sh` bootstraps `.venv` and Temurin JDK 21 automatically).
-   - SDP Local mode: Apache Spark 4.2+ (`pyspark>=4.2.0`) with Spark Connect (`spark-pipelines` CLI) and JDK 17 or 21.
+- **VS Code**: Install Visual Studio Code version `1.74.0` or newer.
+- **Google Cloud SDK**: Install `gcloud` and `bq`, then authenticate your active Google Cloud project.
+  ```bash
+  gcloud auth login
+  gcloud auth application-default login
+  gcloud config set project <YOUR_GCP_PROJECT_ID>
+  ```
+- **Gemini Access**: Enable `aiplatform.googleapis.com` in your Google Cloud project, or set `GEMINI_API_KEY` for the Gemini Developer API.
+- **Imperative Local Runtime (Optional)**: Install Python 3.10+. When needed, `run_local.sh` bootstraps `.venv` and Eclipse Temurin JDK 21 automatically.
+- **SDP Local Runtime (Optional)**: Install Python 3.10+, JDK 17 or 21, and `pyspark>=4.2.0` (`spark-pipelines` CLI over Spark Connect).
 
 ---
 
 ## Getting Started
 
-1. Open the **Spark Designer** icon in the VS Code Activity Bar.
-2. Click **`+`** (`Spark: New Pipeline`) and choose **Imperative PySpark (Default)** or **Spark Declarative Pipelines (SDP)**.
-3. Save the pipeline as `<name>.spark` in your workspace (or open one of the seven bundled templates from the **Samples** tab).
-4. Drag Sources, Steps, and Sinks onto the canvas, connect their handles, and configure properties in the right-hand inspector.
-5. Open the **Source Code** tab in the bottom panel, pick an output folder, and click **Generate Code**.
-6. Open the **Deployment** tab to configure your target runner (or SDP storage, BigLake catalog, and refresh mode) and click **Run Now**.
+Open one of the six bundled templates from the **Samples** tab, or create a new pipeline from scratch.
+
+1. Click the **Spark Designer** icon in the VS Code Activity Bar.
+2. Click **Spark: New Pipeline** (`+`) in the **SparkExplorer** title bar.
+3. When prompted, select **Imperative PySpark (Default)** or **Spark Declarative Pipelines (SDP)**.
+4. Save the new `.spark` pipeline file in your workspace folder.
+5. Drag Sources, Steps, and Sinks from the palette onto the canvas.
+6. Connect node handles on the canvas to build the pipeline DAG.
+7. Select each node to configure connector, schema, or transformation properties in the inspector.
+8. Select an output folder and Gemini model in the **Source Code** tab.
+9. Click **Generate Code** to synthesize your project files and offline `pytest` suite.
+10. Configure your target runner or SDP refresh mode in the **Deployment** tab.
+11. Click **Run Now** to execute the pipeline locally or on Google Cloud.
 
 ---
 
@@ -102,36 +121,48 @@ apache-spark-designer/
 │   ├── code-gen-schema.json        # Structured JSON output schema for Gemini
 │   ├── codegen-prompts/            # Optional AI reviewer and fix prompt templates
 │   ├── codegen-skills/             # Modular PySpark 4.x and SDP 4.2+ codegen skills
-│   ├── samples/                    # Seven bundled .spark samples and companion .md guides
-│   └── templates/pyspark/          # Imperative and SDP runner templates
+│   │   └── README.md               # Skill authoring contract and ExecutionPlan placeholders
+│   ├── samples/                    # Six bundled .spark samples and companion .md guides
+│   └── templates/pyspark/          # Byte-identical Imperative and SDP runner templates
 ├── src/
 │   ├── cli/                        # Safe gcloud and bq asset discovery clients
-│   ├── codegen/                    # Feature detector, skill catalog, prompt builder, check runner
-│   ├── editor/                     # SparkEditorProvider custom .spark editor & tab upgrade
-│   ├── execution/                  # PipelineRunner & job ID detection
-│   ├── samples/                    # Sample discovery and metadata service
+│   ├── codegen/                    # Dynamic modelDiscovery, prompt builder, and check runner
+│   ├── editor/                     # SparkEditorProvider custom .spark editor and tab upgrade
+│   ├── execution/                  # PipelineRunner and cloud job ID detection
+│   ├── samples/                    # Bundled sample discovery and metadata service
 │   ├── security/                   # Path, URI, env, and executable script guards
-│   ├── shared/                     # Pure cross-boundary DAG validator & Imperative/SDP planners
-│   ├── spark/                      # Spark 4.x runtime version matrix & connector artifacts
+│   ├── shared/                     # Pure cross-boundary DAG validator and Imperative/SDP planners
+│   ├── spark/                      # Spark 4.x versionMatrix and connector artifact resolver
 │   ├── tree/                       # SparkExplorer sidebar tree view provider
-│   └── test/                       # Vitest unit suites and multi-agent integration evaluators
+│   └── test/
+│       ├── integration/            # Multi-agent SparkArchitectureAgent and pytest harness
+│       │   └── README.md           # Evaluator suite and offline pytest runner guide
+│       └── unit/                   # Vitest unit suites for host, planners, and docs
 ├── walkthroughs/                   # Interactive VS Code onboarding walkthrough steps
 ├── webview/                        # React 19 + React Flow + Tailwind CSS Vite frontend
-├── ARCHITECTURE.md                 # System architecture, planners, and SDP decision guide
-├── DESIGN.md                       # UI/UX design tokens, badges, and component contracts
-└── package.json                    # VS Code extension manifest and npm scripts
+├── ARCHITECTURE.md                 # Component topology, planners, versionMatrix, and IPC registry
+├── DESIGN.md                       # Design tokens, node badges, handles, and UI contracts
+├── LICENSE.txt                     # Apache License 2.0
+└── package.json                    # VS Code extension manifest, settings, and npm scripts
 ```
+
+### Documentation Guides
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): Spark 4.x component topology, `executionPlanner.ts` and `sdpPlanner.ts` flows, `versionMatrix.ts`, and IPC message registry.
+- [DESIGN.md](DESIGN.md): Visual design system, `BATCH`/`STREAM` and SDP dataset badges, `Join` and `ConditionalSplit` handles, and component contracts.
+- [resources/codegen-skills/README.md](resources/codegen-skills/README.md): Codegen skill authoring contract, YAML frontmatter rules, and `ExecutionPlan` prompt placeholders.
+- [src/test/integration/README.md](src/test/integration/README.md): Guide for running the `SparkArchitectureAgent` multi-agent evaluation suite and offline PySpark `pytest` harness.
 
 ---
 
-## Development & Verification Scripts
+## Development, Verification & Integration Testing
 
 ```bash
 # Install dependencies (outside offline sandboxes)
 npm install
 npm --prefix webview install
 
-# Compile, typecheck, lint, bundle, and test
+# Compile, typecheck, lint, bundle, and run unit and webview test suites
 npm run compile
 npm run typecheck:webview
 npm run typecheck:integration
@@ -139,17 +170,28 @@ npm run lint
 npm --prefix webview run lint
 npm run build:webview
 npm run test:all
+
+# Run end-to-end multi-agent Spark evaluator suites (requires Gemini credentials)
+npm run test:integration:e2e
+
+# Run offline PySpark 4.x pytest verification on generated pipelines
+JAVA_HOME=/path/to/jdk-21 SPARK_PYTEST_PYTHON=/path/to/venv/bin/python npm run test:integration:pytest
 ```
 
-### Extension Settings
+- Before reporting test counts, run `npm run build:webview` so the `webview-csp` unit suite inspects the compiled webview bundle.
+- When running `npm run test:integration:pytest`, set `JAVA_HOME` to JDK 17 or 21 and `SPARK_PYTEST_PYTHON` to a Python environment with `pyspark>=4` and `pytest`.
+
+---
+
+## Extension Settings
 
 | Setting | Default | Description |
 | :--- | :--- | :--- |
-| `sparkDesigner.gcloudPath` | `""` | Custom absolute path to the `gcloud` executable. Searches `PATH` when empty. |
-| `sparkDesigner.codegen.enableReviewer` | `false` | Runs read-only checks and up to two Gemini review-and-fix passes after code generation. |
+| `sparkDesigner.gcloudPath` | `""` | Custom absolute path to the `gcloud` executable. If empty, the extension searches `PATH` and standard install locations. |
+| `sparkDesigner.codegen.enableReviewer` | `false` | If `true`, runs read-only checks and up to two Gemini review-and-fix passes after code generation. |
 
 ---
 
 ## License
 
-This project is licensed under the [Apache 2.0 License](LICENSE).
+See [Apache 2.0 License](LICENSE.txt) for license terms.

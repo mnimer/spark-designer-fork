@@ -1,13 +1,22 @@
+<!-- Author: Mike Nimer <mikenimer@google.com> -->
 # Build Spark Declarative Pipelines (Spark 4.2+)
 
-Design incremental medallion tables and SCD Type 1 Auto CDC flows using **Spark Declarative Pipelines (SDP)** targeting Apache Spark 4.2+.
+Design incremental medallion tables and SCD Type 1 Auto CDC flows with **Spark Declarative Pipelines (SDP)** on Apache Spark 4.2+.
 
-### How SDP Mode Works
+### SDP Canvas & Dataset Badges
 
-1. **Switch or Create in SDP Mode**: Pick **Spark Declarative Pipelines (SDP)** when creating a `.spark` file, or click the **`SDP (4.2+)`** switcher in the canvas toolbar.
-2. **Inspect Dataset Badges**: Nodes display deterministic SDP badges (`VIEW`, `MV`, `TABLE`, `CDC`, and `SINK`). Unsupported nodes (`foreachBatch` sinks, Spark ML, and SCD Type 2) show explanatory tooltips in the palette.
-3. **Configure BigLake Iceberg & Storage**: In the **Deployment** tab, set an absolute `gs://` checkpoint `storage` URI outside source folders, a plain `catalog` alias (`lake`), `database`, and BigLake REST warehouse URI.
-4. **Validate & Refresh Safely**: Run `dry-run` to validate your graph without writing data, or choose incremental `run`, `--refresh`, or confirmed `--full-refresh` updates.
+- **Mode Selection**: When you create a `.spark` file, select **Spark Declarative Pipelines (SDP)** or use **`SDP (4.2+)`** in the toolbar.
+- **Dataset Badges**: Canvas nodes display deterministic `VIEW`, `MV`, `TABLE`, `CDC`, and `SINK` dataset badges.
+- **Compatibility Guard**: Unsupported `foreachBatch` sinks, Spark ML steps, and SCD Type 2 options display explanatory palette tooltips.
+
+### Configure & Run SDP Pipelines
+
+1. Click the **`SDP (4.2+)`** toolbar switcher to enable SDP mode on an active `.spark` pipeline.
+2. Open the **Deployment** tab to configure pipeline storage and catalog settings.
+3. Set an absolute `gs://` checkpoint `storage` URI outside source folders.
+4. Enter a plain `catalog` alias (`lake`), `database`, and BigLake Iceberg REST warehouse URI.
+5. Run `dry-run` to validate your SDP graph without writing data.
+6. Execute incremental `run`, selective `--refresh`, or confirmed `--full-refresh` updates.
 
 ### Explore Bundled SDP Samples
 

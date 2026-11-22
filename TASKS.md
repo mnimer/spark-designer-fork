@@ -271,12 +271,12 @@ All 8 File Format sinks (`SNK11`–`SNK18`) embed the shared **`StorageBackendFi
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
-| [DOC1](#doc1) | 📖 Docs | Rewrite `ARCHITECTURE.md` with Spark 4.x component topology, `executionPlanner.ts` flow, `versionMatrix.ts`, and IPC message registry. | ⬜ Not Started |
-| [DOC2](#doc2) | 📖 Docs | Update `DESIGN.md` with `BATCH`/`STREAM` node badges, `Join` `left`/`right`/`BROADCAST` handle specs, and `ConditionalSplit` dynamic handles. | ⬜ Not Started |
-| [DOC3](#doc3) | 📖 Docs | Rewrite `README.md` for Apache Spark / Managed Spark Pipeline Builder. | ⬜ Not Started |
-| [DOC4](#doc4) | 📖 Docs | Update `walkthroughs/design-dag.md`, `walkthroughs/generate-code.md`, and `walkthroughs/create-pipeline.md` for `.spark` pipelines. | ⬜ Not Started |
-| [DOC5](#doc5) | 📖 Docs | Author `resources/codegen-skills/README.md` documenting the skill authoring contract and `ExecutionPlan` placeholders. | ⬜ Not Started |
-| [DOC6](#doc6) | 📖 Docs | Author `src/test/integration/README.md` documenting how to run the `SparkArchitectureAgent` evaluation suite and offline `pytest` harness. | ⬜ Not Started |
+| [DOC1](#doc1) | 📖 Docs | Rewrite `ARCHITECTURE.md` with Spark 4.x component topology, `executionPlanner.ts` flow, `versionMatrix.ts`, and IPC message registry. | ✅ Done |
+| [DOC2](#doc2) | 📖 Docs | Update `DESIGN.md` with `BATCH`/`STREAM` node badges, `Join` `left`/`right`/`BROADCAST` handle specs, and `ConditionalSplit` dynamic handles. | ✅ Done |
+| [DOC3](#doc3) | 📖 Docs | Rewrite `README.md` for Apache Spark / Managed Spark Pipeline Builder. | ✅ Done |
+| [DOC4](#doc4) | 📖 Docs | Update `walkthroughs/design-dag.md`, `walkthroughs/generate-code.md`, and `walkthroughs/create-pipeline.md` for `.spark` pipelines. | ✅ Done |
+| [DOC5](#doc5) | 📖 Docs | Author `resources/codegen-skills/README.md` documenting the skill authoring contract and `ExecutionPlan` placeholders. | ✅ Done |
+| [DOC6](#doc6) | 📖 Docs | Author `src/test/integration/README.md` documenting how to run the `SparkArchitectureAgent` evaluation suite and offline `pytest` harness. | ✅ Done |
 
 ### Phase 11 — Enterprise Ingestion, Data Contracts, CDC/SCD & RAG Extensions (`EXT1`–`EXT8`)
 
