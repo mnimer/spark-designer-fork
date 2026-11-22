@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const README_PATH = path.join(REPO_ROOT, 'README.md');

@@ -226,6 +226,7 @@ JAVA_HOME=/path/to/jdk-21 SPARK_PYTEST_PYTHON=/path/to/python npm run test:integ
 - **Root `conftest.py` Fixture Injection**: If `tests/conftest.py` and root `conftest.py` lack `spark`, `ensureConftest` writes a `SparkSession.builder.master("local[2]")` fixture to root `conftest.py`. Note that `deterministic-gate.ts` exempts `conftest.py`, `tests/`, and `run_local.sh` from banned local-master scans.
 - **Process Isolation & Sanitization**: `execFileSafe` spawns Python and `pytest` with argument arrays and never invokes a shell. `buildChildEnv` filters caller variables through `envSanitizer` and pins `PYSPARK_PYTHON`, `PYSPARK_DRIVER_PYTHON`, and `SPARK_LOCAL_IP=127.0.0.1`.
 - **JUnit XML Report Parsing**: `parseJUnitXml` reads structured pass, fail, skip, and error counts plus failure tracebacks from `--junitxml` (`junit_family=xunit2`).
+- **Shared Cache & Disk Hygiene (`sharedTestCache.ts`)**: Reuses `~/.cache/spark-pipeline-builder/` for virtualenvs, pip, Ivy, and JDK 21. Removes per-run scratch caches after execution.
 
 ### Offline Vitest Unit Suites (`src/test/unit/`)
 
