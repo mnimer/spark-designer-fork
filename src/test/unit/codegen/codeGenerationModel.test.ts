@@ -53,7 +53,7 @@ vi.mock('vscode', async () =>
 );
 
 import { executeCodeGeneration, GEMINI_LOG_FILENAME, handleRegenerateCode } from '../../../codeGeneration';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import type { HostToWebviewMessage } from '../../../shared/protocol';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');

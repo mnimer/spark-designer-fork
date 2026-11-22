@@ -2,43 +2,53 @@
 .vscode-test/**
 .github/**
 .agents/**
-.gemini/**
 graphify-out/**
 src/**
-tsconfig.json
-tsconfig.integration.json
+out/test/**
+tsconfig*.json
+**/*.tsbuildinfo
 **/*.map
 .gitignore
 .eslintignore
 .eslintrc*
 eslint.config.*
 skills-lock.json
+AGENTS.md
 ARCHITECTURE.md
 DESIGN.md
-TASK.md
-vitest*.config.*
+TASKS.md
+vitest*
+coverage/**
+.nyc_output/**
+.coverage
 **/*.log
 **/.test-report.*
+**/test-report.*
 
-# Webview source & tooling (keep only webview/dist/**)
+# Local Python, PySpark, and credential artifacts
+**/__pycache__/**
+.pytest_cache/**
+.venv/**
+venv/**
+spark-warehouse/**
+metastore_db/**
+.env
+.env.*
+*.pem
+*.key
+service-account*.json
+
+# Webview source and tooling (keep only webview/dist/**)
 webview/src/**
 webview/node_modules/**
 webview/public/**
 webview/tsconfig*.json
 webview/vite.config.*
-webview/vitest.config.*
+webview/vitest*
 webview/eslint.config.*
 webview/index.html
 webview/package*.json
 webview/README.md
-
-# Ensure critical runtime directories are included
-!out/**
-!webview/dist/**
-!resources/**
-# Exclude test output and source maps
-out/test/**
-**/*.map
 
 # Prune non-runtime files from node_modules
 **/node_modules/**/test/**
@@ -47,6 +57,8 @@ out/test/**
 **/node_modules/**/.github/**
 **/node_modules/**/*.md
 **/node_modules/**/*.d.ts
+**/node_modules/**/*.d.mts
+**/node_modules/**/*.d.cts
 **/node_modules/**/*.map
 **/node_modules/**/LICENSE*
 **/node_modules/**/CHANGELOG*

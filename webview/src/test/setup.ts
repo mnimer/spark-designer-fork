@@ -1,3 +1,8 @@
+/** @fileoverview Configures shared Testing Library timeouts and browser globals for webview Vitest suites.
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
 import '@testing-library/jest-dom';
 import { configure } from '@testing-library/react';
 import { vi } from 'vitest';
@@ -19,7 +24,7 @@ vi.stubGlobal('ResizeObserver', MockResizeObserver);
 
 // Mock window.acquireVsCodeApi globally for all tests
 const mockPostMessage = vi.fn();
-(window as any).acquireVsCodeApi = () => ({
+window.acquireVsCodeApi = () => ({
   postMessage: mockPostMessage
 });
 

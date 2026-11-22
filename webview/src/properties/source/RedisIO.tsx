@@ -44,13 +44,14 @@ export interface RedisIOSourcePropertiesProps {
         scanCount?: number | string;
         authMode?: string;
         secretName?: string;
+        authPasswordSecret?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

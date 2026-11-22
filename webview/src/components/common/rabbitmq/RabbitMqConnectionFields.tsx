@@ -32,7 +32,7 @@ export interface SecretItem {
   fullName?: string;
   value: string;
   id?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**

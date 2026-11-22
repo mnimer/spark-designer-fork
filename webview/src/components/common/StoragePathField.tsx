@@ -85,6 +85,7 @@ export interface StoragePathFieldProps {
  * @param buckets Raw bucket names reported by the extension host.
  * @returns Suggestion strings suitable for a PropertyField datalist.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export const toBucketSuggestions = (buckets: string[]): string[] =>
   buckets.map((bucket) => (bucket.startsWith('gs://') ? bucket : `gs://${bucket}/`));
 

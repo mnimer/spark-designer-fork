@@ -5,7 +5,7 @@
  *
  * Purpose:
  * Provides the canonical fallback resolution logic for extracting system/special
- * instructions from pipeline graph nodes across Apache Beam Designer property panels.
+ * instructions from pipeline graph nodes across Apache Spark Designer property panels.
  */
 
 /**

@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { SamplesTabPanel } from './SamplesTabPanel';
+import { buildFallbackSampleReadme } from './SampleInfoModal';
 import type { SamplePipeline } from '../../catalog/samples';
 
 describe('SamplesTabPanel', () => {
@@ -83,5 +84,12 @@ describe('SamplesTabPanel', () => {
     fireEvent.click(screen.getByTestId('sample-info-modal-new-file'));
     expect(onOpenSample).toHaveBeenCalledWith(mockSamples[0]);
     expect(screen.queryByTestId('sample-info-modal')).not.toBeInTheDocument();
+  });
+
+  it('synthesizes PySpark Local fallback README instructions when readmeContent is absent (CLN4)', () => {
+    const readme = buildFallbackSampleReadme(mockSamples[1]);
+    expect(readme).toContain('PySpark 4.x');
+    expect(readme).toContain('**Local**');
+    expect(readme).toContain('./run_local.sh');
   });
 });

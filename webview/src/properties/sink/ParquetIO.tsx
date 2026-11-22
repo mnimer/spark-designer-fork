@@ -11,7 +11,6 @@
  * maxRecordsPerFile, datetime/INT96 write rebase modes, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -23,7 +22,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const SPARK_SAVE_MODES: SelectFieldOption[] = [
+const SPARK_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -33,7 +32,7 @@ export const SPARK_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x Parquet compression codecs.
  */
-export const PARQUET_COMPRESSION_CODECS: SelectFieldOption[] = [
+const PARQUET_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'snappy', label: 'snappy (Default, balanced throughput)' },
   { value: 'zstd', label: 'zstd (High compression ratio and speed)' },
   { value: 'gzip', label: 'gzip (Higher compression, higher CPU)' },
@@ -43,7 +42,7 @@ export const PARQUET_COMPRESSION_CODECS: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x Parquet calendar rebase modes when writing dates and timestamps.
  */
-export const PARQUET_WRITE_REBASE_MODES: SelectFieldOption[] = [
+const PARQUET_WRITE_REBASE_MODES: SelectFieldOption[] = [
   { value: 'EXCEPTION', label: 'EXCEPTION (Fail on ambiguous ancient dates)' },
   { value: 'CORRECTED', label: 'CORRECTED (Write Proleptic Gregorian verbatim)' },
   { value: 'LEGACY', label: 'LEGACY (Rebase Gregorian to Julian calendar)' },
@@ -54,8 +53,10 @@ export const PARQUET_WRITE_REBASE_MODES: SelectFieldOption[] = [
  */
 export interface ParquetIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -75,7 +76,7 @@ export interface ParquetIOSinkNode {
       int96RebaseMode?: 'EXCEPTION' | 'CORRECTED' | 'LEGACY';
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -85,7 +86,7 @@ export interface ParquetIOSinkNode {
  */
 export interface ParquetIOSinkPropertiesProps {
   node: ParquetIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

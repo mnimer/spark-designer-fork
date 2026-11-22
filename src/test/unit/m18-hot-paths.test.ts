@@ -153,10 +153,9 @@ describe('M18 — savePipelineFiles non-blocking file operations', () => {
                 '# Generated python code\n',
                 'py',
                 undefined,
-                'pyspark\n',
+                'pyspark==4.0.*\n',
                 'FROM python\n',
-                '#!/bin/bash\necho "direct"\n',
-                '#!/bin/bash\necho "dataflow"\n'
+                '#!/bin/bash\necho "local"\n'
             );
 
             // Verify non-blocking fs.promises were invoked
@@ -168,7 +167,7 @@ describe('M18 — savePipelineFiles non-blocking file operations', () => {
             const folder = path.join(tempDir, 'async-verify');
             expect(fs.existsSync(filePath)).toBe(true);
             expect(fs.existsSync(path.join(folder, 'src', 'async-verify.py'))).toBe(true);
-            expect(fs.existsSync(path.join(folder, 'run_directrunner.sh'))).toBe(true);
+            expect(fs.existsSync(path.join(folder, 'run_local.sh'))).toBe(true);
         } finally {
             writeFilePromiseSpy.mockRestore();
             mkdirPromiseSpy.mockRestore();

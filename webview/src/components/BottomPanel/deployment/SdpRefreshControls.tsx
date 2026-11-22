@@ -8,8 +8,6 @@ import React from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import { InfoTooltip } from '../../InfoTooltip';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 /**
  * Resolved SDP dataset or external sink descriptor extracted from the pipeline graph.
  */
@@ -37,11 +35,13 @@ export interface SdpRefreshDatasetOption {
 /**
  * Props for the {@link SdpRefreshControls} component.
  */
-export interface SdpRefreshControlsProps {
+export interface SdpRefreshControlsProps<
+  T extends Record<string, unknown> = Record<string, unknown>,
+> {
   /** Active pipeline job configuration state. */
-  jobConfig: Record<string, any>;
+  jobConfig: T;
   /** Functional updater for modifying jobConfig without clobbering sibling fields. */
-  setJobConfig: (update: React.SetStateAction<any>) => void;
+  setJobConfig: React.Dispatch<React.SetStateAction<T>>;
   /** Resolved SDP datasets and sinks from the current graph. */
   datasets: readonly SdpRefreshDatasetOption[];
 }
@@ -53,11 +53,13 @@ export interface SdpRefreshControlsProps {
  * @param props - Job config, functional updater, and graph SDP datasets.
  * @returns Rendered SDP refresh controls card.
  */
-export const SdpRefreshControls: React.FC<SdpRefreshControlsProps> = ({
+export function SdpRefreshControls<
+  T extends Record<string, unknown> = Record<string, unknown>,
+>({
   jobConfig,
   setJobConfig,
   datasets,
-}) => {
+}: SdpRefreshControlsProps<T>): React.ReactElement {
   const sdpCommand: 'run' | 'dry-run' =
     jobConfig.sdpCommand === 'dry-run' ? 'dry-run' : 'run';
   const sdpRefreshMode: 'incremental' | 'refresh' | 'full_refresh' | 'full_refresh_all' =
@@ -138,12 +140,12 @@ export const SdpRefreshControls: React.FC<SdpRefreshControlsProps> = ({
   }, [sdpCommand, sdpRefreshMode, externalSinks, rawFullRefreshList]);
 
   const handleToggleRefreshDataset = (datasetName: string, checked: boolean) => {
-    setJobConfig((prev: any) => {
+    setJobConfig((prev) => {
       const prevRefresh: string[] = Array.isArray(prev?.sdpRefreshDatasets)
-        ? prev.sdpRefreshDatasets
+        ? prev.sdpRefreshDatasets.filter((d): d is string => typeof d === 'string')
         : [];
       const prevFull: string[] = Array.isArray(prev?.sdpFullRefreshDatasets)
-        ? prev.sdpFullRefreshDatasets
+        ? prev.sdpFullRefreshDatasets.filter((d): d is string => typeof d === 'string')
         : [];
       const nextRefresh = checked
         ? Array.from(new Set([...prevRefresh, datasetName]))
@@ -160,12 +162,12 @@ export const SdpRefreshControls: React.FC<SdpRefreshControlsProps> = ({
   };
 
   const handleToggleFullRefreshDataset = (datasetName: string, checked: boolean) => {
-    setJobConfig((prev: any) => {
+    setJobConfig((prev) => {
       const prevFull: string[] = Array.isArray(prev?.sdpFullRefreshDatasets)
-        ? prev.sdpFullRefreshDatasets
+        ? prev.sdpFullRefreshDatasets.filter((d): d is string => typeof d === 'string')
         : [];
       const prevRefresh: string[] = Array.isArray(prev?.sdpRefreshDatasets)
-        ? prev.sdpRefreshDatasets
+        ? prev.sdpRefreshDatasets.filter((d): d is string => typeof d === 'string')
         : [];
       const nextFull = checked
         ? Array.from(new Set([...prevFull, datasetName]))
@@ -205,7 +207,7 @@ export const SdpRefreshControls: React.FC<SdpRefreshControlsProps> = ({
           value={sdpCommand}
           onChange={(e) => {
             const nextCmd = e.target.value === 'dry-run' ? 'dry-run' : 'run';
-            setJobConfig((prev: any) => ({ ...prev, sdpCommand: nextCmd }));
+            setJobConfig((prev) => ({ ...prev, sdpCommand: nextCmd }));
           }}
           className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
         >
@@ -245,7 +247,7 @@ export const SdpRefreshControls: React.FC<SdpRefreshControlsProps> = ({
                 | 'refresh'
                 | 'full_refresh'
                 | 'full_refresh_all';
-              setJobConfig((prev: any) => ({
+              setJobConfig((prev) => ({
                 ...prev,
                 sdpRefreshMode: nextMode,
                 ...(nextMode === 'full_refresh_all'
@@ -439,4 +441,4 @@ export const SdpRefreshControls: React.FC<SdpRefreshControlsProps> = ({
       )}
     </div>
   );
-};
+}

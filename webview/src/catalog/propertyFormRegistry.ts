@@ -12,15 +12,42 @@
  * components/PropertyForm.tsx). Code that needs the concrete component (tests,
  * preloading) can resolve it with {@link loadPropertyForm}.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from 'react';
+import type { PipelineParadigm } from '../utils/sharedTypes';
+
+/**
+ * Minimal React Flow node shape accepted by the property form dispatcher and wrapper cards.
+ */
+export interface PropertyFormNode {
+  id?: string;
+  type?: string;
+  position?: { x: number; y: number };
+  data?: {
+    label?: string;
+    type?: string;
+    iconName?: string;
+    spark_transform?: string;
+    componentType?: string;
+    paradigm?: PipelineParadigm;
+    executionMode?: string;
+    defaultReadMode?: string;
+    supportedReadModes?: readonly string[];
+    isStreaming?: boolean;
+    sdpDatasetName?: string;
+    system_instructions?: string;
+    special_instructions?: string;
+    properties?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
 
 /**
  * Shared props accepted by dynamic property form components registered in the registry.
  */
 export interface PropertyFormProps {
-  node: any;
-  onChange: (properties: any) => void;
+  node: PropertyFormNode | null | undefined;
+  onChange: (properties: Record<string, unknown>) => void;
   onAddKVMapper?: (windowNodeId: string) => void;
   onAddPubSubSource?: (targetNodeId: string) => void;
 }
@@ -47,14 +74,18 @@ const FORM_LOADERS = new WeakMap<object, PropertyFormLoader>();
  * @param load Dynamic import resolving to the concrete form component.
  * @returns Lazy component suitable as a registry value.
  */
-function lazyForm(load: PropertyFormLoader): React.LazyExoticComponent<PropertyFormComponent> {
+function lazyForm<P>(
+  load: () => Promise<React.ComponentType<P>>
+): React.LazyExoticComponent<PropertyFormComponent> {
   let pending: Promise<PropertyFormComponent> | undefined;
   const loadOnce: PropertyFormLoader = () => {
     if (!pending) {
-      pending = load().catch((error: unknown) => {
-        pending = undefined;
-        throw error;
-      });
+      pending = (load() as Promise<unknown> as Promise<PropertyFormComponent>).catch(
+        (error: unknown) => {
+          pending = undefined;
+          throw error;
+        }
+      );
     }
     return pending;
   };

@@ -20,12 +20,8 @@ import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
-import {
-  BigQuerySchemaEditor,
-  type BigQueryField,
-  jsonToFields,
-  stringToFields,
-} from './BigQuerySchemaEditor';
+import { BigQuerySchemaEditor, type BigQueryField } from './BigQuerySchemaEditor';
+import { jsonToFields, stringToFields } from '../../components/common/SchemaEditor';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
 
 export type BigQueryWriteMethod = 'direct' | 'indirect';

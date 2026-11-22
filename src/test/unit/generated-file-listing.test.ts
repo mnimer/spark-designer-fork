@@ -4,14 +4,12 @@
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Bug: after running a generated Python pipeline once, the Source Code tab listed 4000+
- * files. The generated `run_directrunner.sh` creates its virtualenv as `venv` -- with NO
- * leading dot -- and the recursive walker in `handleReadFolderFiles` only skipped entries
- * beginning with '.'. So `.venv` was filtered but the `venv` that is actually created was
- * walked in full.
+ * files. A local virtualenv created as `venv` -- with NO leading dot -- bypassed the
+ * recursive walker in `handleReadFolderFiles` when it only skipped entries beginning
+ * with '.'. So `.venv` was filtered while `venv` was walked in full.
  *
  * The same gap existed in DEFAULT_IGNORE_PATTERNS, which is written into the generated
- * .dockerignore / .gcloudignore, meaning the virtualenv was also being uploaded to
- * Cloud Build.
+ * .dockerignore / .gcloudignore, meaning the virtualenv was also uploaded to Cloud Build.
  *
  * These tests drive the real handler against a real temporary directory laid out like a
  * generated project that has been run once.
@@ -41,13 +39,13 @@ describe('Source Code tab file listing — dependency directories are excluded',
     };
 
     beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-filelist-'));
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-filelist-'));
 
         // The files the generator actually produced.
         write('requirements.txt');
         write('Dockerfile');
         write('README.md');
-        write('run_directrunner.sh');
+        write('run_local.sh');
         write('src/__init__.py');
         write('src/generate_mock_data_pipeline.py');
 
@@ -55,7 +53,7 @@ describe('Source Code tab file listing — dependency directories are excluded',
         // this is the exact directory that caused the reported bug.
         write('venv/pyvenv.cfg');
         write('venv/bin/activate');
-        write('venv/lib/python3.11/site-packages/apache_beam/__init__.py');
+        write('venv/lib/python3.11/site-packages/pyspark/__init__.py');
         write('venv/lib/python3.11/site-packages/numpy/core/_methods.py');
 
         // Java equivalents, plus a dot-prefixed venv for good measure.
@@ -132,8 +130,8 @@ describe('Source Code tab file listing — dependency directories are excluded',
         expect(DEFAULT_IGNORE_PATTERNS).toContain('.spark-ivy');
     });
 
-    it('the exclude list covers every venv spelling run_directrunner.sh probes for', () => {
-        // The generated script checks `venv` first, then `.venv`; both must be excluded.
+    it('the exclude list covers every venv spelling run_local.sh probes for', () => {
+        // Local scripts check both `venv` and `.venv` so both must be excluded.
         expect(GENERATED_FILE_LIST_EXCLUDE_DIRS).toContain('venv');
         expect(GENERATED_FILE_LIST_EXCLUDE_DIRS).toContain('.venv');
         expect(GENERATED_FILE_LIST_EXCLUDE_DIRS).toContain('target');

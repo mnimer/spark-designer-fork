@@ -11,7 +11,6 @@
  * compression codecs, partitionBy columns, maxRecordsPerFile, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
@@ -23,7 +22,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const CSV_SAVE_MODES: SelectFieldOption[] = [
+const CSV_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -33,7 +32,7 @@ export const CSV_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x CSV output compression codecs.
  */
-export const CSV_COMPRESSION_CODECS: SelectFieldOption[] = [
+const CSV_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'none', label: 'none (Uncompressed CSV)' },
   { value: 'gzip', label: 'gzip (.csv.gz)' },
   { value: 'zstd', label: 'zstd (.csv.zst)' },
@@ -48,8 +47,10 @@ export const CSV_COMPRESSION_CODECS: SelectFieldOption[] = [
  */
 export interface CsvIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -77,7 +78,7 @@ export interface CsvIOSinkNode {
       quoteAll?: boolean;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -87,7 +88,7 @@ export interface CsvIOSinkNode {
  */
 export interface CsvIOSinkPropertiesProps {
   node: CsvIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
@@ -117,7 +118,7 @@ function resolvePartitionByValue(raw: unknown): string {
 /**
  * Resolves the boolean CSV header toggle from current or legacy node properties.
  */
-function resolveHeaderFlag(properties: Record<string, any>): boolean {
+function resolveHeaderFlag(properties: Record<string, unknown>): boolean {
   if (typeof properties.header === 'boolean') {
     return properties.header;
   }

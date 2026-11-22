@@ -25,8 +25,7 @@ import type { HostToWebviewCommand } from '../utils/protocol';
  * @param command Single command string or array of command strings to filter for
  * @param handler Callback invoked when a message with a matching command is received
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function useExtensionMessage<T = any>(
+export function useExtensionMessage<T = Record<string, unknown>>(
   command: HostToWebviewCommand | HostToWebviewCommand[],
   handler: (message: T) => void
 ): void {

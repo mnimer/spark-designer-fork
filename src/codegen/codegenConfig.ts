@@ -119,7 +119,6 @@ export const ALL_LANGUAGE_RUNNERS: Readonly<Record<SkillLanguage, readonly Skill
 
 /** Pipeline features that gate skills (skill frontmatter `metadata.preloadWhen`). */
 export const PIPELINE_FEATURES = {
-    sideInputs: 'side_inputs',
     multiOutput: 'multi_output',
     streaming: 'streaming',
     customInstructions: 'custom_instructions',
@@ -137,8 +136,6 @@ export const KNOWN_PIPELINE_FEATURES: ReadonlySet<string> = new Set<string>(Obje
 
 /** Edge handle ids that the detector inspects. */
 export const EDGE_HANDLES = {
-    /** `targetHandle` of an edge that feeds a side input. */
-    sideInput: 'side_input',
     /** `sourceHandle` values of a multi-output (valid / error) step. */
     multiOutput: ['valid', 'error'] as readonly string[],
 } as const;

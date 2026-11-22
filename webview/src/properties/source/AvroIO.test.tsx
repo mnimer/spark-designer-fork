@@ -9,24 +9,29 @@
  * SchemaEditor, and SystemInstructionsField for AvroIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { AvroIOSourceProperties, AvroSourceProperties, SAMPLE_AVRO_SCHEMA } from './AvroIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import {
+  AvroIOSourceProperties,
+  AvroSourceProperties,
+  SAMPLE_AVRO_SCHEMA,
+  type AvroIOSourceNode,
+} from './AvroIO';
 
 describe('AvroIOSourceProperties (SRC15 AvroSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports AvroSourceProperties as an alias for AvroIOSourceProperties', () => {
@@ -34,7 +39,7 @@ describe('AvroIOSourceProperties (SRC15 AvroSource)', () => {
   });
 
   it('renders default batch settings and flags required validation when path is empty', () => {
-    const mockNode: any = {
+    const mockNode: AvroIOSourceNode = {
       data: {
         label: 'AvroSource',
         spark_transform: 'AvroSource',
@@ -54,7 +59,7 @@ describe('AvroIOSourceProperties (SRC15 AvroSource)', () => {
   });
 
   it('renders populated properties including streaming maxFilesPerTrigger, avroSchema, and ignoreExtension', () => {
-    const mockNode: any = {
+    const mockNode: AvroIOSourceNode = {
       data: {
         label: 'AvroSource',
         spark_transform: 'AvroSource',
@@ -88,7 +93,7 @@ describe('AvroIOSourceProperties (SRC15 AvroSource)', () => {
   });
 
   it('propagates updates for avroSchema, ignoreExtension, maxFilesPerTrigger, SchemaEditor, and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: AvroIOSourceNode = {
       data: {
         properties: {
           readMode: 'streaming',

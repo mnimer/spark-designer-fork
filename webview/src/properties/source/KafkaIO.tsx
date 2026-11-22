@@ -18,6 +18,7 @@
  *   and `SystemInstructionsField`) on the 8pt grid system.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { Sliders, ShieldCheck } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -30,13 +31,13 @@ import { SystemInstructionsField } from '../../components/common/SystemInstructi
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /** Read mode options for KafkaSource. */
-export const KAFKA_READ_MODE_OPTIONS: SelectFieldOption[] = [
+const KAFKA_READ_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'streaming', label: 'Streaming (spark.readStream)' },
   { value: 'batch', label: 'Batch (spark.read)' },
 ];
 
 /** Subscription mode options for Spark Kafka connector. */
-export const KAFKA_SUBSCRIPTION_MODE_OPTIONS: SelectFieldOption[] = [
+const KAFKA_SUBSCRIPTION_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'subscribe', label: 'Subscribe (Topic List)' },
   { value: 'subscribePattern', label: 'Subscribe Pattern (Regex)' },
   { value: 'assign', label: 'Assign (Explicit Partitions JSON)' },
@@ -61,7 +62,7 @@ export const KAFKA_SASL_MECHANISM_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the KafkaSource panel. */
 export interface KafkaIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -86,7 +87,7 @@ export interface KafkaIOSourceNode {
       consumerProperties?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -94,7 +95,7 @@ export interface KafkaIOSourceNode {
 /** Props for the {@link KafkaIOSourceProperties} component. */
 export interface KafkaIOSourcePropertiesProps {
   node: KafkaIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

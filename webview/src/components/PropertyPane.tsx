@@ -22,17 +22,27 @@ import {
   Copy,
   X
 } from 'lucide-react';
-import { PropertyForm } from './PropertyForm';
+import { PropertyForm, type PropertyFormNode } from './PropertyForm';
 import { ErrorBoundary } from './common/ErrorBoundary';
 import { getNodeIcon } from './common/nodeIcons';
 import type { PipelineParadigm } from '../utils/sharedTypes';
 
 /**
+ * Node payload shape expected by {@link PropertyPane}.
+ */
+export interface PropertyPaneNode extends PropertyFormNode {
+  id: string;
+  data: NonNullable<PropertyFormNode['data']> & {
+    iconName: string;
+  };
+}
+
+/**
  * Props for the {@link PropertyPane} component.
  */
 export interface PropertyPaneProps {
-  node: any;
-  onChange: (properties: any) => void;
+  node: PropertyPaneNode;
+  onChange: (properties: Record<string, unknown>) => void;
   onLabelChange?: (label: string) => void;
   runtimeVariables: { key: string; value: string }[];
   onAddKVMapper?: (windowNodeId: string) => void;
@@ -59,15 +69,18 @@ export const PropertyPane: React.FC<PropertyPaneProps> = ({
   paradigm,
 }) => {
   const IconComponent = getNodeIcon(node.data.iconName, Box);
-  const [labelValue, setLabelValue] = React.useState(node.data.label || '');
-
-  React.useEffect(() => {
-    setLabelValue(node.data.label || '');
-  }, [node.data.label, node.id]);
+  const incomingLabel = node.data.label || '';
+  const syncKey = `${node.id}\0${incomingLabel}`;
+  const [labelDraft, setLabelDraft] = React.useState<{
+    syncKey: string;
+    value: string;
+  } | null>(null);
+  const labelValue =
+    labelDraft && labelDraft.syncKey === syncKey ? labelDraft.value : incomingLabel;
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
-    setLabelValue(val);
+    setLabelDraft({ syncKey, value: val });
     if (onLabelChange) {
       onLabelChange(val);
     }

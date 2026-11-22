@@ -68,7 +68,7 @@ describe('fileFilters', () => {
         'Pipeline.java',
         'requirements.txt',
         'pom.xml',
-        'venv/lib/python3.11/site-packages/apache_beam/pipeline.py',
+        'venv/lib/python3.11/site-packages/pyspark/pipeline.py',
         '.venv/lib/site-packages/requests/api.py',
         '__pycache__/pipeline.cpython-311.pyc',
         'target/generated-sources/Proto.java',
@@ -98,10 +98,10 @@ describe('fileFilters', () => {
         'Dockerfile',
         '.dockerignore',
         '.gcloudignore',
-        'run_directrunner.sh',
-        'metadata.json',
+        'run_local.sh',
+        'spark-pipeline.yml',
         'gemini.log',
-        'venv/lib/python3.11/site-packages/apache_beam/pipeline.py',
+        'venv/lib/python3.11/site-packages/pyspark/pipeline.py',
         '.venv/bin/activate',
         '__pycache__/pipeline.cpython-311.pyc',
         'pipeline.pyc',
@@ -115,8 +115,8 @@ describe('fileFilters', () => {
         'Dockerfile',
         '.dockerignore',
         '.gcloudignore',
-        'run_directrunner.sh',
-        'metadata.json',
+        'run_local.sh',
+        'spark-pipeline.yml',
       ]);
     });
   });

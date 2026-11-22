@@ -210,14 +210,14 @@ describe('checkDeliverableCompleteness', () => {
         expect(missing).toContain('Missing mandatory deliverable: run_serverless_spark.sh');
     });
 
-    it('flags Beam-era layouts as incomplete (failure condition)', () => {
-        const beamRepo: GeneratedFileCandidate[] = [
+    it('flags legacy non-Spark layouts as incomplete (failure condition)', () => {
+        const legacyRepo: GeneratedFileCandidate[] = [
             { filename: 'src/wordcount.py', content: 'import apache_beam' },
             { filename: 'src/wordcount_test.py', content: '' },
-            { filename: 'run_directrunner.sh', content: '' },
+            { filename: 'run_legacy.sh', content: '' },
             { filename: 'metadata.json', content: '{}' }
         ];
-        const missing = checkDeliverableCompleteness(beamRepo);
+        const missing = checkDeliverableCompleteness(legacyRepo);
         expect(missing).toContain('Missing mandatory deliverable: src/pipeline.py');
         expect(missing).toContain('Missing mandatory deliverable: tests/test_pipeline.py');
         expect(missing).toContain('Missing mandatory deliverable: run_dataproc_cluster.sh');

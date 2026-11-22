@@ -7,14 +7,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { BigQuerySchemaEditor, type BigQueryField } from './BigQuerySchemaEditor';
 import {
-  BigQuerySchemaEditor,
   fieldsToJson,
   fieldsToString,
   jsonToFields,
   stringToFields,
-  type BigQueryField
-} from './BigQuerySchemaEditor';
+} from '../../components/common/SchemaEditor';
 
 describe('BigQuerySchemaEditor utility functions', () => {
   const sampleFields: BigQueryField[] = [

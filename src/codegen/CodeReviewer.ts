@@ -169,7 +169,7 @@ function isAbort(err: unknown, signal?: AbortSignal): boolean {
  * @returns The parsed value.
  * @throws Error when the text is not JSON.
  */
-function toObject(output: unknown, label: string): any {
+function toObject(output: unknown, label: string): unknown {
     if (typeof output !== 'string') {
         return output;
     }
@@ -189,20 +189,36 @@ function toObject(output: unknown, label: string): any {
  */
 export function parseReviewReport(output: unknown): ReviewReport {
     const value = toObject(output, 'Reviewer');
-    if (!value || !Array.isArray(value.findings)) {
+    if (
+        !value ||
+        typeof value !== 'object' ||
+        !Array.isArray((value as { findings?: unknown }).findings)
+    ) {
         throw new Error('Reviewer output is missing the "findings" array.');
     }
-    const findings: ReviewFinding[] = value.findings
-        .filter((f: any) => f && typeof f.file === 'string' && f.file.trim())
-        .map((f: any) => ({
+    const record = value as { findings: unknown[]; summary?: unknown };
+    const findings: ReviewFinding[] = record.findings
+        .filter(
+            (f: unknown): f is Record<string, unknown> & { file: string } =>
+                Boolean(
+                    f &&
+                        typeof f === 'object' &&
+                        typeof (f as { file?: unknown }).file === 'string' &&
+                        (f as { file: string }).file.trim()
+                )
+        )
+        .map((f) => ({
             file: f.file.trim(),
             // NOTE: an unknown severity is treated as blocking (fail safe toward fixing).
-            severity: f.severity === REVIEW_SEVERITIES.minor ? REVIEW_SEVERITIES.minor : REVIEW_SEVERITIES.blocking,
+            severity:
+                f.severity === REVIEW_SEVERITIES.minor
+                    ? REVIEW_SEVERITIES.minor
+                    : REVIEW_SEVERITIES.blocking,
             problem: String(f.problem ?? ''),
             fix: String(f.fix ?? ''),
             skillRule: String(f.skillRule ?? ''),
         }));
-    return { findings, summary: typeof value.summary === 'string' ? value.summary : '' };
+    return { findings, summary: typeof record.summary === 'string' ? record.summary : '' };
 }
 
 /**
@@ -214,10 +230,23 @@ export function parseReviewReport(output: unknown): ReviewReport {
  */
 export function parseFixFiles(output: unknown): GeneratedFile[] {
     const value = toObject(output, 'Fix call');
-    if (!value || !Array.isArray(value.files)) {
+    if (
+        !value ||
+        typeof value !== 'object' ||
+        !Array.isArray((value as { files?: unknown }).files)
+    ) {
         throw new Error('Fix call output is missing the "files" array.');
     }
-    return value.files.filter((f: any) => f && typeof f.filename === 'string' && f.filename && typeof f.content === 'string');
+    return (value as { files: unknown[] }).files.filter(
+        (f: unknown): f is GeneratedFile =>
+            Boolean(
+                f &&
+                    typeof f === 'object' &&
+                    typeof (f as { filename?: unknown }).filename === 'string' &&
+                    (f as { filename: string }).filename &&
+                    typeof (f as { content?: unknown }).content === 'string'
+            )
+    );
 }
 
 /**

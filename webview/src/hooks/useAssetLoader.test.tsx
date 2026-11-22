@@ -15,12 +15,12 @@ describe('useAssetLoader', () => {
 
   beforeEach(() => {
     mockPostMessage.mockClear();
-    (window as any).vscode = { postMessage: mockPostMessage };
+    window.vscode = { postMessage: mockPostMessage };
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete (window as any).vscode;
+    delete window.vscode;
   });
 
   it('sends IPC request on mount and populates items on response', () => {
@@ -381,7 +381,7 @@ describe('useAssetLoader', () => {
       'requests %s (%s) and populates items on %s',
       (assetType, requestCommand, responseCommand, responseKey, payload) => {
         const TestComponent = () => {
-          const { items, loading, error } = useAssetLoader<any>(assetType, {
+          const { items, loading, error } = useAssetLoader<unknown>(assetType, {
             params: { region: 'us-central1' },
           });
           return (

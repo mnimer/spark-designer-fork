@@ -11,7 +11,6 @@
  * timestampFormat, dateFormat, lineSep, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
@@ -23,7 +22,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const JSON_SAVE_MODES: SelectFieldOption[] = [
+const JSON_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -33,7 +32,7 @@ export const JSON_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x JSON output compression codecs.
  */
-export const JSON_COMPRESSION_CODECS: SelectFieldOption[] = [
+const JSON_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'none', label: 'none (Uncompressed JSON Lines)' },
   { value: 'gzip', label: 'gzip (.json.gz)' },
   { value: 'zstd', label: 'zstd (.json.zst)' },
@@ -48,8 +47,10 @@ export const JSON_COMPRESSION_CODECS: SelectFieldOption[] = [
  */
 export interface JsonIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -70,7 +71,7 @@ export interface JsonIOSinkNode {
       lineSep?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -80,7 +81,7 @@ export interface JsonIOSinkNode {
  */
 export interface JsonIOSinkPropertiesProps {
   node: JsonIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

@@ -19,16 +19,16 @@ import {
   type SdpBigLakeConfigMode,
 } from '../../../utils/sdpConfigValidation';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 /**
  * Props for the {@link SdpSettingsPanel} component.
  */
-export interface SdpSettingsPanelProps {
+export interface SdpSettingsPanelProps<
+  T extends Record<string, unknown> = Record<string, unknown>,
+> {
   /** Active pipeline job configuration state. */
-  jobConfig: Record<string, any>;
+  jobConfig: T;
   /** Functional state updater for modifying jobConfig without clobbering sibling keys. */
-  setJobConfig: (update: React.SetStateAction<any>) => void;
+  setJobConfig: React.Dispatch<React.SetStateAction<T>>;
   /** Optional graph nodes used to detect source folder URI overlaps. */
   nodes?: readonly unknown[];
   /** Optional resolved GCP project identifier fallback. */
@@ -41,12 +41,14 @@ export interface SdpSettingsPanelProps {
  * @param props - Job configuration, functional updater, graph nodes, and project ID.
  * @returns Rendered SDP pipeline settings card.
  */
-export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
+export function SdpSettingsPanel<
+  T extends Record<string, unknown> = Record<string, unknown>,
+>({
   jobConfig,
   setJobConfig,
   nodes = [],
   projectId,
-}) => {
+}: SdpSettingsPanelProps<T>): React.ReactElement {
   const sdpStorage = typeof jobConfig.sdpStorage === 'string' ? jobConfig.sdpStorage : '';
   const sdpCatalog =
     typeof jobConfig.sdpCatalog === 'string' ? jobConfig.sdpCatalog : 'lake';
@@ -73,7 +75,14 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
       : '';
   const sdpCreateNamespace =
     typeof jobConfig.sdpCreateNamespace === 'boolean' ? jobConfig.sdpCreateNamespace : true;
-  const sdpStaticSparkConfText = formatSparkConfEntries(jobConfig.sdpStaticSparkConf);
+  const rawStaticSparkConf: string | Record<string, string> | null | undefined =
+    typeof jobConfig.sdpStaticSparkConf === 'string' ||
+    (typeof jobConfig.sdpStaticSparkConf === 'object' &&
+      jobConfig.sdpStaticSparkConf !== null &&
+      !Array.isArray(jobConfig.sdpStaticSparkConf))
+      ? (jobConfig.sdpStaticSparkConf as string | Record<string, string>)
+      : undefined;
+  const sdpStaticSparkConfText = formatSparkConfEntries(rawStaticSparkConf);
 
   // Discover BigLake catalogs and Cloud Storage buckets when applicable
   const { items: rawBigLakeCatalogs } = useAssetLoader<
@@ -138,8 +147,8 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
     : { valid: true };
 
   const parsedSparkConf = React.useMemo(
-    () => parseSparkConfEntries(jobConfig.sdpStaticSparkConf),
-    [jobConfig.sdpStaticSparkConf]
+    () => parseSparkConfEntries(rawStaticSparkConf),
+    [rawStaticSparkConf]
   );
 
   const partitionedConf = React.useMemo(
@@ -189,7 +198,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
           value={sdpStorage}
           onChange={(e) => {
             const nextValue = e.target.value;
-            setJobConfig((prev: any) => ({ ...prev, sdpStorage: nextValue }));
+            setJobConfig((prev) => ({ ...prev, sdpStorage: nextValue }));
           }}
           placeholder="gs://<bucket>/pipelines/<pipeline_name>"
           aria-invalid={!storageValidation.valid}
@@ -227,7 +236,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
             value={sdpCatalog}
             onChange={(e) => {
               const nextValue = e.target.value;
-              setJobConfig((prev: any) => ({ ...prev, sdpCatalog: nextValue }));
+              setJobConfig((prev) => ({ ...prev, sdpCatalog: nextValue }));
             }}
             placeholder="lake"
             aria-invalid={!catalogValidation.valid}
@@ -254,7 +263,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
             value={sdpDatabase}
             onChange={(e) => {
               const nextValue = e.target.value;
-              setJobConfig((prev: any) => ({ ...prev, sdpDatabase: nextValue }));
+              setJobConfig((prev) => ({ ...prev, sdpDatabase: nextValue }));
             }}
             placeholder="retail_medallion"
             aria-invalid={!databaseValidation.valid}
@@ -302,7 +311,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
           value={sdpBigLakeMode}
           onChange={(e) => {
             const nextMode = e.target.value as SdpBigLakeConfigMode;
-            setJobConfig((prev: any) => ({ ...prev, sdpBigLakeMode: nextMode }));
+            setJobConfig((prev) => ({ ...prev, sdpBigLakeMode: nextMode }));
           }}
           className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
         >
@@ -332,7 +341,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
                 value={sdpBigLakeProject}
                 onChange={(e) => {
                   const nextValue = e.target.value;
-                  setJobConfig((prev: any) => ({ ...prev, sdpBigLakeProject: nextValue }));
+                  setJobConfig((prev) => ({ ...prev, sdpBigLakeProject: nextValue }));
                 }}
                 placeholder="my-gcp-project"
                 className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
@@ -355,7 +364,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
                 value={sdpBigLakeCatalogId}
                 onChange={(e) => {
                   const nextValue = e.target.value;
-                  setJobConfig((prev: any) => ({ ...prev, sdpBigLakeCatalogId: nextValue }));
+                  setJobConfig((prev) => ({ ...prev, sdpBigLakeCatalogId: nextValue }));
                 }}
                 placeholder="retail_iceberg"
                 className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
@@ -403,7 +412,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
               value={sdpBigLakeProject}
               onChange={(e) => {
                 const nextValue = e.target.value;
-                setJobConfig((prev: any) => ({ ...prev, sdpBigLakeProject: nextValue }));
+                setJobConfig((prev) => ({ ...prev, sdpBigLakeProject: nextValue }));
               }}
               placeholder="my-gcp-project"
               className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs font-mono focus:outline-none focus:border-[var(--vscode-highlight)]"
@@ -426,7 +435,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
               value={sdpBigLakeWarehouseBucket}
               onChange={(e) => {
                 const nextValue = e.target.value;
-                setJobConfig((prev: any) => ({
+                setJobConfig((prev) => ({
                   ...prev,
                   sdpBigLakeWarehouseBucket: nextValue,
                 }));
@@ -467,7 +476,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
             value={sdpBigLakeWarehouseBucket}
             onChange={(e) => {
               const nextValue = e.target.value;
-              setJobConfig((prev: any) => ({
+              setJobConfig((prev) => ({
                 ...prev,
                 sdpBigLakeWarehouseBucket: nextValue,
               }));
@@ -505,7 +514,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
           checked={sdpCreateNamespace}
           onChange={(e) => {
             const checked = e.target.checked;
-            setJobConfig((prev: any) => ({ ...prev, sdpCreateNamespace: checked }));
+            setJobConfig((prev) => ({ ...prev, sdpCreateNamespace: checked }));
           }}
           className="rounded border-[var(--vscode-border)] bg-[var(--vscode-input-bg)] text-purple-500 focus:ring-0 cursor-pointer"
         />
@@ -529,7 +538,7 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
           value={sdpStaticSparkConfText}
           onChange={(e) => {
             const nextValue = e.target.value;
-            setJobConfig((prev: any) => ({ ...prev, sdpStaticSparkConf: nextValue }));
+            setJobConfig((prev) => ({ ...prev, sdpStaticSparkConf: nextValue }));
           }}
           placeholder={
             'spark.sql.shuffle.partitions=200\nspark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions'
@@ -555,4 +564,4 @@ export const SdpSettingsPanel: React.FC<SdpSettingsPanelProps> = ({
       </div>
     </div>
   );
-};
+}

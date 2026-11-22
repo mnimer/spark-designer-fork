@@ -172,7 +172,6 @@ export async function handleSavePipeline(ctx: MessageContext, message: any): Pro
         message.requirements,
         message.dockerfile,
         message.runScript,
-        message.runDataflowScript,
         message.dockerIgnore,
         message.gcloudIgnore,
         ctx.syncState

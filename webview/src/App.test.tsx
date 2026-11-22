@@ -13,10 +13,13 @@ import YAML from 'yaml';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import type { Edge, Node } from 'reactflow';
 import AppWithProvider from './App.tsx';
 
-let capturedEdges: any[] = [];
-let capturedNodes: any[] = [];
+type TestFlowNode = Node<{ label?: string; [key: string]: unknown }>;
+
+let capturedEdges: Edge[] = [];
+let capturedNodes: TestFlowNode[] = [];
 const mockFitView = vi.fn();
 const mockZoomIn = vi.fn();
 const mockZoomOut = vi.fn();
@@ -26,16 +29,30 @@ vi.mock('reactflow', async () => {
   const actual = await vi.importActual('reactflow');
   return {
     ...actual,
-    default: ({ nodes = [], edges = [], onNodeClick, onEdgeClick, children, onDrop }: any) => {
+    default: ({
+      nodes = [],
+      edges = [],
+      onNodeClick,
+      onEdgeClick,
+      children,
+      onDrop,
+    }: {
+      nodes?: TestFlowNode[];
+      edges?: Edge[];
+      onNodeClick?: (event: React.MouseEvent, node: TestFlowNode) => void;
+      onEdgeClick?: (event: React.MouseEvent, edge: Edge) => void;
+      children?: React.ReactNode;
+      onDrop?: React.DragEventHandler<HTMLDivElement>;
+    }) => {
       capturedNodes = nodes;
       return (
         <div className="react-flow" data-testid="react-flow" onDrop={onDrop}>
-        {nodes.map((n: any) => (
+        {nodes.map((n: TestFlowNode) => (
           <div key={n.id} data-testid={`node-${n.id}`} onClick={(e) => onNodeClick && onNodeClick(e, n)}>
             {n.data.label}
           </div>
         ))}
-        {edges.map((e: any) => (
+        {edges.map((e: Edge) => (
           <div key={e.id} data-testid={`edge-${e.id}`} onClick={(evt) => onEdgeClick && onEdgeClick(evt, e)}>
             {e.id}
           </div>
@@ -45,25 +62,33 @@ vi.mock('reactflow', async () => {
       );
     },
     MiniMap: () => <div data-testid="mini-map" />,
-    Controls: ({ children }: any) => <div data-testid="controls">{children}</div>,
-    ControlButton: ({ onClick, children, title }: any) => <button onClick={onClick} title={title} data-testid="control-button">{children}</button>,
+    Controls: ({ children }: { children?: React.ReactNode }) => <div data-testid="controls">{children}</div>,
+    ControlButton: ({
+      onClick,
+      children,
+      title,
+    }: {
+      onClick?: React.MouseEventHandler<HTMLButtonElement>;
+      children?: React.ReactNode;
+      title?: string;
+    }) => <button onClick={onClick} title={title} data-testid="control-button">{children}</button>,
     Background: () => <div data-testid="background" />,
     useReactFlow: () => ({
-      project: (p: any) => p,
+      project: (p: { x: number; y: number }) => p,
       fitView: mockFitView,
       zoomIn: mockZoomIn,
       zoomOut: mockZoomOut,
     }),
-    useNodesState: (initial: any) => {
+    useNodesState: <T,>(initial: Node<T>[]) => {
       const [nodes, setNodes] = React.useState(initial);
-      return [nodes, setNodes, vi.fn()];
+      return [nodes, setNodes, vi.fn()] as const;
     },
-    useEdgesState: (initial: any) => {
+    useEdgesState: (initial: Edge[]) => {
       const [edges, setEdges] = React.useState(initial);
       React.useEffect(() => {
         capturedEdges = edges;
       }, [edges]);
-      return [edges, setEdges, vi.fn()];
+      return [edges, setEdges, vi.fn()] as const;
     },
   };
 });
@@ -218,7 +243,7 @@ edges:
     const b = capturedNodes.find(n => n.id === 'b');
     expect(a).toBeDefined();
     expect(b).toBeDefined();
-    expect(a.position).not.toEqual(b.position);
+    expect(a?.position).not.toEqual(b?.position);
   });
 
   it('renders CanvasToolbar with Undo, Redo, Auto Layout, Zoom In, Zoom Out, Zoom to Fit, and MiniMap', () => {
@@ -458,7 +483,7 @@ edges:
     }));
 
     // Clear postMessage spy calls recorded during setup
-    const postMessageSpy = (window as any).vscode.postMessage;
+    const postMessageSpy = vi.mocked(window.vscode!.postMessage);
     postMessageSpy.mockClear();
 
     // Send codeRegenerated message
@@ -542,7 +567,7 @@ edges: []
         }
       }));
 
-      const postMessageSpy = (window as any).vscode.postMessage;
+      const postMessageSpy = vi.mocked(window.vscode!.postMessage);
       postMessageSpy.mockClear();
 
       // First debounce tick after load (2000ms) with NO user edits
@@ -551,7 +576,13 @@ edges: []
       });
 
       // Must NOT post savePipeline on initial load when user has not edited anything
-      const saveCallsOnOpen = postMessageSpy.mock.calls.filter((c: any[]) => c[0]?.command === 'savePipeline');
+      const isSavePipelineCall = (call: unknown[]): boolean =>
+        Boolean(
+          call[0] &&
+            typeof call[0] === 'object' &&
+            (call[0] as { command?: unknown }).command === 'savePipeline'
+        );
+      const saveCallsOnOpen = postMessageSpy.mock.calls.filter(isSavePipelineCall);
       expect(saveCallsOnOpen.length).toBe(0);
 
       // Now introduce a real change: drop a new node
@@ -580,7 +611,7 @@ edges: []
       });
 
       // Real change produced 1 savePipeline post
-      const saveCalls1 = postMessageSpy.mock.calls.filter((c: any[]) => c[0]?.command === 'savePipeline');
+      const saveCalls1 = postMessageSpy.mock.calls.filter(isSavePipelineCall);
       expect(saveCalls1.length).toBe(1);
 
       // Trigger a re-render without pipeline state change (e.g. switching bottom tab)
@@ -592,7 +623,7 @@ edges: []
       });
 
       // Still exactly 1 savePipeline post! (P6 dirty check skipped second post)
-      const saveCalls2 = postMessageSpy.mock.calls.filter((c: any[]) => c[0]?.command === 'savePipeline');
+      const saveCalls2 = postMessageSpy.mock.calls.filter(isSavePipelineCall);
       expect(saveCalls2.length).toBe(1);
     } finally {
       vi.useRealTimers();

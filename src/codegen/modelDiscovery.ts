@@ -12,7 +12,7 @@
  */
 
 import { GoogleGenAI } from '@google/genai';
-import { DEFAULT_GEMINI_MODEL } from '../constants';
+import { DEFAULT_GEMINI_MODEL } from '../core/constants';
 
 /**
  * Tier classification for dynamically discovered Gemini code-generation models.

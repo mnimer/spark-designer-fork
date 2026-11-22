@@ -15,6 +15,7 @@
  * - Integrates SecretManagerAuthFields so database passwords are never stored in plaintext.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
@@ -26,12 +27,8 @@ export type JdbcDbEngine = 'postgresql' | 'mysql' | 'oracle' | 'sqlserver' | 'db
 export type JdbcAuthMode = 'secretManager' | 'default';
 
 /**
- * Resolves the authentication mode for the JDBC Source node.
+ * JDBC driver metadata preset for supported relational database engines.
  */
-export function resolveAuthMode(_authMode?: string, _password?: string): JdbcAuthMode {
-  return 'secretManager';
-}
-
 export interface JdbcDriverPreset {
   engine: JdbcDbEngine;
   label: string;
@@ -133,6 +130,7 @@ export interface JdbcIOSourcePropertiesProps {
         upperBound?: number | string;
         numPartitions?: number | string;
         fetchsize?: number | string;
+        fetchSize?: number | string;
         driverJarUri?: string;
         username?: string;
         authMode?: string;
@@ -140,11 +138,11 @@ export interface JdbcIOSourcePropertiesProps {
         passwordSecret?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
@@ -186,7 +184,7 @@ export const JdbcIOSourceProperties: React.FC<JdbcIOSourcePropertiesProps> = ({ 
   ) => {
     const { name, value, type } = e.target;
     const updatedValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
-    const next: Record<string, any> = { ...properties, [name]: updatedValue };
+    const next: Record<string, unknown> = { ...properties, [name]: updatedValue };
     delete next.password;
 
     if (name === 'dbEngine') {

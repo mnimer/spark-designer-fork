@@ -324,7 +324,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
         };
 
         const newData = 'nodes:\n  - id: node-1\n';
-        await savePipelineFiles(targetUri as any, newData, undefined, 'py', undefined, undefined, undefined, undefined, undefined, undefined, undefined, syncState);
+        await savePipelineFiles(targetUri as any, newData, undefined, 'py', undefined, undefined, undefined, undefined, undefined, undefined, syncState);
 
         // Verify WorkspaceEdit was used
         expect(mockState.mockApplyEdit).toHaveBeenCalledTimes(1);
@@ -366,7 +366,6 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
             initialContent,
             undefined,
             'py',
-            undefined,
             undefined,
             undefined,
             undefined,
@@ -447,10 +446,9 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
                 'print("hello world")\n',
                 'py',
                 undefined,
-                'pyspark\n',
+                'pyspark==4.0.*\n',
                 'FROM python:3.10\n',
                 '#!/bin/bash\necho 1\n',
-                '#!/bin/bash\necho 2\n',
                 '*.pyc\n',
                 '.git\n'
             );
@@ -506,7 +504,6 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
                 undefined,
                 undefined,
                 undefined,
-                undefined,
                 syncState
             )
         ).rejects.toThrow('VS Code WorkspaceEdit rejected');
@@ -546,8 +543,7 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
             undefined,
             'pyspark==4.0.0\n',
             'FROM python:3.11-slim\n',
-            '#!/bin/bash\necho "direct runner"\n',
-            '#!/bin/bash\necho "dataflow runner"\n',
+            '#!/bin/bash\necho "local runner"\n',
             '*.log\n',
             '.git\n'
         );
@@ -556,10 +552,31 @@ describe('M4 — Document Model Persistence vs Filesystem Fallback (savePipeline
         expect(fs.existsSync(path.join(folder, 'src', 'aux-pipeline.py'))).toBe(true);
         expect(fs.existsSync(path.join(folder, 'requirements.txt'))).toBe(true);
         expect(fs.existsSync(path.join(folder, 'Dockerfile'))).toBe(true);
-        expect(fs.existsSync(path.join(folder, 'run_directrunner.sh'))).toBe(true);
-        expect(fs.existsSync(path.join(folder, 'run_dataflow.sh'))).toBe(true);
+        expect(fs.existsSync(path.join(folder, 'run_local.sh'))).toBe(true);
         expect(fs.existsSync(path.join(folder, '.dockerignore'))).toBe(true);
         expect(fs.existsSync(path.join(folder, '.gcloudignore'))).toBe(true);
+    });
+
+    it('defaults requirements.txt to the versionMatrix PySpark pin when requirements is omitted (CLN1 regression)', async () => {
+        const filePath = path.join(tempDir, 'default-req-pipeline.spark');
+        const targetUri = {
+            scheme: 'file',
+            fsPath: filePath,
+            toString: () => `file://${filePath}`
+        };
+        mockState.mockTextDocuments.length = 0;
+
+        await savePipelineFiles(
+            targetUri as any,
+            'nodes: []\n',
+            '# Python code\n',
+            'py'
+        );
+
+        const folder = path.join(tempDir, 'default-req-pipeline');
+        const reqPath = path.join(folder, 'requirements.txt');
+        expect(fs.existsSync(reqPath)).toBe(true);
+        expect(fs.readFileSync(reqPath, 'utf-8')).toBe('pyspark==4.0.*\n');
     });
 });
 

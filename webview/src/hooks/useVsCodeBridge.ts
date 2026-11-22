@@ -12,12 +12,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import YAML from 'yaml';
+import type { Edge, FitViewOptions } from 'reactflow';
 import { computeUpdatedOutputFolder } from '../utils/outputFolder';
 import { migrateLegacyNodes } from '../utils/legacyNodeMigration';
 import { DEFAULT_SAMPLES, type SamplePipeline } from '../components/NodesCard';
 import { serializePipeline } from './usePipelinePersistence';
 import { type TokenUsage } from '../components/BottomPanel/SourceCodeTab';
-import { getVsCodeApi } from '../bridge/vscodeApi';
+import { getVsCodeApi, type VsCodeApi } from '../bridge/vscodeApi';
 import {
   pipelineConfigReducer,
   type PipelineConfig,
@@ -26,9 +27,11 @@ import {
 import type { PipelineParadigm } from '../utils/sharedTypes';
 import { normalizeSdpJobConfig } from '../utils/sdpPlanner';
 import type {
+  AdvancedJobConfig,
   DataprocClusterOption,
   SessionTemplateOption,
 } from '../components/BottomPanel/deployment/AdvancedConfig';
+import type { PipelineNode } from './usePipelineGraph';
 
 export type { PipelineConfig };
 
@@ -125,21 +128,33 @@ export const findMainPipelineFile = (
 };
 
 /**
+ * Graph state snapshot passed to {@link useVsCodeBridge} `handleRegenerate`.
+ */
+export interface RegenerateGraphState {
+  nodes: object[];
+  edges: object[];
+  runtimeVariables: { key: string; value: string }[];
+  jobConfig: Record<string, unknown>;
+  enableReviewer?: boolean;
+  model?: string;
+}
+
+/**
  * Options for configuring the VS Code host communication bridge in {@link useVsCodeBridge}.
  */
 export interface UseVsCodeBridgeOptions {
-  setNodes: (nodes: any[] | ((prev: any[]) => any[])) => void;
-  setEdges: (edges: any[] | ((prev: any[]) => any[])) => void;
+  setNodes: React.Dispatch<React.SetStateAction<PipelineNode[]>>;
+  setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
   setRuntimeVariables: React.Dispatch<React.SetStateAction<{ key: string; value: string }[]>>;
-  setJobConfig: React.Dispatch<React.SetStateAction<any>>;
+  setJobConfig: React.Dispatch<React.SetStateAction<AdvancedJobConfig>>;
   pipelineConfig: PipelineConfig;
   setPipelineConfig: React.Dispatch<React.SetStateAction<PipelineConfig>>;
   filename: string;
   setFilename: React.Dispatch<React.SetStateAction<string>>;
   projectId: string;
   setProjectId: React.Dispatch<React.SetStateAction<string>>;
-  fitView?: (options?: any) => void;
-  vscode?: any;
+  fitView?: (options?: FitViewOptions) => void;
+  vscode?: VsCodeApi | null;
 }
 
 /**
@@ -168,15 +183,22 @@ export function useVsCodeBridge({
    */
   const activeVsCode = vscode !== undefined ? vscode : (getVsCodeApi() ?? null);
 
-  // NOTE: assigned during render rather than in an effect. The IPC senders below are
-  // long-lived (useCallback with empty dependency arrays) and must observe the current
-  // handle without being torn down and re-created on every render. This mirrors the
-  // pipelineConfigRef / filenameRef / projectIdRef pattern used elsewhere in this file.
-  // Do NOT convert this to a useEffect and do NOT add it to a dependency array.
+  // NOTE: Hold activeVsCode, pipelineConfig, filename, and projectId in mutable refs
+  // so long-lived IPC callbacks and message listeners observe current values without
+  // tearing down and re-creating listeners on every render.
   const vsCodeRef = useRef(activeVsCode);
-  vsCodeRef.current = activeVsCode;
+  const pipelineConfigRef = useRef(pipelineConfig);
+  const filenameRef = useRef(filename);
+  const projectIdRef = useRef(projectId);
 
-  const [isLoaded, setIsLoaded] = useState(false);
+  useEffect(() => {
+    vsCodeRef.current = activeVsCode;
+    pipelineConfigRef.current = pipelineConfig;
+    filenameRef.current = filename;
+    projectIdRef.current = projectId;
+  }, [activeVsCode, pipelineConfig, filename, projectId]);
+
+  const [isLoaded, setIsLoaded] = useState(() => !activeVsCode);
   const [loadRevision, setLoadRevision] = useState(0);
   const [samples, setSamples] = useState<SamplePipeline[]>(DEFAULT_SAMPLES);
   const [generatedCode, setGeneratedCode] = useState('');
@@ -191,17 +213,6 @@ export function useVsCodeBridge({
   // Latest progress text of a long generation run (for example the optional reviewer).
   const [generationProgress, setGenerationProgress] = useState<string | null>(null);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
-
-  // Keep config and active pipeline attributes in mutable refs updated on every render
-  // to avoid stale closures in static event listeners and IPC message handlers.
-  const pipelineConfigRef = useRef(pipelineConfig);
-  pipelineConfigRef.current = pipelineConfig;
-
-  const filenameRef = useRef(filename);
-  filenameRef.current = filename;
-
-  const projectIdRef = useRef(projectId);
-  projectIdRef.current = projectId;
 
   /**
    * Refreshes the file list in the selected output folder.
@@ -246,7 +257,7 @@ export function useVsCodeBridge({
     }
   }, []);
 
-  const handleRegenerate = useCallback((graphState: { nodes: any[]; edges: any[]; runtimeVariables: any[]; jobConfig: any; enableReviewer?: boolean; model?: string }) => {
+  const handleRegenerate = useCallback((graphState: RegenerateGraphState) => {
     const vs = vsCodeRef.current;
     if (vs) {
       setIsGenerating(true);
@@ -311,11 +322,17 @@ export function useVsCodeBridge({
             try {
               const data = YAML.parse(message.data);
               // NOTE: Migration of legacy nodes to include spark_transform metadata
-              const loadedNodes = migrateLegacyNodes(data.nodes || []);
+              const loadedNodes = migrateLegacyNodes<PipelineNode>(
+                Array.isArray(data.nodes) ? (data.nodes as PipelineNode[]) : []
+              );
               setNodes(loadedNodes);
-              setEdges(data.edges || []);
-              const variables = data.runtimeVariables || [];
-              const hasJobId = variables.some((v: any) => v.key === 'JOB_ID');
+              setEdges(Array.isArray(data.edges) ? (data.edges as Edge[]) : []);
+              const variables: { key: string; value: string }[] = Array.isArray(
+                data.runtimeVariables
+              )
+                ? (data.runtimeVariables as { key: string; value: string }[])
+                : [];
+              const hasJobId = variables.some((v) => v.key === 'JOB_ID');
               if (!hasJobId) {
                 const defaultJobId = message.filename
                   ? message.filename.replace(/\.spark$/i, '').replace(/ /g, '_')
@@ -330,15 +347,17 @@ export function useVsCodeBridge({
                   ? 'sdp'
                   : 'imperative';
               const defaultRunner = parsedParadigm === 'sdp' ? 'ServerlessSpark' : 'Local';
-              const hydratedJobConfig: Record<string, unknown> = {
+              const hydratedJobConfig: AdvancedJobConfig = {
                 machineType: 'n1-standard-1',
                 minInstances: 1,
                 maxInstances: 10,
                 gcsStagingPath: '',
                 network: '',
                 subnetwork: '',
-                ...(data.jobConfig || {}),
-                runner: data.jobConfig?.runner || defaultRunner,
+                ...(data.jobConfig && typeof data.jobConfig === 'object'
+                  ? (data.jobConfig as Record<string, unknown>)
+                  : {}),
+                runner: String(data.jobConfig?.runner || defaultRunner),
               };
               if (
                 parsedParadigm === 'imperative' &&
@@ -349,7 +368,7 @@ export function useVsCodeBridge({
               }
               setJobConfig(
                 parsedParadigm === 'sdp'
-                  ? normalizeSdpJobConfig(hydratedJobConfig)
+                  ? (normalizeSdpJobConfig(hydratedJobConfig) as AdvancedJobConfig)
                   : hydratedJobConfig
               );
 
@@ -498,10 +517,8 @@ export function useVsCodeBridge({
 
       window.addEventListener('message', handleMessage);
       return () => window.removeEventListener('message', handleMessage);
-    } else {
-      // NOTE: When running outside of VS Code (e.g. standalone dev server), mark as loaded
-      setIsLoaded(true);
     }
+    return undefined;
   }, [setNodes, setEdges, setRuntimeVariables, setJobConfig, setPipelineConfig, setFilename, setProjectId, fitView, refreshFolderFiles]);
 
   return {

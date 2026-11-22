@@ -11,7 +11,6 @@
  * (for streaming), SchemaEditor, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { PropertyField } from '../../components/common/PropertyField';
@@ -29,7 +28,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark XML parsing modes for malformed records.
  */
-export const XML_PARSE_MODES: SelectFieldOption[] = [
+const XML_PARSE_MODES: SelectFieldOption[] = [
   { value: 'PERMISSIVE', label: 'PERMISSIVE (Capture malformed rows in _corrupt_record)' },
   { value: 'DROPMALFORMED', label: 'DROPMALFORMED (Drop malformed rows silently)' },
   { value: 'FAILFAST', label: 'FAILFAST (Abort job immediately on malformed row)' },
@@ -45,7 +44,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface XmlIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -69,7 +68,7 @@ export interface XmlIOSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -79,7 +78,7 @@ export interface XmlIOSourceNode {
  */
 export interface XmlIOSourcePropertiesProps {
   node: XmlIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

@@ -6,8 +6,9 @@
  * Purpose:
  * Writes a minimal repository that follows the generated layout (`src/pipeline.py`
  * with a pure `transform(dfs, config)` and `tests/test_pipeline.py`). It then runs
- * the runner end to end. If local tooling is missing, the test logs the reason
- * and passes. It never needs network access or cloud credentials.
+ * the runner end to end while reusing the shared test cache root and verifying
+ * per-run scratch artifacts are cleaned up. If local tooling is missing, the test
+ * logs the reason and passes. It never needs network access or cloud credentials.
  *
  * Set `SPARK_PYTEST_PYTHON` to point at an interpreter that has `pyspark>=4` and `pytest`.
  */
@@ -17,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { formatPytestReport, runGeneratedRepoTests } from './pytest-runner';
+import { PER_RUN_REPO_ARTIFACTS } from './sharedTestCache';
 
 const PIPELINE_PY = `from pyspark.sql import DataFrame, functions as F
 
@@ -45,7 +47,11 @@ def test_transform_fails_on_purpose(spark):
 
 const tempDirs: string[] = [];
 
-/** Creates a temporary repository with the generated layout. */
+/**
+ * Creates a temporary repository with the generated layout.
+ *
+ * @returns Absolute path of the temporary repository directory.
+ */
 function makeRepo(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-gen-repo-'));
     tempDirs.push(dir);
@@ -65,18 +71,26 @@ afterAll(() => {
 describe('offline pytest runner (local PySpark 4.x)', () => {
     it('runs generated tests and reports one pass and one failure, or skips without tooling', async () => {
         const repo = makeRepo();
-        const result = await runGeneratedRepoTests(repo, {
-            python: process.env.SPARK_PYTEST_PYTHON || 'python3',
-            timeoutMs: 170_000,
-        });
-        console.log(formatPytestReport(result));
-        if (result.status === 'skipped') {
-            expect(result.reason).toBeTruthy();
-            return;
+        try {
+            const result = await runGeneratedRepoTests(repo, {
+                python: process.env.SPARK_PYTEST_PYTHON || 'python3',
+                createVenv: !process.env.SPARK_PYTEST_PYTHON,
+                timeoutMs: 170_000,
+            });
+            console.log(formatPytestReport(result));
+            for (const artifact of PER_RUN_REPO_ARTIFACTS) {
+                expect(fs.existsSync(path.join(repo, artifact))).toBe(false);
+            }
+            if (result.status === 'skipped') {
+                expect(result.reason).toBeTruthy();
+                return;
+            }
+            expect(result.conftest).toBe('written');
+            expect(result).toMatchObject({ status: 'failed', passed: 1, failed: 1, errors: 0 });
+            expect(result.failures[0].test).toContain('test_transform_fails_on_purpose');
+            expect(result.failures[0].message).toContain('expected two rows');
+        } finally {
+            fs.rmSync(repo, { recursive: true, force: true });
         }
-        expect(result.conftest).toBe('written');
-        expect(result).toMatchObject({ status: 'failed', passed: 1, failed: 1, errors: 0 });
-        expect(result.failures[0].test).toContain('test_transform_fails_on_purpose');
-        expect(result.failures[0].message).toContain('expected two rows');
     });
 });

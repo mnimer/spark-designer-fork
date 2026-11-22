@@ -16,7 +16,6 @@ import type {
   SparkStreamingTriggerType,
 } from '../../../utils/sharedTypes';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-refresh/only-export-components */
 
 /**
@@ -53,9 +52,10 @@ export type SessionTemplateOption =
  * Structure of job configuration fields used in advanced runner and streaming settings.
  */
 export interface AdvancedJobConfig
-  extends SparkPipelineStreamingDefaults,
+  extends Omit<SparkPipelineStreamingDefaults, 'defaultTriggerType'>,
     SdpJobConfigFields {
   runner: string;
+  defaultTriggerType?: SparkStreamingTriggerType | string;
   useSparkConnect?: boolean;
   sessionTemplate?: string;
   clusterName?: string;
@@ -68,12 +68,15 @@ export interface AdvancedJobConfig
   gcsStagingPath?: string;
   serviceAccount?: string;
   batchTtlMinutes?: number | string;
+  machineType?: string;
+  minInstances?: number;
+  maxInstances?: number;
   network?: string;
   subnetwork?: string;
   jobId?: string;
   region?: string;
   projectId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -83,7 +86,7 @@ export interface AdvancedConfigProps {
   /** Current job configuration state. */
   jobConfig: AdvancedJobConfig;
   /** State updater callback for modifying the parent job configuration. */
-  setJobConfig: (update: React.SetStateAction<any>) => void;
+  setJobConfig: React.Dispatch<React.SetStateAction<AdvancedJobConfig>>;
   /** List of selectable VPC subnetworks. */
   subnetworks: SubnetworkOption[];
   /** Optional list of discovered Dataproc clusters for DataprocCluster mode. */
@@ -280,31 +283,31 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
 
   const handleUseSparkConnectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const checked = e.target.checked;
-    setJobConfig((prev: any) => ({ ...prev, useSparkConnect: checked }));
+    setJobConfig((prev) => ({ ...prev, useSparkConnect: checked }));
   };
 
   const handleSessionTemplateChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, sessionTemplate: nextValue }));
+    setJobConfig((prev) => ({ ...prev, sessionTemplate: nextValue }));
   };
 
   const handleClusterNameChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, clusterName: nextValue }));
+    setJobConfig((prev) => ({ ...prev, clusterName: nextValue }));
   };
 
   const handleRegionChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, region: nextValue }));
+    setJobConfig((prev) => ({ ...prev, region: nextValue }));
   };
 
   const handleCustomJarUrisChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({
+    setJobConfig((prev) => ({
       ...prev,
       customJarUris: nextValue,
       sparkJars: nextValue,
@@ -313,12 +316,12 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
 
   const handleRuntimeVersionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, runtimeVersion: nextValue }));
+    setJobConfig((prev) => ({ ...prev, runtimeVersion: nextValue }));
   };
 
   const handleTierChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const nextValue = e.target.value === 'premium' ? 'premium' : 'standard';
-    setJobConfig((prev: any) => ({
+    setJobConfig((prev) => ({
       ...prev,
       tier: nextValue,
       serverlessTier: nextValue,
@@ -327,7 +330,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
 
   const handleDepsBucketChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({
+    setJobConfig((prev) => ({
       ...prev,
       depsBucket: nextValue,
       gcsStagingPath: nextValue,
@@ -336,33 +339,33 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
 
   const handleServiceAccountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, serviceAccount: nextValue }));
+    setJobConfig((prev) => ({ ...prev, serviceAccount: nextValue }));
   };
 
   const handleBatchTtlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
     if (raw === '') {
-      setJobConfig((prev: any) => ({ ...prev, batchTtlMinutes: '' }));
+      setJobConfig((prev) => ({ ...prev, batchTtlMinutes: '' }));
       return;
     }
     const parsed = parseInt(raw, 10);
     const nextValue = !Number.isNaN(parsed) && String(parsed) === raw.trim() ? parsed : raw;
-    setJobConfig((prev: any) => ({ ...prev, batchTtlMinutes: nextValue }));
+    setJobConfig((prev) => ({ ...prev, batchTtlMinutes: nextValue }));
   };
 
   const handleSubnetworkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, subnetwork: nextValue }));
+    setJobConfig((prev) => ({ ...prev, subnetwork: nextValue }));
   };
 
   const handleCheckpointRootChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, checkpointRoot: nextValue }));
+    setJobConfig((prev) => ({ ...prev, checkpointRoot: nextValue }));
   };
 
   const handleDefaultTriggerTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const nextTrigger = e.target.value as SparkStreamingTriggerType;
-    setJobConfig((prev: any) => ({
+    setJobConfig((prev) => ({
       ...prev,
       defaultTriggerType: nextTrigger,
       ...(triggerUsesInterval(nextTrigger) && prev.defaultTriggerInterval === undefined
@@ -373,7 +376,7 @@ export const AdvancedConfig: React.FC<AdvancedConfigProps> = ({
 
   const handleDefaultTriggerIntervalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextValue = e.target.value;
-    setJobConfig((prev: any) => ({ ...prev, defaultTriggerInterval: nextValue }));
+    setJobConfig((prev) => ({ ...prev, defaultTriggerInterval: nextValue }));
   };
 
   return (

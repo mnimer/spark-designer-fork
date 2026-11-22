@@ -594,7 +594,7 @@ jobConfig:
                 'edges:',
                 '  - { id: e1, source: s1, target: k1 }',
                 'jobConfig:',
-                '  runner: DirectRunner',
+                '  runner: UnknownLegacyRunner',
                 '',
             ].join('\n'),
             language: 'PySpark',

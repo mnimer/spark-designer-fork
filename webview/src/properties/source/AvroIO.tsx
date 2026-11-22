@@ -11,7 +11,7 @@
  * and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -56,7 +56,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface AvroIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -76,7 +76,7 @@ export interface AvroIOSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -86,7 +86,7 @@ export interface AvroIOSourceNode {
  */
 export interface AvroIOSourcePropertiesProps {
   node: AvroIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

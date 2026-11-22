@@ -41,11 +41,11 @@ export interface FirestoreIOSourcePropertiesProps {
         schemaString?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
@@ -62,7 +62,12 @@ export const FirestoreIOSourceProperties: React.FC<FirestoreIOSourcePropertiesPr
   const collectionPath = properties.collectionPath ?? properties.collectionId ?? '';
   const filterJson = properties.filterJson ?? properties.fieldFilters ?? '';
   const schemaFields = React.useMemo(
-    () => resolveSchemaFields(properties),
+    () =>
+      resolveSchemaFields({
+        schemaFields: properties.schemaFields,
+        schema: properties.schema,
+        schemaString: properties.schemaString,
+      }),
     [properties.schemaFields, properties.schema, properties.schemaString]
   );
 

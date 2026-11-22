@@ -10,13 +10,6 @@
 
 export {
   SchemaEditor as BigQuerySchemaEditor,
-  BIGQUERY_TYPES,
-  BEAM_SCHEMA_TYPES,
-  fieldsToJson,
-  fieldsToString,
-  jsonToFields,
-  stringToFields,
-  resolveSchemaFields,
   type SchemaField as BigQueryField,
-  type SchemaEditorProps as BigQuerySchemaEditorProps
+  type SchemaEditorProps as BigQuerySchemaEditorProps,
 } from '../../components/common/SchemaEditor';

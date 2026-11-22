@@ -3,7 +3,7 @@
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
- * Uses small YAML fixtures. Covers side-input edges, multi-output edges, streaming
+ * Uses small YAML fixtures. Covers multi-output edges, streaming
  * sources (`STREAMING_SOURCE_TRANSFORMS`, `readMode: 'streaming'`, `computeStreamingNodeSet`),
  * `Watermark` and `StatefulTransform` steps, Python 4.0 `DataSource` transforms,
  * system instructions and custom-logic properties, missing jobConfig, unknown and missing
@@ -52,12 +52,12 @@ jobConfig: { runner: ServerlessSpark }
         expect([...result.runners]).toEqual(['local', 'dataproc-cluster', 'serverless-spark']);
     });
 
-    it('detects side inputs from targetHandle side_input (simple)', () => {
+    it('ignores Join left and right targetHandle edges when detecting pipeline features (simple)', () => {
         const result = detectPipelineFeatures(
-            parse('edges:\n  - { source: a, target: b, targetHandle: side_input }'),
+            parse('edges:\n  - { source: a, target: j, targetHandle: left }\n  - { source: b, target: j, targetHandle: right }'),
             'PySpark'
         );
-        expect(result.features.has('side_inputs')).toBe(true);
+        expect(result.features.size).toBe(0);
     });
 
     it('detects multi-output from sourceHandle valid or error (simple)', () => {

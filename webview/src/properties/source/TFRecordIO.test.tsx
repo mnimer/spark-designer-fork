@@ -9,24 +9,28 @@
  * and SystemInstructionsField for TFRecordIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TFRecordIOSourceProperties, TFRecordSourceProperties } from './TFRecordIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import {
+  TFRecordIOSourceProperties,
+  TFRecordSourceProperties,
+  type TFRecordIOSourceNode,
+} from './TFRecordIO';
 
 describe('TFRecordIOSourceProperties (SRC21 TFRecordSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports TFRecordSourceProperties as an alias for TFRecordIOSourceProperties', () => {
@@ -34,7 +38,7 @@ describe('TFRecordIOSourceProperties (SRC21 TFRecordSource)', () => {
   });
 
   it('renders batch-only defaults (recordType="Example") and flags required validation when path is empty', () => {
-    const mockNode: any = {
+    const mockNode: TFRecordIOSourceNode = {
       data: {
         label: 'TFRecordSource',
         spark_transform: 'TFRecordSource',
@@ -53,7 +57,7 @@ describe('TFRecordIOSourceProperties (SRC21 TFRecordSource)', () => {
   });
 
   it('renders populated properties and propagates changes for path, recordType, SchemaEditor, and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: TFRecordIOSourceNode = {
       data: {
         label: 'TFRecordSource',
         spark_transform: 'TFRecordSource',

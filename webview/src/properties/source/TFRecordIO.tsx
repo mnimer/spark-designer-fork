@@ -10,7 +10,6 @@
  * SchemaEditor, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -27,7 +26,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported TensorFlow protobuf record types for Spark TFRecord connector.
  */
-export const TFRECORD_RECORD_TYPES: SelectFieldOption[] = [
+const TFRECORD_RECORD_TYPES: SelectFieldOption[] = [
   { value: 'Example', label: 'Example (tf.train.Example flat feature map)' },
   { value: 'SequenceExample', label: 'SequenceExample (tf.train.SequenceExample sequential features)' },
 ];
@@ -37,7 +36,7 @@ export const TFRECORD_RECORD_TYPES: SelectFieldOption[] = [
  */
 export interface TFRecordIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -54,7 +53,7 @@ export interface TFRecordIOSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -64,7 +63,7 @@ export interface TFRecordIOSourceNode {
  */
 export interface TFRecordIOSourcePropertiesProps {
   node: TFRecordIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

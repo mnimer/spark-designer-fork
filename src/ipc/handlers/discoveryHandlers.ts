@@ -551,10 +551,10 @@ export const fetchCodegenModels = handleGetCodegenModels;
 
 /**
  * Handler for 'getRunningJobs' command.
- * Queries active Dataflow jobs via gcloud CLI and posts results to webview.
+ * Queries active Dataproc jobs via gcloud CLI and posts results to webview.
  *
- * @param ctx Message context
- * @param message Incoming IPC message with optional projectId and region
+ * @param ctx Message context.
+ * @param message Incoming IPC message with optional projectId and region.
  */
 export async function handleGetRunningJobs(ctx: MessageContext, message: any): Promise<void> {
     const channel = ctx.outputChannel || getDesignerOutputChannel();
@@ -572,13 +572,13 @@ export async function handleGetRunningJobs(ctx: MessageContext, message: any): P
         ctx.postToWebview({
             command: 'runningJobsLoaded',
             jobs: [],
-            error: `Failed to query Dataflow jobs: ${errMsg}`,
+            error: `Failed to query Dataproc jobs: ${errMsg}`,
             debugLog: errMsg
         });
         return;
     }
     const gcloudBin = findGcloudPath();
-    const gcloudArgs = ['dataflow', 'jobs', 'list', '--status=all', '--format=json'];
+    const gcloudArgs = ['dataproc', 'jobs', 'list', '--format=json'];
 
     if (targetRegion && targetRegion !== 'ALL') {
         gcloudArgs.push(`--region=${targetRegion}`);
@@ -593,7 +593,7 @@ export async function handleGetRunningJobs(ctx: MessageContext, message: any): P
 
     execFile(gcloudBin, gcloudArgs, { timeout: 15000, maxBuffer: 1024 * 1024 * 10 }, (err: any, stdout: string, stderr: string) => {
         if (err) {
-            const errText = `Failed to list Dataflow jobs via gcloud: ${err.message}. Stderr: ${stderr || 'none'}`;
+            const errText = `Failed to list Dataproc jobs via gcloud: ${err.message}. Stderr: ${stderr || 'none'}`;
             console.error('[@extension.ts]', errText);
             channel.appendLine(`[${new Date().toLocaleTimeString()}] ERROR: ${errText}`);
 
@@ -601,7 +601,7 @@ export async function handleGetRunningJobs(ctx: MessageContext, message: any): P
             ctx.postToWebview({
                 command: 'runningJobsLoaded',
                 jobs: [],
-                error: `Failed to query Dataflow jobs: ${errMsg}`,
+                error: `Failed to query Dataproc jobs: ${errMsg}`,
                 debugLog: `Command: ${gcloudBin} ${gcloudArgs.join(' ')}\nError: ${err.message}\nStderr: ${stderr || ''}`
             });
             return;

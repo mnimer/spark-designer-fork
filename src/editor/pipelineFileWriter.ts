@@ -8,42 +8,41 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DocumentSyncState } from './documentSync';
 import { resolveOutputFolder } from './outputFolder';
+import { getDefaultPysparkPin } from '../spark/versionMatrix';
 
 /**
  * Saves pipeline YAML definitions and generated code artifacts to disk.
- * 
- * Synchronization & Persistence Architecture (Finding M4):
+ *
+ * Synchronization and Persistence Architecture (Finding M4):
  * - If targetUri corresponds to an open TextDocument in VS Code, updates are applied via
  *   vscode.workspace.applyEdit(...) to preserve in-memory document state, undo/redo history,
  *   and dirty tracking without producing spurious disk conflict warnings.
  * - If targetUri is NOT currently open as a TextDocument, direct filesystem write via
- *   fs.writeFileSync is used since no in-memory buffer exists.
+ *   fs.promises.writeFile is used because no in-memory buffer exists.
  * - Auxiliary generated artifacts (code, requirements.txt, Dockerfile, runner scripts, ignore files)
  *   are output files not held open as .spark documents in VS Code, so writing them directly via fs is safe.
- * 
- * @param targetUri File URI to save the pipeline definition to
- * @param data Serialized YAML content of the pipeline
- * @param code Optional generated pipeline execution code
- * @param fileExtension Code file extension (defaults to 'py')
- * @param outputFolder Optional custom destination directory for pipeline code
- * @param requirements Optional requirements.txt content
- * @param dockerfile Optional Dockerfile content
- * @param runScript Optional local runner script content
- * @param runDataflowScript Optional Dataflow runner script content
- * @param dockerIgnore Optional .dockerignore content
- * @param gcloudIgnore Optional .gcloudignore content
- * @param syncState Optional synchronization state for echo-loop suppression
+ *
+ * @param targetUri File URI to save the pipeline definition to.
+ * @param data Serialized YAML content of the pipeline.
+ * @param code Optional generated pipeline execution code.
+ * @param fileExtension Code file extension (defaults to 'py').
+ * @param outputFolder Optional custom destination directory for pipeline code.
+ * @param requirements Optional requirements.txt content.
+ * @param dockerfile Optional Dockerfile content.
+ * @param runScript Optional local runner script content written to run_local.sh.
+ * @param dockerIgnore Optional .dockerignore content.
+ * @param gcloudIgnore Optional .gcloudignore content.
+ * @param syncState Optional synchronization state for echo-loop suppression.
  */
 export async function savePipelineFiles(
     targetUri: vscode.Uri,
     data: string,
     code?: string,
-    fileExtension: string = 'py',
+    fileExtension = 'py',
     outputFolder?: string,
     requirements?: string,
     dockerfile?: string,
     runScript?: string,
-    runDataflowScript?: string,
     dockerIgnore?: string,
     gcloudIgnore?: string,
     syncState?: DocumentSyncState
@@ -112,7 +111,7 @@ export async function savePipelineFiles(
 
         if (fileExtension === 'py') {
             const reqPath = path.join(folderPath, 'requirements.txt');
-            const reqContent = requirements || 'apache-beam\n';
+            const reqContent = requirements || `${getDefaultPysparkPin()}\n`;
             await fs.promises.writeFile(reqPath, reqContent, 'utf-8');
 
             const dockerPath = path.join(folderPath, 'Dockerfile');
@@ -124,23 +123,13 @@ export async function savePipelineFiles(
                 }
             }
 
-            const runScriptPath = path.join(folderPath, 'run_directrunner.sh');
+            const runScriptPath = path.join(folderPath, 'run_local.sh');
             if (runScript) {
                 await fs.promises.writeFile(runScriptPath, runScript, 'utf-8');
                 try {
                     await fs.promises.chmod(runScriptPath, '755');
                 } catch (e) {
                     console.error(`Failed to set executable permission on ${runScriptPath}`, e);
-                }
-            }
-
-            const runDataflowScriptPath = path.join(folderPath, 'run_dataflow.sh');
-            if (runDataflowScript) {
-                await fs.promises.writeFile(runDataflowScriptPath, runDataflowScript, 'utf-8');
-                try {
-                    await fs.promises.chmod(runDataflowScriptPath, '755');
-                } catch (e) {
-                    console.error(`Failed to set executable permission on ${runDataflowScriptPath}`, e);
                 }
             }
 

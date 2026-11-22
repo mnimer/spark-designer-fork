@@ -7,37 +7,31 @@
  * Implements dirty-checking (P6) to avoid redundant writes when the serialized state has not changed.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef } from 'react';
 import YAML from 'yaml';
 import { getVsCodeApi } from '../bridge/vscodeApi';
-import type { PipelineParadigm } from '../utils/sharedTypes';
+import type { PipelineConfig } from '../state/pipelineConfigReducer';
+import { normalizeSparkRunner, type PipelineParadigm } from '../utils/sharedTypes';
 
 /**
  * Serializable state snapshot representing an Apache Spark pipeline design.
  */
 export interface PipelineState {
   paradigm?: PipelineParadigm;
-  nodes: any[];
-  edges: any[];
+  nodes: object[];
+  edges: object[];
   runtimeVariables: { key: string; value: string }[];
-  jobConfig: any;
-  pipelineConfig: any;
+  jobConfig: Record<string, unknown> | undefined;
+  pipelineConfig: PipelineConfig | Record<string, unknown> | undefined;
 }
 
 /**
  * Options for configuring debounced pipeline autosave in {@link usePipelinePersistence}.
  */
-export interface UsePipelinePersistenceOptions {
-  paradigm?: PipelineParadigm;
-  nodes: any[];
-  edges: any[];
-  runtimeVariables: { key: string; value: string }[];
-  jobConfig: any;
-  pipelineConfig: any;
+export interface UsePipelinePersistenceOptions extends PipelineState {
   isLoaded: boolean;
   loadRevision?: number;
-  vscode?: { postMessage: (msg: any) => void } | null;
+  vscode?: { postMessage: (msg: unknown) => void } | null;
   /**
    * Debounce delay in milliseconds.
    * Default is 2000ms (2s) to prevent excessive synchronous host writes during graph edits.
@@ -48,9 +42,16 @@ export interface UsePipelinePersistenceOptions {
 /**
  * Strips transient React Flow runtime layout and selection fields from a node before serialization.
  */
-const sanitizeNodeForSerialization = (node: any): any => {
+const sanitizeNodeForSerialization = (node: object): object => {
   if (!node || typeof node !== 'object') return node;
-  const { width, height, selected, dragging, positionAbsolute, ...persistedFields } = node;
+  const {
+    width,
+    height,
+    selected,
+    dragging,
+    positionAbsolute,
+    ...persistedFields
+  } = node as Record<string, unknown>;
   void width;
   void height;
   void selected;
@@ -62,37 +63,46 @@ const sanitizeNodeForSerialization = (node: any): any => {
 /**
  * Strips transient React Flow selection fields from an edge before serialization.
  */
-const sanitizeEdgeForSerialization = (edge: any): any => {
+const sanitizeEdgeForSerialization = (edge: object): object => {
   if (!edge || typeof edge !== 'object') return edge;
-  const { selected, ...persistedFields } = edge;
+  const { selected, ...persistedFields } = edge as Record<string, unknown>;
   void selected;
   return persistedFields;
 };
 
 /**
  * Serializes the pipeline state object into a YAML string, excluding transient React Flow view state.
- * Emits `paradigm` as the first top-level key so saved documents match starter pipeline files byte-for-byte.
+ * Emits `paradigm` as the first top-level key so saved documents match starter pipeline files byte-for-byte,
+ * and normalizes any unknown `jobConfig.runner` value to `'Local'` against the Spark allowlist.
  */
 export const serializePipeline = (state: PipelineState): string => {
+  const rawPipelineConfigRecord =
+    state.pipelineConfig && typeof state.pipelineConfig === 'object'
+      ? (state.pipelineConfig as Record<string, unknown>)
+      : undefined;
   const resolvedParadigm: PipelineParadigm =
-    state.paradigm === 'sdp' || state.pipelineConfig?.paradigm === 'sdp' ? 'sdp' : 'imperative';
-  const rawPipelineConfig = state.pipelineConfig;
-  let cleanPipelineConfig = rawPipelineConfig;
-  if (
-    rawPipelineConfig &&
-    typeof rawPipelineConfig === 'object' &&
-    'paradigm' in rawPipelineConfig
-  ) {
-    const { paradigm: omittedParadigm, ...restPipelineConfig } = rawPipelineConfig;
+    state.paradigm === 'sdp' || rawPipelineConfigRecord?.paradigm === 'sdp'
+      ? 'sdp'
+      : 'imperative';
+  let cleanPipelineConfig = state.pipelineConfig;
+  if (rawPipelineConfigRecord && 'paradigm' in rawPipelineConfigRecord) {
+    const { paradigm: omittedParadigm, ...restPipelineConfig } = rawPipelineConfigRecord;
     void omittedParadigm;
     cleanPipelineConfig = restPipelineConfig;
   }
+  const cleanJobConfig =
+    state.jobConfig && typeof state.jobConfig === 'object'
+      ? {
+          ...state.jobConfig,
+          runner: normalizeSparkRunner(state.jobConfig.runner),
+        }
+      : state.jobConfig;
   const cleanState: PipelineState = {
     paradigm: resolvedParadigm,
     nodes: Array.isArray(state.nodes) ? state.nodes.map(sanitizeNodeForSerialization) : [],
     edges: Array.isArray(state.edges) ? state.edges.map(sanitizeEdgeForSerialization) : [],
     runtimeVariables: state.runtimeVariables,
-    jobConfig: state.jobConfig,
+    jobConfig: cleanJobConfig,
     pipelineConfig: cleanPipelineConfig,
   };
   return YAML.stringify(cleanState);

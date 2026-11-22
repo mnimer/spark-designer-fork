@@ -8,7 +8,6 @@
  * topological auto-layout, property application, and node or edge deletion.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useMemo, useState } from 'react';
 import {
   useNodesState,
@@ -17,6 +16,9 @@ import {
   type Node,
   type Edge,
   type Connection,
+  type NodeChange,
+  type EdgeChange,
+  type FitViewOptions,
 } from 'reactflow';
 import { validateDagTopology, type DagValidationResult } from '../utils/dagValidator';
 import {
@@ -45,7 +47,10 @@ import type {
 import { computeLayoutedNodes } from '../graph/layout';
 import { createNodesForPaletteItem } from '../graph/nodeFactory';
 import { isPubSubSourceNode } from '../graph/nodeKinds';
-import { pipelineConfigReducer } from '../state/pipelineConfigReducer';
+import {
+  pipelineConfigReducer,
+  type PipelineConfig,
+} from '../state/pipelineConfigReducer';
 
 /**
  * Data payload stored within React Flow nodes for Apache Spark transforms.
@@ -56,7 +61,7 @@ export interface PipelineNodeData {
   iconName: string;
   spark_transform?: string;
   system_instructions?: string;
-  properties?: Record<string, any>;
+  properties?: Record<string, unknown>;
   hasCycle?: boolean;
   hasValidationError?: boolean;
   isOrphan?: boolean;
@@ -73,6 +78,7 @@ export interface PipelineNodeData {
   defaultReadMode?: ReadMode;
   errorOutput?: boolean;
   inputArity?: 1 | 2 | 'n';
+  [key: string]: unknown;
 }
 
 export type PipelineNode = Node<PipelineNodeData>;
@@ -86,10 +92,10 @@ export const initialEdges: Edge[] = [];
  */
 export interface UsePipelineGraphOptions {
   takeSnapshot: () => void;
-  setPipelineConfig: React.Dispatch<React.SetStateAction<any>>;
+  setPipelineConfig: React.Dispatch<React.SetStateAction<PipelineConfig>>;
   project?: (position: { x: number; y: number }) => { x: number; y: number };
-  fitView?: (options?: any) => void;
-  jobConfig?: Record<string, any>;
+  fitView?: (options?: FitViewOptions) => void;
+  jobConfig?: Record<string, unknown>;
   paradigm?: PipelineParadigm;
 }
 
@@ -136,26 +142,26 @@ function canConnectEdge(
     return false;
   }
 
-  if (isConditionalSplitNode(sourceNode as any)) {
+  if (isConditionalSplitNode(sourceNode)) {
     if (connection.sourceHandle) {
-      const validHandles = getConditionalSplitHandles(sourceNode as any);
+      const validHandles = getConditionalSplitHandles(sourceNode);
       if (!validHandles.some((h) => h.id === connection.sourceHandle)) {
         return false;
       }
     }
   } else if (sourceNode.data?.type === 'STEP' && connection.sourceHandle === 'error') {
     if (paradigm === 'sdp') {
-      if (getNodeSparkTransform(sourceNode as any) !== 'DataQualityAssert') {
+      if (getNodeSparkTransform(sourceNode) !== 'DataQualityAssert') {
         return false;
       }
-    } else if (!isErrorCapableStep(sourceNode as any)) {
+    } else if (!isErrorCapableStep(sourceNode)) {
       return false;
     }
   }
 
-  if (isJoinNode(targetNode as any) || isMergeCdcScdNode(targetNode as any)) {
+  if (isJoinNode(targetNode) || isMergeCdcScdNode(targetNode)) {
     const targetHandle = connection.targetHandle;
-    if (paradigm === 'sdp' && isMergeCdcScdNode(targetNode as any)) {
+    if (paradigm === 'sdp' && isMergeCdcScdNode(targetNode)) {
       if (targetHandle !== 'left') {
         return false;
       }
@@ -168,7 +174,7 @@ function canConnectEdge(
     return !handleOccupied;
   }
 
-  const inputArity = getNodeInputArity(targetNode as any);
+  const inputArity = getNodeInputArity(targetNode);
   if (inputArity === 'n') {
     const duplicateEdge = currentEdges.some(
       (e) =>
@@ -202,22 +208,22 @@ export function usePipelineGraph({
   const hasPubSubSource = nodes.some(isPubSubSourceNode);
 
   const handleNodesChange = useCallback(
-    (changes: any) => {
+    (changes: NodeChange[]) => {
       onNodesChange(changes);
-      const requiresRebuild = changes.some((c: any) => c.type === 'add' || c.type === 'remove');
+      const requiresRebuild = changes.some((c) => c.type === 'add' || c.type === 'remove');
       if (requiresRebuild) {
-        setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+        setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
       }
     },
     [onNodesChange, setPipelineConfig]
   );
 
   const handleEdgesChange = useCallback(
-    (changes: any) => {
+    (changes: EdgeChange[]) => {
       onEdgesChange(changes);
-      const requiresRebuild = changes.some((c: any) => c.type === 'remove');
+      const requiresRebuild = changes.some((c) => c.type === 'remove');
       if (requiresRebuild) {
-        setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+        setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
       }
     },
     [onEdgesChange, setPipelineConfig]
@@ -246,25 +252,25 @@ export function usePipelineGraph({
       setEdges((eds) =>
         canConnectEdge(normalizedConnection, nodes, eds, paradigm) ? addEdge(params, eds) : eds
       );
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
     [nodes, edges, paradigm, setEdges, takeSnapshot, setPipelineConfig]
   );
 
   const handleApplyProperties = useCallback(
-    (nodeId: string, properties: any) => {
+    (nodeId: string, properties: Record<string, unknown>) => {
       takeSnapshot();
       setNodes((nds) =>
         nds.map((node) => {
           if (node.id === nodeId) {
             const { system_instructions, special_instructions, ...restProperties } = properties;
-            const updatedData: any = {
+            const updatedData: PipelineNodeData = {
               ...node.data,
               properties: restProperties,
             };
             const instructionsValue =
               system_instructions !== undefined ? system_instructions : special_instructions;
-            if (instructionsValue !== undefined) {
+            if (typeof instructionsValue === 'string') {
               updatedData.system_instructions = instructionsValue;
             }
             return {
@@ -275,7 +281,7 @@ export function usePipelineGraph({
           return node;
         })
       );
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
     [setNodes, takeSnapshot, setPipelineConfig]
   );
@@ -297,7 +303,7 @@ export function usePipelineGraph({
           return node;
         })
       );
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
     [setNodes, takeSnapshot, setPipelineConfig]
   );
@@ -377,7 +383,7 @@ export function usePipelineGraph({
       if (newEdges.length > 0) {
         setEdges((prev) => [...prev, ...newEdges]);
       }
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     },
     [paradigm, project, setNodes, setEdges, nodes, edges, takeSnapshot, setPipelineConfig]
   );
@@ -411,7 +417,7 @@ export function usePipelineGraph({
       if (newEdges.length > 0) {
         setEdges((prev) => [...prev, ...newEdges]);
       }
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
       triggerFitView();
     },
     [paradigm, nodes, edges, setNodes, setEdges, takeSnapshot, setPipelineConfig, triggerFitView]
@@ -425,29 +431,29 @@ export function usePipelineGraph({
         eds.filter((edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId)
       );
       setSelectedNodeId(null);
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     } else if (selectedEdgeId) {
       takeSnapshot();
       setEdges((eds) => eds.filter((edge) => edge.id !== selectedEdgeId));
       setSelectedEdgeId(null);
-      setPipelineConfig((prev: any) => pipelineConfigReducer(prev, { type: 'markDirty' }));
+      setPipelineConfig((prev) => pipelineConfigReducer(prev, { type: 'markDirty' }));
     }
   }, [selectedNodeId, selectedEdgeId, setNodes, setEdges, takeSnapshot, setPipelineConfig]);
 
   const sdpPlan = useMemo<SdpExecutionPlan | null>(
     () =>
       paradigm === 'sdp'
-        ? buildSdpPlan(nodes as any, edges as any, jobConfig, { enforceRuntimeVersion: false })
+        ? buildSdpPlan(nodes, edges, jobConfig, { enforceRuntimeVersion: false })
         : null,
     [paradigm, nodes, edges, jobConfig]
   );
 
   const dagValidation = useMemo<DagValidationResult>(() => {
     const baseValidation = validateDagTopology(
-      nodes as any,
-      edges as any,
+      nodes,
+      edges,
       paradigm === 'sdp'
-        ? ({ paradigm: 'sdp' } as any)
+        ? { paradigm: 'sdp' }
         : jobConfig?.checkpointRoot !== undefined
           ? { jobConfig }
           : undefined
@@ -462,7 +468,7 @@ export function usePipelineGraph({
     // and SDP manages checkpoints under pipeline storage rather than per-sink checkpointLocation.
     const validMergeLeftOnlyIds = new Set<string>();
     for (const node of nodes) {
-      if (isMergeCdcScdNode(node as any)) {
+      if (isMergeCdcScdNode(node)) {
         const inbound = edges.filter((e) => e.target === node.id);
         const leftCount = inbound.filter((e) => e.targetHandle === 'left').length;
         const rightCount = inbound.filter((e) => e.targetHandle === 'right').length;
@@ -535,12 +541,12 @@ export function usePipelineGraph({
   }, [nodes, edges, jobConfig, paradigm, sdpPlan]);
 
   const streamingPropagation = useMemo(
-    () => computeStreamingNodeSet(nodes as any, edges as any),
+    () => computeStreamingNodeSet(nodes, edges),
     [nodes, edges]
   );
 
   const executionPlan = useMemo<ExecutionPlan>(
-    () => buildExecutionPlan(nodes as any, edges as any, jobConfig),
+    () => buildExecutionPlan(nodes, edges, jobConfig),
     [nodes, edges, jobConfig]
   );
 
@@ -605,7 +611,7 @@ export function usePipelineGraph({
       let supportedReadModes = node.data.supportedReadModes;
       if (node.data.type === 'SOURCE' && !supportedReadModes) {
         supportedReadModes = getNodeCapabilities(
-          getNodeSparkTransform(node as any),
+          getNodeSparkTransform(node),
           'SOURCE'
         ).supportedReadModes;
       }

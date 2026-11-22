@@ -14,7 +14,8 @@
  * 3. Schema String: Compact comma-separated schema string editor (e.g. name:STRING, age:INTEGER:REQUIRED).
  */
 
-import React, { useState, useEffect } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import React, { useState } from 'react';
 import { List, FileCode, Code, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 
 /**
@@ -86,7 +87,7 @@ export interface SchemaEditorProps {
  */
 export function fieldsToJson(fields: SchemaField[]): string {
   const schemaList = fields.map(f => {
-    const item: Record<string, any> = {
+    const item: Record<string, string> = {
       name: f.name || '',
       type: f.type || 'STRING',
       mode: f.mode || 'NULLABLE'
@@ -117,14 +118,24 @@ export function fieldsToString(fields: SchemaField[]): string {
  */
 export function jsonToFields(jsonStr: string): SchemaField[] | null {
   try {
-    const parsed = JSON.parse(jsonStr);
+    const parsed: unknown = JSON.parse(jsonStr);
     if (!Array.isArray(parsed)) return null;
-    return parsed.map((item: any) => ({
-      name: String(item.name || ''),
-      type: (item.type || 'STRING').toUpperCase(),
-      mode: item.mode === 'REQUIRED' ? 'REQUIRED' : item.mode === 'REPEATED' ? 'REPEATED' : 'NULLABLE',
-      description: item.description ? String(item.description) : ''
-    }));
+    return parsed.map((item: unknown) => {
+      const entry =
+        item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+      const rawType = typeof entry.type === 'string' && entry.type ? entry.type : 'STRING';
+      return {
+        name: String(entry.name || ''),
+        type: rawType.toUpperCase(),
+        mode:
+          entry.mode === 'REQUIRED'
+            ? 'REQUIRED'
+            : entry.mode === 'REPEATED'
+              ? 'REPEATED'
+              : 'NULLABLE',
+        description: entry.description ? String(entry.description) : '',
+      };
+    });
   } catch {
     return null;
   }
@@ -157,9 +168,9 @@ export function stringToFields(str: string): SchemaField[] {
 /**
  * Resolves SchemaField[] from node properties supporting schemaFields, schema (JSON), or schemaString.
  */
-export function resolveSchemaFields(properties: Record<string, any>): SchemaField[] {
+export function resolveSchemaFields(properties: Record<string, unknown>): SchemaField[] {
   if (Array.isArray(properties.schemaFields)) {
-    return properties.schemaFields;
+    return properties.schemaFields as SchemaField[];
   }
   if (typeof properties.schema === 'string' && properties.schema.trim()) {
     const parsed = jsonToFields(properties.schema);
@@ -171,6 +182,8 @@ export function resolveSchemaFields(properties: Record<string, any>): SchemaFiel
   return [];
 }
 
+const EMPTY_SCHEMA_FIELDS: SchemaField[] = [];
+
 /**
  * Multi-mode tabular schema editor supporting interactive builder rows, raw JSON, and compact string representations.
  *
@@ -178,7 +191,7 @@ export function resolveSchemaFields(properties: Record<string, any>): SchemaFiel
  * @returns Rendered schema editor panel.
  */
 export const SchemaEditor: React.FC<SchemaEditorProps> = ({
-  fields = [],
+  fields = EMPTY_SCHEMA_FIELDS,
   types = BIGQUERY_TYPES,
   schemaTitle = 'BigQuery TableSchema Specification',
   stringTitle = 'BigQuery Schema String',
@@ -188,23 +201,33 @@ export const SchemaEditor: React.FC<SchemaEditorProps> = ({
   onChange
 }) => {
   const [activeTab, setActiveTab] = useState<'builder' | 'json' | 'string'>('builder');
-  const [jsonText, setJsonText] = useState(() => fieldsToJson(fields));
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [stringText, setStringText] = useState(() => fieldsToString(fields));
+  const [draftState, setDraftState] = useState<{
+    fieldsRef: SchemaField[];
+    jsonText: string;
+    stringText: string;
+    jsonError: string | null;
+  }>(() => ({
+    fieldsRef: fields,
+    jsonText: fieldsToJson(fields),
+    stringText: fieldsToString(fields),
+    jsonError: null,
+  }));
 
-  // Sync internal text representations when incoming fields change
-  useEffect(() => {
-    setJsonText(fieldsToJson(fields));
-    setStringText(fieldsToString(fields));
-    setJsonError(null);
-  }, [fields]);
+  const jsonText =
+    draftState.fieldsRef === fields ? draftState.jsonText : fieldsToJson(fields);
+  const stringText =
+    draftState.fieldsRef === fields ? draftState.stringText : fieldsToString(fields);
+  const jsonError = draftState.fieldsRef === fields ? draftState.jsonError : null;
 
   const emitChange = (newFields: SchemaField[]) => {
     const json = fieldsToJson(newFields);
     const str = fieldsToString(newFields);
-    setJsonText(json);
-    setStringText(str);
-    setJsonError(null);
+    setDraftState({
+      fieldsRef: fields,
+      jsonText: json,
+      stringText: str,
+      jsonError: null,
+    });
     onChange({
       schemaFields: newFields,
       schema: json,
@@ -243,30 +266,41 @@ export const SchemaEditor: React.FC<SchemaEditorProps> = ({
   // JSON Tab handler
   const handleJsonChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
-    setJsonText(text);
     const parsed = jsonToFields(text);
     if (parsed !== null) {
-      setJsonError(null);
       const str = fieldsToString(parsed);
-      setStringText(str);
+      setDraftState({
+        fieldsRef: fields,
+        jsonText: text,
+        stringText: str,
+        jsonError: null,
+      });
       onChange({
         schemaFields: parsed,
         schema: text,
         schemaString: str
       });
     } else {
-      setJsonError('Invalid JSON array format. Must be an array of { "name", "type", "mode" } objects.');
+      setDraftState({
+        fieldsRef: fields,
+        jsonText: text,
+        stringText,
+        jsonError: 'Invalid JSON array format. Must be an array of { "name", "type", "mode" } objects.',
+      });
     }
   };
 
   // String Tab handler
   const handleStringChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
-    setStringText(text);
     const parsed = stringToFields(text);
     const json = fieldsToJson(parsed);
-    setJsonText(json);
-    setJsonError(null);
+    setDraftState({
+      fieldsRef: fields,
+      jsonText: json,
+      stringText: text,
+      jsonError: null,
+    });
     onChange({
       schemaFields: parsed,
       schema: json,

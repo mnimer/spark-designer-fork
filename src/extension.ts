@@ -223,7 +223,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 export type {
     SparkJob,
-    DataflowJob,
     RawServerlessBatch,
     RawClusterJob,
 } from './tree/sparkTree';
@@ -233,13 +232,12 @@ export {
     normalizeServerlessBatch,
     normalizeClusterJob,
     SparkTreeProvider,
-    DataFlowTreeProvider,
     DataItem,
     SparkTreeItem,
 } from './tree/sparkTree';
 
 /**
- * Deactivates the Apache Beam Designer extension and disposes resources.
+ * Deactivates the Apache Spark Designer extension and disposes resources.
  */
 export function deactivate() { }
 

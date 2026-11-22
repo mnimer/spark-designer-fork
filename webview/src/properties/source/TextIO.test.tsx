@@ -9,24 +9,24 @@
  * for TextIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TextIOSourceProperties, TextSourceProperties } from './TextIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { TextIOSourceProperties, TextSourceProperties, type TextIOSourceNode } from './TextIO';
 
 describe('TextIOSourceProperties (SRC18 TextSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports TextSourceProperties as an alias for TextIOSourceProperties', () => {
@@ -34,7 +34,7 @@ describe('TextIOSourceProperties (SRC18 TextSource)', () => {
   });
 
   it('renders default batch settings and flags required validation when path is empty', () => {
-    const mockNode: any = {
+    const mockNode: TextIOSourceNode = {
       data: {
         label: 'TextSource',
         spark_transform: 'TextSource',
@@ -54,7 +54,7 @@ describe('TextIOSourceProperties (SRC18 TextSource)', () => {
   });
 
   it('renders populated streaming properties and propagates updates for wholetext, lineSep, maxFilesPerTrigger, and instructions', () => {
-    const mockNode: any = {
+    const mockNode: TextIOSourceNode = {
       data: {
         label: 'TextSource',
         spark_transform: 'TextSource',

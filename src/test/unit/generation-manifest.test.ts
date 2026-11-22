@@ -522,7 +522,7 @@ describe('planCleanup', () => {
 });
 
 describe('resolveDeletablePath', () => {
-    const baseFolder = '/Users/testuser/projects/dataflow-output';
+    const baseFolder = '/Users/testuser/projects/spark-output';
 
     /**
      * DEFENCE IN DEPTH RATIONALE:

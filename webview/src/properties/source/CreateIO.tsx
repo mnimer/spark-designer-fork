@@ -11,7 +11,7 @@
  * - 'faker': Synthetic row generator with rowCount, fakerSpec, and SchemaEditor
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -40,11 +40,40 @@ export const GENERATION_MODE_OPTIONS: SelectFieldOption[] = [
 ];
 
 /**
+ * React Flow node shape for the CreateDataFrameSource panel.
+ */
+export interface CreateSourceNode {
+  data: {
+    label?: string;
+    spark_transform?: string;
+    system_instructions?: string;
+    special_instructions?: string;
+    properties?: {
+      generationMode?: CreateGenerationMode | string;
+      elements?: unknown;
+      rows?: unknown;
+      rangeStart?: number | string;
+      rangeEnd?: number | string;
+      rangeStep?: number | string;
+      numPartitions?: number | string;
+      rowCount?: number | string;
+      fakerSpec?: string;
+      schema?: string;
+      schemaString?: string;
+      schemaFields?: SchemaField[];
+      system_instructions?: string;
+      special_instructions?: string;
+      [key: string]: unknown;
+    };
+  };
+}
+
+/**
  * Props for the {@link CreateProperties} component.
  */
 export interface CreatePropertiesProps {
-  node: any;
-  onChange: (properties: any) => void;
+  node: CreateSourceNode;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
@@ -53,7 +82,7 @@ export interface CreatePropertiesProps {
  * @param raw Raw elements or rows property value.
  * @returns Non-empty array of stringified row items.
  */
-export function normalizeElements(raw: any): string[] {
+export function normalizeElements(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     if (raw.length === 0) {
       return [''];

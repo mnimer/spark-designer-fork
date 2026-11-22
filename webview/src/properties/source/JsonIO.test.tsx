@@ -9,24 +9,24 @@
  * maxFilesPerTrigger, SchemaEditor, and SystemInstructionsField for JsonIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { JsonIOSourceProperties, JsonSourceProperties } from './JsonIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { JsonIOSourceProperties, JsonSourceProperties, type JsonIOSourceNode } from './JsonIO';
 
 describe('JsonIOSourceProperties (SRC17 JsonSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports JsonSourceProperties as an alias for JsonIOSourceProperties', () => {
@@ -34,7 +34,7 @@ describe('JsonIOSourceProperties (SRC17 JsonSource)', () => {
   });
 
   it('renders Spark JSON defaults and flags required validation when path is empty', () => {
-    const mockNode: any = {
+    const mockNode: JsonIOSourceNode = {
       data: {
         label: 'JsonSource',
         spark_transform: 'JsonSource',
@@ -58,7 +58,7 @@ describe('JsonIOSourceProperties (SRC17 JsonSource)', () => {
   });
 
   it('renders populated streaming JSON properties and propagates changes across all fields', () => {
-    const mockNode: any = {
+    const mockNode: JsonIOSourceNode = {
       data: {
         label: 'JsonSource',
         spark_transform: 'JsonSource',

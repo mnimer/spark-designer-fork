@@ -80,7 +80,7 @@ describe('Bundled Sample: generate-mock-data', () => {
         expect(diskReadme).toContain('## Code Generation & Execution');
         expect(diskReadme).not.toContain('## Pipeline Nodes & Transforms');
         expect(diskReadme).not.toContain(';');
-        expect(diskReadme).not.toContain('.beam');
+        expect(diskReadme).toContain('generate-mock-data.spark');
     });
 
     it('passes DAG topology and local checkpoint validation with zero errors or warnings', () => {

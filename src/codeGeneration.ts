@@ -20,8 +20,8 @@ import tls from 'tls';
 import * as path from 'path';
 import YAML from 'yaml';
 import { GoogleGenAI } from '@google/genai';
-import { DEFAULT_GEMINI_MODEL } from './constants';
-import { validateDagTopology } from './dagValidator';
+import { DEFAULT_GEMINI_MODEL } from './core/constants';
+import { validateDagTopology } from './shared/dagValidator';
 import { buildSdpPlan, normalizeSdpJobConfig } from './shared/sdpPlanner';
 import { DEFAULT_LANGUAGE, DEFAULT_SPARK_VERSION, type SupportedLanguage, type TokenUsage } from './shared/types';
 import { resolveOutputFolder } from './editor/outputFolder';
@@ -38,6 +38,7 @@ import {
     resolvePipelineId,
     gateOutputFolder,
 } from './generation/outputFolderGate';
+import type { GenerationManifest } from './generationManifest';
 import {
     getDefaultIgnoreFileContent,
     readResourceFile,
@@ -232,10 +233,10 @@ export const JAVA_STRATEGY: LanguageStrategy = {
  * `languageVal.toLowerCase() === 'java' ? 'java' : 'python'`
  * Anything that is not Java becomes Python (default fallback).
  *
- * @param languageVal Raw language string from user or webview
+ * @param _languageVal Raw language string from user or webview
  * @returns LanguageStrategy for the selected language
  */
-export function resolveLanguageStrategy(_languageVal: string): LanguageStrategy {
+export function resolveLanguageStrategy(_languageVal?: string): LanguageStrategy {
     // PySpark-only in v1 (S6).
     return PYTHON_STRATEGY;
 }
@@ -270,7 +271,7 @@ export function deduplicateGeneratedFiles<T extends { filename?: string; content
  *
  * @param context Extension context (locates `resources/codegen-skills`).
  * @param yamlData Raw pipeline YAML.
- * @param languageVal Requested language (PySpark).
+ * @param _languageVal Requested language (PySpark).
  * @param sparkVersion Resolved Apache Spark runtime version.
  * @returns The built prompt, the selected skills, the detection facts, and the redacted paths.
  */
@@ -303,7 +304,7 @@ export interface ExecuteCodeGenerationOptions {
     /** Pipeline stable identifier for manifest */
     generationPipelineId: string;
     /** Result of folder gating check */
-    folderGate: { ownership: string; manifest: any; mayClean: boolean };
+    folderGate: { ownership: string; manifest: GenerationManifest | null; mayClean: boolean };
     /** Extension context for loading resources */
     context: vscode.ExtensionContext;
     /** Safe post-message callback to communicate with webview */
@@ -446,7 +447,7 @@ const origCreateSecureContext = tls.createSecureContext;
  *
  * @param certPath Optional path to the system CA bundle (defaults to `/etc/ssl/cert.pem`).
  */
-export function ensureSystemCaBundle(certPath: string = '/etc/ssl/cert.pem'): void {
+export function ensureSystemCaBundle(certPath = '/etc/ssl/cert.pem'): void {
     try {
         const candidatePaths = Array.from(new Set([
             process.env.NODE_EXTRA_CA_CERTS,
@@ -468,13 +469,15 @@ export function ensureSystemCaBundle(certPath: string = '/etc/ssl/cert.pem'): vo
 
         // 2. Fix native fetch / Undici / @google/genai TLS connections
         tls.createSecureContext = function (options: tls.SecureContextOptions = {}) {
-            const context = origCreateSecureContext.call(tls, options);
-            if ((context as any)?.context?.addCACert) {
+            const secureContext = origCreateSecureContext.call(tls, options) as tls.SecureContext & {
+                context?: { addCACert?: (cert: Buffer) => void };
+            };
+            if (secureContext?.context?.addCACert) {
                 for (const buf of certBuffers) {
-                    (context as any).context.addCACert(buf);
+                    secureContext.context.addCACert(buf);
                 }
             }
-            return context;
+            return secureContext;
         };
     } catch (err) {
         console.error('Failed to load system CA bundle:', err);
@@ -526,7 +529,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         const gcloudProjectId = await resolveProject();
         const sparkVersion = requestedSparkVersion || DEFAULT_SPARK_VERSION;
 
-        const aiOptions: any = {};
+        const aiOptions: NonNullable<ConstructorParameters<typeof GoogleGenAI>[0]> = {};
         if (gcloudProjectId) {
             aiOptions.vertexai = true;
             aiOptions.project = gcloudProjectId;
@@ -786,10 +789,10 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         }
 
         // Default code if the main pipeline file wasn't found in the generated list
-        if (!mainPipelineCode && responseObj.files.length > 0) {
-            const codeFile = responseObj.files.find((f: any) =>
+        if (!mainPipelineCode && responseObj.files && responseObj.files.length > 0) {
+            const codeFile = responseObj.files.find((f) =>
                 f.filename && f.filename.endsWith(`.${fileExt}`) && !f.filename.toLowerCase().includes('test')
-            ) || responseObj.files.find((f: any) => f.filename && f.filename.endsWith(`.${fileExt}`));
+            ) || responseObj.files.find((f) => f.filename && f.filename.endsWith(`.${fileExt}`));
             if (codeFile) {
                 mainPipelineCode = codeFile.content;
             } else {
@@ -840,8 +843,10 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
             } : undefined,
         });
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         const cancelled = isCancellation(err, abortSignal);
+        const errMessage = err instanceof Error ? err.message : String(err);
+        const errStack = err instanceof Error ? err.stack : undefined;
         // Record the failure or cancellation in gemini.log
         try {
             const logFilePath = path.join(targetFolderPath, GEMINI_LOG_FILENAME);
@@ -850,8 +855,8 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
                 model: activeModelForLog,
                 selectedSkills,
                 prompt: promptText,
-                error: cancelled ? 'Cancelled by user.' : err.message,
-                stack: cancelled ? undefined : err.stack,
+                error: cancelled ? 'Cancelled by user.' : errMessage,
+                stack: cancelled ? undefined : errStack,
             };
             await writePrivateLog(logFilePath, JSON.stringify(logData, null, 2));
         } catch (logErr) {
@@ -860,15 +865,30 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
 
         if (cancelled) {
             // No error toast because the user asked for this. The webview normally resets on
-            // 'codeGenerationStopped' first; this message is the authoritative end of the run.
+            // 'codeGenerationStopped' first, and this message is the authoritative end of the run.
             outputChannel?.appendLine('[generation] Code generation cancelled; no generated files were written.');
             await postToWebview({ command: 'codeRegenerated', success: false, cancelled: true, error: 'Generation cancelled.' });
             return;
         }
 
-        vscode.window.showErrorMessage(`Gemini Code Generation Error: ${err.message}`);
-        await postToWebview({ command: 'codeRegenerated', success: false, error: err.message });
+        vscode.window.showErrorMessage(`Gemini Code Generation Error: ${errMessage}`);
+        await postToWebview({ command: 'codeRegenerated', success: false, error: errMessage });
     }
+}
+
+/**
+ * Inbound webview message payload accepted by {@link handleRegenerateCode}.
+ */
+export interface RegenerateCodeMessagePayload {
+    data?: string;
+    filename?: string;
+    language?: string;
+    outputFolder?: string;
+    pipelineConfig?: { pipelineId?: unknown };
+    model?: string;
+    enableReviewer?: boolean;
+    sparkVersion?: string;
+    [key: string]: unknown;
 }
 
 /**
@@ -876,7 +896,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
  */
 export interface HandleRegenerateCodeOptions {
     /** Inbound webview message */
-    message: any;
+    message: RegenerateCodeMessagePayload;
     /** Extension context */
     context: vscode.ExtensionContext;
     /** Active document, if available */
@@ -986,9 +1006,10 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
 
     try {
         await fs.promises.mkdir(targetFolderPath, { recursive: true });
-    } catch (e: any) {
+    } catch (e: unknown) {
+        const errMessage = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(`Failed to create directory: ${targetFolderPath}`);
-        await postToWebview({ command: 'codeRegenerated', success: false, error: `Failed to create directory: ${targetFolderPath}. ${e.message}` });
+        await postToWebview({ command: 'codeRegenerated', success: false, error: `Failed to create directory: ${targetFolderPath}. ${errMessage}` });
         return;
     }
 
@@ -1045,8 +1066,8 @@ export async function handleRegenerateCode(options: HandleRegenerateCodeOptions)
         try {
             await executeCodeGeneration({
                 targetFolderPath,
-                yamlData,
-                languageVal,
+                yamlData: yamlData ?? '',
+                languageVal: languageVal ?? DEFAULT_LANGUAGE,
                 baseName,
                 generationPipelineId,
                 folderGate,

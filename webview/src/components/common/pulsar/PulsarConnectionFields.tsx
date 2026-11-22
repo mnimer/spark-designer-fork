@@ -41,7 +41,7 @@ export interface PulsarConnectionFieldsProps {
   /** Optional custom callback to apply protocol scheme to admin URL. */
   onApplyAdminProtocol?: (protocol: string) => void;
   /** Optional property change callback for object patch emissions. */
-  onPropertyChange?: (name: string, value: any) => void;
+  onPropertyChange?: (name: string, value: string) => void;
 }
 
 /**
@@ -84,7 +84,9 @@ export const PulsarConnectionFields: React.FC<PulsarConnectionFieldsProps> = ({
     if (onPropertyChange) {
       onPropertyChange('clientUrl', nextVal);
     } else {
-      onChange({ target: { name: 'clientUrl', value: nextVal } } as any);
+      onChange({
+        target: { name: 'clientUrl', value: nextVal },
+      } as unknown as React.ChangeEvent<HTMLInputElement>);
     }
   };
 
@@ -99,7 +101,9 @@ export const PulsarConnectionFields: React.FC<PulsarConnectionFieldsProps> = ({
     if (onPropertyChange) {
       onPropertyChange('adminUrl', nextVal);
     } else {
-      onChange({ target: { name: 'adminUrl', value: nextVal } } as any);
+      onChange({
+        target: { name: 'adminUrl', value: nextVal },
+      } as unknown as React.ChangeEvent<HTMLInputElement>);
     }
   };
 

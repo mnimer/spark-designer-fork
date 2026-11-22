@@ -12,7 +12,6 @@
  * and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -31,7 +30,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark CSV parsing modes for malformed records.
  */
-export const CSV_PARSE_MODES: SelectFieldOption[] = [
+const CSV_PARSE_MODES: SelectFieldOption[] = [
   { value: 'PERMISSIVE', label: 'PERMISSIVE (Capture malformed rows in _corrupt_record)' },
   { value: 'DROPMALFORMED', label: 'DROPMALFORMED (Drop malformed rows silently)' },
   { value: 'FAILFAST', label: 'FAILFAST (Abort job immediately on malformed row)' },
@@ -47,7 +46,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface CsvIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -60,11 +59,14 @@ export interface CsvIOSourceNode {
       pathGlobFilter?: string;
       recursiveFileLookup?: boolean;
       header?: boolean | string;
+      hasHeader?: boolean;
       inferSchema?: boolean;
       delimiter?: string;
       quote?: string;
+      quoteChar?: string;
       escape?: string;
       nullValue?: string;
+      nullString?: string;
       mode?: 'PERMISSIVE' | 'DROPMALFORMED' | 'FAILFAST';
       parseMode?: 'PERMISSIVE' | 'DROPMALFORMED' | 'FAILFAST';
       columnNameOfCorruptRecord?: string;
@@ -75,7 +77,7 @@ export interface CsvIOSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -85,7 +87,7 @@ export interface CsvIOSourceNode {
  */
 export interface CsvIOSourcePropertiesProps {
   node: CsvIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

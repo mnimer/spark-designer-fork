@@ -6,7 +6,7 @@
  * Purpose:
  * Validates that Secret Manager secret names/paths are properly converted into short secret IDs.
  * Ensures the generated pipeline receives short IDs rather than fully-qualified resource paths
- * (projects/.../secrets/...) which causes runtime failures on Dataflow jobs.
+ * (projects/.../secrets/...) which causes runtime failures on Spark jobs.
  */
 
 import { describe, it, expect, vi } from 'vitest';

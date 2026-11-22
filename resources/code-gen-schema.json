@@ -3,13 +3,13 @@
   "properties": {
     "files": {
       "type": "array",
-      "description": "The list of files to generate for this Apache Beam pipeline",
+      "description": "The list of files to generate for this Apache Spark pipeline",
       "items": {
         "type": "object",
         "properties": {
           "filename": {
             "type": "string",
-            "description": "The relative file path or filename to write to (e.g. pipeline.py, run_directrunner.sh, requirements.txt)"
+            "description": "The relative file path or filename to write to (e.g. src/pipeline.py, run_local.sh, requirements.txt)"
           },
           "content": {
             "type": "string",

@@ -14,7 +14,11 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { LogEntry } from '../components/BottomPanel/DeploymentTab';
-import type { LogStream } from '../utils/sharedTypes';
+import {
+  normalizeSparkRunner,
+  type LogStream,
+  type SparkRunnerType,
+} from '../utils/sharedTypes';
 import type { PipelineConfig } from '../state/pipelineConfigReducer';
 import type { RuntimeVariable } from './useRuntimeVariables';
 import { postToHost } from '../bridge/vscodeApi';
@@ -60,24 +64,14 @@ export function appendLog(
 }
 
 /**
- * Converts a raw runner identifier into the label shown in the execution log.
- *
- * Logic flow:
- * - If the runner is empty or the legacy Apache Beam `DirectRunner`, return `Local`.
- * - If the runner is the legacy `Spark` value, return `ServerlessSpark`.
- * - Otherwise, return the runner unchanged.
+ * Converts a raw runner identifier into the canonical Spark runner label shown in the execution log.
+ * If the value is not in the supported Spark runner allowlist, return `'Local'`.
  *
  * @param runner Raw runner value from the extension host message.
- * @returns Display label for the runner.
+ * @returns Canonical display label for the Spark runner.
  */
-export function formatRunnerLabel(runner: unknown): string {
-  if (typeof runner !== 'string' || runner === '' || runner === 'DirectRunner') {
-    return 'Local';
-  }
-  if (runner === 'Spark') {
-    return 'ServerlessSpark';
-  }
-  return runner;
+export function formatRunnerLabel(runner: unknown): SparkRunnerType {
+  return normalizeSparkRunner(runner);
 }
 
 /**
@@ -210,7 +204,7 @@ export function usePipelineExecution<TConfig extends Record<string, unknown> = R
   const handleStopPipeline = useCallback((options?: StopPipelineOptions) => {
     console.log('[@usePipelineExecution] handleStopPipeline called');
     const currentJobConfig = (jobConfigRef.current || {}) as Record<string, unknown>;
-    const runner = typeof currentJobConfig.runner === 'string' ? currentJobConfig.runner : 'Local';
+    const runner = normalizeSparkRunner(currentJobConfig.runner);
     const jobId = typeof currentJobConfig.jobId === 'string' ? currentJobConfig.jobId : undefined;
     const region =
       typeof currentJobConfig.region === 'string' && currentJobConfig.region

@@ -1,4 +1,4 @@
-/** @fileoverview Document synchronization helpers for the custom Beam pipeline editor.
+/** @fileoverview Document synchronization helpers for the custom Spark pipeline editor.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 
 /**
- * Synchronization state shared between BeamEditorProvider and handleMessages.
+ * Synchronization state shared between SparkEditorProvider and handleMessages.
  * Tracks in-flight workspace edits to prevent echo loops when saving from canvas (Finding M4).
  */
 export interface DocumentSyncState {
@@ -15,21 +15,28 @@ export interface DocumentSyncState {
 }
 
 /**
+ * Minimal webview message sink interface accepted by {@link createSafePostMessage}.
+ */
+export interface PostableWebview {
+    postMessage: (msg: unknown) => ReturnType<vscode.Webview['postMessage']> | boolean;
+}
+
+/**
  * Safe wrapper around webview.postMessage (Finding M5).
- * 
+ *
  * Prevents throwing unhandled exceptions when late-returning async callbacks
- * (e.g. gcloud, bq CLI executions) attempt to post messages to a webview
+ * (e.g. gcloud or bq CLI executions) attempt to post messages to a webview
  * whose panel has already been disposed.
- * 
- * @param webview Webview instance to post messages to
- * @param isDisposed Predicate returning boolean indicating if the panel has been disposed
- * @returns Safe post function that returns false when disposed instead of throwing
+ *
+ * @param webview Webview instance to post messages to.
+ * @param isDisposed Predicate returning boolean indicating if the panel has been disposed.
+ * @returns Safe post function that returns false when disposed instead of throwing.
  */
 export function createSafePostMessage(
-    webview: { postMessage: (msg: any) => ReturnType<vscode.Webview['postMessage']> | boolean },
+    webview: PostableWebview,
     isDisposed: () => boolean
-): (msg: any) => boolean {
-    return (msg: any): boolean => {
+): (msg: unknown) => boolean {
+    return (msg: unknown): boolean => {
         // NOTE: Guard against posting to disposed panel to prevent unhandled exceptions
         if (isDisposed()) {
             return false;

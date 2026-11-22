@@ -19,6 +19,7 @@
  * - Uses shared primitives on the 8pt grid system.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField } from '../../components/common/SelectField';
@@ -28,7 +29,7 @@ import { SystemInstructionsField } from '../../components/common/SystemInstructi
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /** Read mode options for EventHubsSource. */
-export const EVENTHUBS_READ_MODE_OPTIONS: SelectFieldOption[] = [
+const EVENTHUBS_READ_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'streaming', label: 'Streaming (spark.readStream)' },
   { value: 'batch', label: 'Batch (spark.read)' },
 ];
@@ -40,7 +41,7 @@ export const EVENTHUBS_CONNECTOR_MODE_OPTIONS: SelectFieldOption[] = [
 ];
 
 /** Starting offsets options for Event Hubs reads. */
-export const EVENTHUBS_STARTING_OFFSETS_OPTIONS: SelectFieldOption[] = [
+const EVENTHUBS_STARTING_OFFSETS_OPTIONS: SelectFieldOption[] = [
   { value: 'latest', label: 'latest (Read new incoming events)' },
   { value: 'earliest', label: 'earliest (Read from start of retention)' },
 ];
@@ -48,7 +49,7 @@ export const EVENTHUBS_STARTING_OFFSETS_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the EventHubsSource panel. */
 export interface EventHubsSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -64,7 +65,7 @@ export interface EventHubsSourceNode {
       secretName?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -72,7 +73,7 @@ export interface EventHubsSourceNode {
 /** Props for the {@link EventHubsSourceProperties} component. */
 export interface EventHubsSourcePropertiesProps {
   node: EventHubsSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

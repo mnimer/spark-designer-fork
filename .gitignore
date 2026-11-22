@@ -62,7 +62,5 @@ Thumbs.db
 *~
 .agents/teamwork
 
-# Graphify local caches, dotfiles & generated HTML viewer (keep graph.json and GRAPH_REPORT.md)
-graphify-out/cache/
-graphify-out/.*
-graphify-out/graph.html
+# Graphify local knowledge graph (auto-refreshed by Git hooks; never tracked in Git)
+graphify-out/

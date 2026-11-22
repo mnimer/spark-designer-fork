@@ -23,7 +23,7 @@
  *   resolved component is rendered inside a `<Suspense>` boundary with a lightweight placeholder while its
  *   chunk loads. Chunk load failures propagate to the enclosing ErrorBoundary in PropertyPane.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React, { Suspense } from 'react';
 import { NodeDocsCard } from './common/NodeDocsCard';
 import { SdpSinkSettingsField } from './common/SdpSinkSettingsField';
@@ -35,11 +35,12 @@ import {
   PROPERTY_FORM_REGISTRY,
   loadPropertyForm,
   type PropertyFormComponent,
+  type PropertyFormNode,
   type PropertyFormProps,
 } from '../catalog/propertyFormRegistry';
 
 export { PROPERTY_FORM_REGISTRY, loadPropertyForm };
-export type { PropertyFormComponent, PropertyFormProps };
+export type { PropertyFormComponent, PropertyFormNode, PropertyFormProps };
 
 /**
  * Props accepted by the top-level {@link PropertyForm} dispatcher container.
@@ -59,15 +60,18 @@ export interface PropertyFormContainerProps extends PropertyFormProps {
  * NOTE: Does NOT fall back to label matching under any circumstances, nor does it allow
  * a SOURCE node to fall back to a SINK-only transform (or vice versa).
  * 
- * The returned value is the registry entry itself (a lazy wrapper); use `loadPropertyForm`
+ * The returned value is the registry entry itself (a lazy wrapper). Use `loadPropertyForm`
  * to obtain the concrete component when needed.
  * 
  * @param node - React Flow node object
  * @returns Registered React component or undefined if unregistered
  */
-export function getPropertyFormComponent(node: any): PropertyFormComponent | undefined {
-  const transform = node?.data?.spark_transform || node?.data?.componentType || '';
-  const nodeType = (node?.data?.type || '').toUpperCase();
+export function getPropertyFormComponent(node: unknown): PropertyFormComponent | undefined {
+  const typedNode =
+    node && typeof node === 'object' ? (node as PropertyFormNode) : undefined;
+  const transform =
+    typedNode?.data?.spark_transform || typedNode?.data?.componentType || '';
+  const nodeType = (typedNode?.data?.type || '').toUpperCase();
 
   if (!transform) {
     return undefined;

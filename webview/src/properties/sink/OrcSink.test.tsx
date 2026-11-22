@@ -9,24 +9,24 @@
  * maxRecordsPerFile, bloomFilterColumns, bloomFilterFpp, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { OrcSinkProperties, OrcIOSinkProperties } from './OrcSink';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { OrcSinkProperties, OrcIOSinkProperties, type OrcSinkNode } from './OrcSink';
 
 describe('OrcSinkProperties (SNK12 OrcSink)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports OrcIOSinkProperties as an alias for OrcSinkProperties', () => {
@@ -34,7 +34,7 @@ describe('OrcSinkProperties (SNK12 OrcSink)', () => {
   });
 
   it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
-    const mockNode: any = {
+    const mockNode: OrcSinkNode = {
       data: {
         label: 'OrcSink',
         type: 'SINK',
@@ -59,7 +59,7 @@ describe('OrcSinkProperties (SNK12 OrcSink)', () => {
   });
 
   it('renders populated ADLS Gen2 properties with bloom filter options and Secret Manager auth', () => {
-    const mockNode: any = {
+    const mockNode: OrcSinkNode = {
       data: {
         label: 'OrcSink',
         spark_transform: 'OrcSink',
@@ -96,7 +96,7 @@ describe('OrcSinkProperties (SNK12 OrcSink)', () => {
   });
 
   it('propagates changes across all ORC writer fields and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: OrcSinkNode = {
       data: {
         properties: {
           path: 'gs://my-bucket/orc/',

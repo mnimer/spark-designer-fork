@@ -39,7 +39,10 @@ import { tryGetDesignerOutputChannel } from '../core/outputChannel';
  * @param documentPath Absolute path of the .spark document
  * @returns A stable pipeline identifier
  */
-export function resolvePipelineId(pipelineConfig: any, documentPath: string): string {
+export function resolvePipelineId(
+    pipelineConfig: { pipelineId?: unknown } | null | undefined,
+    documentPath: string
+): string {
     const explicit = pipelineConfig?.pipelineId;
     if (typeof explicit === 'string' && explicit.trim()) {
         return explicit.trim();

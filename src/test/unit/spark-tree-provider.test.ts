@@ -48,7 +48,6 @@ vi.mock('vscode', async () => (await import('./helpers/vscodeMock')).createVscod
 import { activate, SPARK_EDITOR_VIEW_TYPE } from '../../extension';
 import {
     SparkTreeProvider,
-    DataFlowTreeProvider,
     DataItem,
     SparkTreeItem,
     categorizeJobStatus,
@@ -174,8 +173,7 @@ describe('SparkTreeProvider Root Sections & Pipelines (R8)', () => {
         provider = new SparkTreeProvider();
     });
 
-    it('exposes DataFlowTreeProvider and SparkTreeItem aliases for backward compatibility', () => {
-        expect(DataFlowTreeProvider).toBe(SparkTreeProvider);
+    it('exposes SparkTreeItem alias for DataItem', () => {
         expect(SparkTreeItem).toBe(DataItem);
     });
 

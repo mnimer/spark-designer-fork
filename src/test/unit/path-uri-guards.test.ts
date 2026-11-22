@@ -76,8 +76,8 @@ describe('uriGuard', () => {
     describe('isAllowedExternalUri', () => {
         it('allows HTTPS URLs', () => {
             expect(isAllowedExternalUri('https://console.cloud.google.com')).toBe(true);
-            expect(isAllowedExternalUri('https://cloud.google.com/dataflow')).toBe(true);
-            expect(isAllowedExternalUri('https://beam.apache.org/documentation/')).toBe(true);
+            expect(isAllowedExternalUri('https://cloud.google.com/dataproc')).toBe(true);
+            expect(isAllowedExternalUri('https://spark.apache.org/docs/latest/')).toBe(true);
         });
 
         it('allows HTTP URLs only for localhost or 127.0.0.1', () => {

@@ -89,7 +89,7 @@ export const SECRET_REFERENCE_KEYS: ReadonlySet<string> = new Set([
   'apikeysecret',
   // OIDC client secret pointer (IO69 Cognite Data Fusion clientSecretSecret).
   'clientsecretsecret',
-  // AWS secret access key / session token pointers (IO73 Beam PyIO; SnsIO also emits secretKeySecret).
+  // AWS secret access key and session token pointers for cloud and streaming connectors.
   'secretkeysecret',
   'sessiontokensecret',
   // Whole ODBC connection string stored in Secret Manager (IO76 Pyodbc contingency).

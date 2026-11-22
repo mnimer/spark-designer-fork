@@ -88,11 +88,11 @@ describe('isPlaceholderProjectId', () => {
 
 describe('useVsCodeBridge - projectIdResolved (P9 deferred gcloud lookup)', () => {
   beforeEach(() => {
-    (window as any).vscode = { postMessage: vi.fn() };
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    delete (window as any).vscode;
+    delete window.vscode;
   });
 
   /** Renders the hook with the given current projectId and returns the setter spy. */
@@ -168,11 +168,11 @@ describe('useVsCodeBridge - injected vscode handle', () => {
   // silently dead. Anything passing it got the global anyway. These tests pin that the
   // injected handle is the one actually used.
   beforeEach(() => {
-    (window as any).vscode = { postMessage: vi.fn() };
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    delete (window as any).vscode;
+    delete window.vscode;
   });
 
   /**
@@ -194,7 +194,7 @@ describe('useVsCodeBridge - injected vscode handle', () => {
 
   it('sends the startup handshake through the injected handle, not the global', () => {
     const injected = { postMessage: vi.fn() };
-    const globalPostMessage = (window as any).vscode.postMessage;
+    const globalPostMessage = vi.mocked(window.vscode!.postMessage);
 
     renderHook(() => useVsCodeBridge({ ...baseOptions(), vscode: injected }));
 
@@ -204,7 +204,7 @@ describe('useVsCodeBridge - injected vscode handle', () => {
 
   it('routes an outbound request through the injected handle', () => {
     const injected = { postMessage: vi.fn() };
-    const globalPostMessage = (window as any).vscode.postMessage;
+    const globalPostMessage = vi.mocked(window.vscode!.postMessage);
 
     const { result } = renderHook(() => useVsCodeBridge({ ...baseOptions(), vscode: injected }));
 
@@ -219,7 +219,7 @@ describe('useVsCodeBridge - injected vscode handle', () => {
   });
 
   it('still falls back to the global handle when no option is supplied', () => {
-    const globalPostMessage = (window as any).vscode.postMessage;
+    const globalPostMessage = vi.mocked(window.vscode!.postMessage);
 
     renderHook(() => useVsCodeBridge(baseOptions()));
 
@@ -228,17 +228,17 @@ describe('useVsCodeBridge - injected vscode handle', () => {
 });
 
 describe('useVsCodeBridge', () => {
-  let mockPostMessage: any;
+  let mockPostMessage: ReturnType<typeof vi.fn<(message: unknown) => void>>;
 
   beforeEach(() => {
-    mockPostMessage = vi.fn();
-    (window as any).vscode = {
+    mockPostMessage = vi.fn<(message: unknown) => void>();
+    window.vscode = {
       postMessage: mockPostMessage,
     };
   });
 
   afterEach(() => {
-    delete (window as any).vscode;
+    delete window.vscode;
   });
 
   it('sends ready, getSubnetworks, and getSamples on mount', () => {
@@ -602,12 +602,13 @@ pipelineConfig:
         setEdges: vi.fn(),
         setRuntimeVariables: vi.fn(),
         setJobConfig: vi.fn(),
+        pipelineConfig: { language: 'Python', outputFolder: 'custom/out', needsRebuild: false },
         setPipelineConfig: vi.fn(),
         filename: 'my_job',
         setFilename: vi.fn(),
         projectId: 'proj',
         setProjectId: vi.fn(),
-      } as any)
+      })
     );
     expect(result.current.generationProgress).toBeNull();
     act(() => {

@@ -26,7 +26,7 @@ import type { LogEntry } from '../components/BottomPanel/DeploymentTab';
 
 describe('usePipelineExecution', () => {
   const sampleJobConfig = {
-    runner: 'DataflowRunner',
+    runner: 'ServerlessSpark',
     projectId: 'test-project',
     region: 'us-central1',
     jobId: 'my-job-123',
@@ -110,7 +110,7 @@ describe('usePipelineExecution', () => {
     expect(mockPostMessage).toHaveBeenCalledWith({
       command: 'stopPipeline',
       jobConfig: sampleJobConfig,
-      runner: 'DataflowRunner',
+      runner: 'ServerlessSpark',
       jobId: 'my-job-123',
       projectId: 'test-project',
       region: 'us-central1',
@@ -124,7 +124,7 @@ describe('usePipelineExecution', () => {
     expect(mockPostMessage).toHaveBeenLastCalledWith({
       command: 'stopPipeline',
       jobConfig: sampleJobConfig,
-      runner: 'DataflowRunner',
+      runner: 'ServerlessSpark',
       jobId: 'my-job-123',
       projectId: 'test-project',
       region: 'us-central1',
@@ -158,7 +158,7 @@ describe('usePipelineExecution', () => {
             data: {
               command: 'pipelineStarted',
               commandLine: './run_local.sh',
-              runner: 'DirectRunner',
+              runner: 'LegacyRunner',
             },
           })
         );
@@ -223,10 +223,10 @@ describe('usePipelineExecution', () => {
 
       expect(setJobConfig).toHaveBeenCalledTimes(1);
       const updater = setJobConfig.mock.calls[0][0];
-      const prevConfig = { runner: 'DataflowRunner', region: 'us-central1' };
+      const prevConfig = { runner: 'ServerlessSpark', region: 'us-central1' };
       const updated = updater(prevConfig);
       expect(updated).toEqual({
-        runner: 'DataflowRunner',
+        runner: 'ServerlessSpark',
         jobId: '2026-09-29_detected_job',
         region: 'us-east1',
         projectId: 'override-project',
@@ -369,9 +369,9 @@ describe('formatRunnerLabel', () => {
     expect(formatRunnerLabel(42)).toBe('Local');
   });
 
-  it('maps legacy DirectRunner and Spark values (failure condition)', () => {
-    expect(formatRunnerLabel('DirectRunner')).toBe('Local');
-    expect(formatRunnerLabel('Spark')).toBe('ServerlessSpark');
+  it('normalizes unknown or legacy runner values to Local (failure condition)', () => {
+    expect(formatRunnerLabel('LegacyRunner')).toBe('Local');
+    expect(formatRunnerLabel('Spark')).toBe('Local');
   });
 });
 

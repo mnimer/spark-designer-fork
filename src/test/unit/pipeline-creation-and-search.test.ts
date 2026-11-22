@@ -237,8 +237,8 @@ describe('Finding M17 — Activation Events and Workspace Search Exclusions', ()
 });
 
 describe('command wiring integrity', () => {
-    // Regression: 'dataflow-pipeline-builder.openPipeline' was referenced twice
-    // (by the showEditor command and by a DataItem tree node) but was never registered
+    // Regression: 'spark-pipeline-builder.openPipeline' was referenced twice
+    // (by the showEditor command and by a DataItem tree node) without being registered.
     // anywhere. showEditor is advertised in the Command Palette, so invoking it always
     // failed with "command not found". These tests assert that every command the source
     // dispatches to, and every command package.json declares, actually exists.
@@ -348,7 +348,6 @@ describe('command wiring integrity', () => {
             .split('\n')
             .map((line, i) => ({ line: line.trim(), n: i + 1 }))
             .filter(({ line }) =>
-                line.includes('dataflow-pipeline-builder.openPipeline') ||
                 line.includes('spark-pipeline-builder.openPipeline')
             );
 

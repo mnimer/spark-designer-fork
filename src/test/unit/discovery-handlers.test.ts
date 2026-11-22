@@ -42,7 +42,7 @@ vi.mock('../../codegen/modelDiscovery', async (importOriginal) => {
     };
 });
 
-import { DEFAULT_GEMINI_MODEL } from '../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../core/constants';
 import {
     MessageContext,
     handleMessages,

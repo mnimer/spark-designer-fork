@@ -9,7 +9,7 @@
  * and Secret Manager authentication fields for Amazon S3 and Azure Storage backends.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../InfoTooltip';
 import { PropertyField } from './PropertyField';
@@ -58,9 +58,9 @@ const DEFAULT_PATH_PLACEHOLDERS: Record<StorageBackendType, string> = {
  */
 export interface StorageBackendFieldsProps {
   /** Node properties dictionary owned by the parent form. */
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
   /** Callback invoked with the updated node properties object. */
-  onChange: (updated: Record<string, any>) => void;
+  onChange: (updated: Record<string, unknown>) => void;
   /** Unique prefix applied to DOM element IDs. */
   idPrefix: string;
   /** Property key storing the target URI or path. Defaults to 'path'. */
@@ -119,7 +119,7 @@ export function inferStorageBackend(uri?: string): StorageBackendType {
  * @returns Current path string value.
  */
 export function resolveStoragePathValue(
-  properties: Record<string, any>,
+  properties: Record<string, unknown>,
   pathKey: string = 'path'
 ): string {
   if (properties[pathKey] !== undefined && properties[pathKey] !== null) {
@@ -160,10 +160,13 @@ export const StorageBackendFields: React.FC<StorageBackendFieldsProps> = ({
       ? configuredBackend
       : inferStorageBackend(currentPath);
 
-  const pathGlobFilter = properties.pathGlobFilter ?? '';
+  const pathGlobFilter =
+    typeof properties.pathGlobFilter === 'string' ? properties.pathGlobFilter : '';
   const recursiveFileLookup = Boolean(properties.recursiveFileLookup);
-  const authMode = properties.authMode || 'default';
-  const secretName = properties.secretName || '';
+  const authMode =
+    typeof properties.authMode === 'string' && properties.authMode ? properties.authMode : 'default';
+  const secretName =
+    typeof properties.secretName === 'string' ? properties.secretName : '';
 
   const effectivePlaceholder =
     pathPlaceholder || DEFAULT_PATH_PLACEHOLDERS[effectiveBackend] || DEFAULT_PATH_PLACEHOLDERS.gcs;

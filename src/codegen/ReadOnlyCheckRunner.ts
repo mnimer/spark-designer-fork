@@ -101,25 +101,43 @@ export interface CommandOutcome {
     notFound?: boolean;
 }
 
+/** Environment variable map passed to spawned check commands. */
+export type CheckProcessEnv = Record<string, string | undefined>;
+
+/** Execution options passed to {@link CommandExecutor}. */
+export interface CommandExecutorOptions {
+    /** Working directory of the spawned process. */
+    cwd: string;
+    /** Wall-clock timeout in milliseconds. */
+    timeoutMs: number;
+    /** Optional environment variables passed to the child process. */
+    env?: CheckProcessEnv;
+}
+
 /** Executes an external command. Injectable for unit tests. */
 export type CommandExecutor = (
     command: string,
     args: string[],
-    options: { cwd: string; timeoutMs: number }
+    options: CommandExecutorOptions
 ) => Promise<CommandOutcome>;
 
 /** Default executor backed by `child_process.execFile`. */
 export const defaultCommandExecutor: CommandExecutor = (command, args, options) =>
     new Promise((resolve) => {
-        execFile(command, args, { cwd: options.cwd, timeout: options.timeoutMs }, (error, stdout, stderr) => {
-            const err = error as (Error & { code?: unknown }) | null;
-            if (err?.code === 'ENOENT') {
-                resolve({ exitCode: -1, stdout: '', stderr: String(err.message), notFound: true });
-                return;
+        execFile(
+            command,
+            args,
+            { cwd: options.cwd, timeout: options.timeoutMs, env: options.env ?? process.env },
+            (error, stdout, stderr) => {
+                const err = error as (Error & { code?: unknown }) | null;
+                if (err?.code === 'ENOENT') {
+                    resolve({ exitCode: -1, stdout: '', stderr: String(err.message), notFound: true });
+                    return;
+                }
+                const exitCode = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+                resolve({ exitCode, stdout: String(stdout ?? ''), stderr: String(stderr || err?.message || '') });
             }
-            const exitCode = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-            resolve({ exitCode, stdout: String(stdout ?? ''), stderr: String(stderr || err?.message || '') });
-        });
+        );
     });
 
 /** Input of one check run. */
@@ -134,7 +152,18 @@ export interface CheckRequest {
     runnerFiles: readonly string[];
     /** Optional pipeline paradigm (`imperative` or `sdp`). Auto-detects SDP when omitted. */
     paradigm?: 'imperative' | 'sdp';
+    /** Optional shared cache root directory override for pip and Ivy caches. */
+    cacheRoot?: string;
 }
+
+/** Per-run artifact directories cleaned from check workspaces after execution. */
+export const CHECK_RUN_ARTIFACT_DIRS = [
+    '.venv',
+    '.spark-ivy',
+    '.pytest_cache',
+    '.xdg-cache',
+    '.cache',
+] as const;
 
 /** One static violation found in an SDP spec or transformation module. */
 export interface SdpStaticViolation {
@@ -778,6 +807,170 @@ export function isSdpDryRunEnvironmentSkip(combined: string): boolean {
 }
 
 /**
+ * Resolves the shared cache root used for reusable `pip` and Spark `ivy2` caches during checks.
+ *
+ * @param cacheRootOverride Optional cache root override for tests.
+ * @param env Environment map inspected when `cacheRootOverride` is omitted.
+ * @returns Absolute path of the shared cache root directory.
+ */
+export function resolveCheckCacheRoot(
+    cacheRootOverride?: string,
+    env: CheckProcessEnv = process.env
+): string {
+    const explicit = cacheRootOverride?.trim();
+    if (explicit) {
+        return path.resolve(explicit);
+    }
+    const fromEnv = env.SPARK_DESIGNER_CACHE_ROOT?.trim() || process.env.SPARK_DESIGNER_CACHE_ROOT?.trim();
+    if (fromEnv) {
+        return path.resolve(fromEnv);
+    }
+    return path.join(os.homedir(), '.cache', 'spark-pipeline-builder');
+}
+
+/**
+ * Builds the isolated child environment for `python_syntax`, `pytest_collect`, and `sdp_dry_run` checks.
+ * Routes `XDG_CACHE_HOME` to a per-run scratch folder inside `workDir` and points `PIP_CACHE_DIR`
+ * and Spark Ivy at the shared cache root.
+ *
+ * @param workDir Temporary check workspace directory.
+ * @param options Optional shared cache root and parent environment overrides.
+ * @param options.cacheRoot Shared cache root directory override.
+ * @param options.baseEnv Parent environment copied into the child environment.
+ * @returns Child environment map, per-run XDG scratch path, and resolved shared cache root.
+ */
+export function buildCheckCommandEnv(
+    workDir: string,
+    options: { cacheRoot?: string; baseEnv?: CheckProcessEnv } = {}
+): { env: CheckProcessEnv; xdgScratchDir: string; cacheRoot: string } {
+    const baseEnv = options.baseEnv ?? process.env;
+    const cacheRoot = resolveCheckCacheRoot(options.cacheRoot, baseEnv);
+    const pipCacheDir = path.join(cacheRoot, 'pip');
+    const ivyCacheDir = path.join(cacheRoot, 'ivy2');
+    const xdgScratchDir = path.join(path.resolve(workDir), '.xdg-cache');
+
+    const env: CheckProcessEnv = { ...baseEnv };
+    env.XDG_CACHE_HOME = xdgScratchDir;
+    env.PIP_CACHE_DIR = pipCacheDir;
+    env.SPARK_DESIGNER_CACHE_ROOT = cacheRoot;
+    env.SPARK_IVY_CACHE_DIR = ivyCacheDir;
+    env.PYTHONDONTWRITEBYTECODE = '1';
+    env.PYTEST_ADDOPTS = env.PYTEST_ADDOPTS
+        ? `${env.PYTEST_ADDOPTS} -p no:cacheprovider`
+        : '-p no:cacheprovider';
+    if (!env.PYSPARK_SUBMIT_ARGS) {
+        const escapedIvy = ivyCacheDir.replace(/\\/g, '/').replace(/"/g, '\\"');
+        env.PYSPARK_SUBMIT_ARGS = `--conf "spark.jars.ivy=${escapedIvy}" pyspark-shell`;
+    }
+    return { env, xdgScratchDir, cacheRoot };
+}
+
+/**
+ * Returns true when `candidate` equals `parentDir` or resolves inside `parentDir`.
+ *
+ * @param candidate Path to inspect.
+ * @param parentDir Potential ancestor directory.
+ * @returns True if `candidate` is equal to or nested under `parentDir`.
+ */
+function isSameOrInsideDir(candidate: string, parentDir: string): boolean {
+    const rel = path.relative(path.resolve(parentDir), path.resolve(candidate));
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Recursively collects `__pycache__` directories under `dir` without following symlinks.
+ *
+ * @param dir Root directory to scan.
+ * @param rootBoundary Workspace root boundary that traversal must stay inside.
+ * @returns Matching `__pycache__` directory paths.
+ */
+async function collectPycacheDirs(dir: string, rootBoundary: string): Promise<string[]> {
+    const found: string[] = [];
+    let entries: fs.Dirent[];
+    try {
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+        return found;
+    }
+    for (const entry of entries) {
+        if (entry.isSymbolicLink() || !entry.isDirectory()) {
+            continue;
+        }
+        const full = path.join(dir, entry.name);
+        if (!isSameOrInsideDir(full, rootBoundary)) {
+            continue;
+        }
+        if (entry.name === '__pycache__') {
+            found.push(full);
+            continue;
+        }
+        const nested = await collectPycacheDirs(full, rootBoundary);
+        found.push(...nested);
+    }
+    return found;
+}
+
+/**
+ * Removes per-run `.venv`, `.spark-ivy`, `.pytest_cache`, `__pycache__`, and XDG scratch
+ * directories from a check workspace while protecting the shared cache root from deletion.
+ *
+ * @param projectDir Check workspace directory.
+ * @param options Cleanup options controlling shared cache protection and root removal.
+ * @param options.cacheRoot Shared cache root directory that must never be deleted.
+ * @param options.xdgScratchDir Optional per-run XDG scratch folder to remove.
+ * @param options.removeProjectDir When true, removes `projectDir` itself after cleaning artifacts.
+ * @returns List of per-run artifact paths deleted before optional workspace removal.
+ */
+export async function cleanupCheckWorkspaceArtifacts(
+    projectDir: string,
+    options: { cacheRoot?: string; xdgScratchDir?: string; removeProjectDir?: boolean } = {}
+): Promise<string[]> {
+    const root = path.resolve(projectDir);
+    const cacheRoot = resolveCheckCacheRoot(options.cacheRoot);
+    const removed: string[] = [];
+
+    if (!fs.existsSync(root)) {
+        return removed;
+    }
+
+    const targets = new Set<string>();
+    for (const name of CHECK_RUN_ARTIFACT_DIRS) {
+        targets.add(path.join(root, name));
+    }
+    if (options.xdgScratchDir) {
+        const resolvedXdg = path.resolve(options.xdgScratchDir);
+        if (resolvedXdg !== root) {
+            targets.add(resolvedXdg);
+        }
+    }
+    for (const pycacheDir of await collectPycacheDirs(root, root)) {
+        targets.add(pycacheDir);
+    }
+
+    for (const target of targets) {
+        if (target === root) {
+            continue;
+        }
+        if (isSameOrInsideDir(target, cacheRoot) || isSameOrInsideDir(cacheRoot, target)) {
+            continue;
+        }
+        if (fs.existsSync(target)) {
+            await fs.promises.rm(target, { recursive: true, force: true });
+            removed.push(target);
+        }
+    }
+
+    if (
+        options.removeProjectDir &&
+        !isSameOrInsideDir(root, cacheRoot) &&
+        !isSameOrInsideDir(cacheRoot, root)
+    ) {
+        await fs.promises.rm(root, { recursive: true, force: true });
+    }
+    return removed;
+}
+
+/**
  * Runs read-only verification checks over generated PySpark or SDP files.
  */
 export class ReadOnlyCheckRunner {
@@ -787,11 +980,15 @@ export class ReadOnlyCheckRunner {
      * @param executor Command executor (tests inject a fake).
      * @param pythonCommand Python interpreter for `py_compile` and `pytest`.
      * @param sparkPipelinesCommand CLI binary for `spark-pipelines dry-run` in SDP mode.
+     * @param cacheRoot Optional shared cache root directory override.
+     * @param baseEnv Optional parent environment map copied into check commands.
      */
     constructor(
         private readonly executor: CommandExecutor = defaultCommandExecutor,
         private readonly pythonCommand: string = READ_ONLY_CHECK_LIMITS.pythonCommand,
-        private readonly sparkPipelinesCommand: string = 'spark-pipelines'
+        private readonly sparkPipelinesCommand = 'spark-pipelines',
+        private readonly cacheRoot?: string,
+        private readonly baseEnv: CheckProcessEnv = process.env
     ) {}
 
     /**
@@ -805,7 +1002,7 @@ export class ReadOnlyCheckRunner {
             return this.runSdpChecks(request);
         }
 
-        const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false);
+        const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false, request.cacheRoot);
         return [
             this.checkRequiredFiles(request),
             this.checkLeftoverTokens(request.files, false),
@@ -823,7 +1020,7 @@ export class ReadOnlyCheckRunner {
      * @returns Ordered SDP check results.
      */
     private async runSdpChecks(request: CheckRequest): Promise<CheckResult[]> {
-        const execResults = await this.checkPythonSyntaxAndPytest(request.files, true);
+        const execResults = await this.checkPythonSyntaxAndPytest(request.files, true, request.cacheRoot);
         const dryRunResult: CheckResult = execResults.dryRunResult ?? {
             check: CHECK_IDS.sdpDryRun,
             status: 'skipped',
@@ -1156,11 +1353,13 @@ export class ReadOnlyCheckRunner {
      *
      * @param files Generated files.
      * @param includeSdpDryRun True when running in SDP mode.
+     * @param requestCacheRoot Optional shared cache root override from the check request.
      * @returns Syntax, pytest collection, and optional SDP dry-run outcomes.
      */
     private async checkPythonSyntaxAndPytest(
         files: GeneratedFile[],
-        includeSdpDryRun: boolean
+        includeSdpDryRun: boolean,
+        requestCacheRoot?: string
     ): Promise<{ syntaxResult: CheckResult; pytestResult: CheckResult; dryRunResult?: CheckResult }> {
         const pythonFiles = files.filter((file) => file.filename.endsWith('.py'));
         const specFile = includeSdpDryRun
@@ -1195,7 +1394,12 @@ export class ReadOnlyCheckRunner {
         }
 
         const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'spark-codegen-checks-'));
+        const { env: checkEnv, xdgScratchDir, cacheRoot } = buildCheckCommandEnv(workDir, {
+            cacheRoot: requestCacheRoot ?? this.cacheRoot,
+            baseEnv: this.baseEnv,
+        });
         try {
+            await fs.promises.mkdir(xdgScratchDir, { recursive: true });
             // 1. Materialize files safely inside workDir.
             const filesToWrite = includeSdpDryRun ? files : pythonFiles;
             const writtenAll = await materializeWorkspaceFiles(workDir, filesToWrite);
@@ -1213,6 +1417,7 @@ export class ReadOnlyCheckRunner {
                 const compileOutcome = await this.executor(this.pythonCommand, ['-m', 'py_compile', ...writtenPy], {
                     cwd: workDir,
                     timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
+                    env: checkEnv,
                 });
                 if (compileOutcome.notFound) {
                     const msg = `Python interpreter '${this.pythonCommand}' not found.`;
@@ -1248,6 +1453,7 @@ export class ReadOnlyCheckRunner {
                             {
                                 cwd: workDir,
                                 timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
+                                env: checkEnv,
                             }
                         );
                         const pytestCombined = [pytestOutcome.stdout, pytestOutcome.stderr]
@@ -1282,10 +1488,14 @@ export class ReadOnlyCheckRunner {
             }
 
             // 4. Optional spark-pipelines dry-run when SDP spec is materialized.
-            const dryRunResult = await this.runOptionalSdpDryRun(workDir, specFile, writtenAll);
+            const dryRunResult = await this.runOptionalSdpDryRun(workDir, specFile, writtenAll, checkEnv);
             return { syntaxResult, pytestResult, dryRunResult };
         } finally {
-            await fs.promises.rm(workDir, { recursive: true, force: true });
+            await cleanupCheckWorkspaceArtifacts(workDir, {
+                cacheRoot,
+                xdgScratchDir,
+                removeProjectDir: true,
+            });
         }
     }
 
@@ -1295,12 +1505,14 @@ export class ReadOnlyCheckRunner {
      * @param workDir Materialized temporary project directory.
      * @param specFile SDP spec file candidate, if present.
      * @param writtenFiles Materialized relative file paths.
+     * @param checkEnv Isolated child environment for the dry-run process.
      * @returns Dry-run check result (`passed`, `failed`, or `skipped`).
      */
     private async runOptionalSdpDryRun(
         workDir: string,
         specFile: GeneratedFile | undefined,
-        writtenFiles: readonly string[]
+        writtenFiles: readonly string[],
+        checkEnv: CheckProcessEnv
     ): Promise<CheckResult> {
         if (!specFile) {
             return {
@@ -1321,6 +1533,7 @@ export class ReadOnlyCheckRunner {
         const outcome = await this.executor(this.sparkPipelinesCommand, ['dry-run', '--spec', specRel], {
             cwd: workDir,
             timeoutMs: READ_ONLY_CHECK_LIMITS.timeoutMs,
+            env: checkEnv,
         });
         const combined = [outcome.stdout, outcome.stderr].filter(Boolean).join('\n').trim();
         if (outcome.notFound) {

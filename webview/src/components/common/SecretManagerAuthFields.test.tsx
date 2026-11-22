@@ -147,7 +147,7 @@ describe('SecretManagerAuthFields', () => {
 
   it('automatically requests getSecrets via useAssetLoader when secrets prop is omitted (D6)', () => {
     const mockPostMessage = vi.fn();
-    (window as any).vscode = { postMessage: mockPostMessage };
+    window.vscode = { postMessage: mockPostMessage };
 
     try {
       render(
@@ -182,7 +182,7 @@ describe('SecretManagerAuthFields', () => {
       const datalist = document.getElementById('live-secrets-list');
       expect(datalist?.querySelector('option[value="spark-db-password"]')).toBeInTheDocument();
     } finally {
-      delete (window as any).vscode;
+      delete window.vscode;
     }
   });
 });

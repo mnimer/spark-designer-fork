@@ -126,6 +126,24 @@ export function findLastCompleteFileEndOffset(jsonText: string): number {
 }
 
 /**
+ * Individual generated file entry returned inside a parsed Gemini JSON payload.
+ */
+export interface ParsedModelJsonFile {
+    filename: string;
+    content: string;
+    executable?: boolean;
+    path?: string;
+}
+
+/**
+ * Structured JSON object parsed or salvaged from a Gemini model response.
+ */
+export interface ParsedModelJsonResponse {
+    files: ParsedModelJsonFile[];
+    [key: string]: unknown;
+}
+
+/**
  * Safely parses JSON response string from Gemini model.
  * Handles markdown code fences and automatically repairs truncated JSON responses by
  * salvaging all completely generated file objects from the 'files' array in a single
@@ -134,7 +152,7 @@ export function findLastCompleteFileEndOffset(jsonText: string): number {
  * @param rawText Raw output text from Gemini model.
  * @returns Parsed JSON object containing generated files array.
  */
-export function parseOrRepairJson(rawText: string): any {
+export function parseOrRepairJson(rawText: string): ParsedModelJsonResponse {
     if (!rawText || !rawText.trim()) {
         throw new Error("Empty response from Gemini model.");
     }

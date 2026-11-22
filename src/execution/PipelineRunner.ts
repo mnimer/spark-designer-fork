@@ -1,11 +1,11 @@
 /**
  * @fileoverview Pipeline runner: locates the generated runner script, builds the
- * sanitized child environment, resolves the target project/region, spawns the
- * script as a process-group leader, and tracks Dataflow/Spark job IDs in its output.
+ * sanitized child environment, resolves the target project and region, spawns the
+ * script as a process-group leader, and tracks Spark batch and job IDs in its output.
  *
  * Extracted from `handleRunPipeline` so the IPC handler only orchestrates
  * validation and webview messaging, while the process mechanics here are
- * individually unit-testable. Behavior is unchanged from the inline version.
+ * individually unit-testable.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
@@ -17,7 +17,7 @@ import { findGcloudPath } from '../cli/cliResolver';
 import { getGcloudProject } from '../cli/gcloudClient';
 import { applyRuntimeVariables, type RuntimeVariable } from '../security/envSanitizer';
 import type { PipelineParadigm, SdpJobConfigFields } from '../shared/types';
-import { detectDataflowJob, detectSparkJob } from './jobIdDetector';
+import { detectSparkJob } from './jobIdDetector';
 
 /** Project placeholder used by generated configs before a real project is chosen. */
 export const PLACEHOLDER_PROJECT_ID = 'YOUR_PROJECT_ID';
@@ -27,9 +27,9 @@ export const DEFAULT_RUN_REGION = 'us-central1';
 
 /** Job configuration fields the runner reads from the webview's run request. */
 export interface RunnerJobConfig extends SdpJobConfigFields {
-    /** Runner name: 'Local' | 'DataprocCluster' | 'ServerlessSpark' (or legacy 'DirectRunner' | 'Spark' | 'Dataflow'). */
+    /** Runner name: 'Local' | 'DataprocCluster' | 'ServerlessSpark'. */
     runner?: string;
-    /** Explicit GCP project; wins over the gcloud default (F6). */
+    /** Explicit GCP project, taking precedence over the gcloud default (F6). */
     projectId?: string;
     /** GCP region for job submission and Console links. */
     region?: string;
@@ -144,28 +144,25 @@ function formatSdpStaticSparkConf(raw: Record<string, string> | string | undefin
  */
 export function runnerScriptCandidates(runner: string, paradigm?: string): string[] {
     if (paradigm === 'sdp') {
-        if (runner === 'Local' || runner === 'DirectRunner') {
+        if (runner === 'Local') {
             return ['run_sdp_local.sh', 'run_local.sh'];
         }
         if (runner === 'DataprocCluster') {
             return ['run_sdp_dataproc.sh', 'run_dataproc_cluster.sh'];
         }
-        if (runner === 'ServerlessSpark' || runner === 'Spark') {
+        if (runner === 'ServerlessSpark') {
             return ['run_sdp_serverless.sh', 'run_sdp_local.sh', 'run_serverless_spark.sh'];
         }
         return [];
     }
-    if (runner === 'Local' || runner === 'DirectRunner') {
-        return ['run_local.sh', 'run_directrunner.sh'];
+    if (runner === 'Local') {
+        return ['run_local.sh'];
     }
     if (runner === 'DataprocCluster') {
         return ['run_dataproc_cluster.sh'];
     }
-    if (runner === 'ServerlessSpark' || runner === 'Spark') {
-        return ['run_serverless_spark.sh', 'run_sparkrunner.sh', 'run_spark.sh'];
-    }
-    if (runner === 'Dataflow') {
-        return ['run_dataflowrunner.sh', 'run_dataflow.sh'];
+    if (runner === 'ServerlessSpark') {
+        return ['run_serverless_spark.sh'];
     }
     return [];
 }
@@ -201,7 +198,7 @@ export function findRunnerScript(
  */
 export function describeRunner(runner: string, paradigm?: string): string {
     if (paradigm === 'sdp') {
-        if (runner === 'Local' || runner === 'DirectRunner') {
+        if (runner === 'Local') {
             return '# Running Spark Declarative Pipeline via Local Spark 4.2 Connect';
         }
         if (runner === 'DataprocCluster') {
@@ -212,14 +209,8 @@ export function describeRunner(runner: string, paradigm?: string): string {
     if (runner === 'Local') {
         return '# Using Local PySpark / Spark Connect Runner (Local Machine)';
     }
-    if (runner === 'DirectRunner') {
-        return '# Using Python / Java Direct Runner (Local Machine)';
-    }
     if (runner === 'DataprocCluster') {
         return '# Submitting PySpark Job to Google Cloud Dataproc Cluster (GCE/GKE)';
-    }
-    if (runner === 'Dataflow') {
-        return '# Submitting Apache Beam Flex Template Job to Google Cloud Dataflow';
     }
     return '# Submitting PySpark Batch Job to GCP Serverless Spark (Dataproc)';
 }
@@ -467,10 +458,10 @@ export async function resolveRunTarget(
 
 /** A job ID detected in runner output. */
 export interface DetectedRunnerJob {
-    /** Serverless Spark batch ID, Dataproc cluster job ID, or Dataflow job ID. */
+    /** Serverless Spark batch ID or Dataproc cluster job ID. */
     jobId: string;
     /** Which service the job belongs to. */
-    runner: 'ServerlessSpark' | 'DataprocCluster' | 'Spark' | 'Dataflow';
+    runner: 'ServerlessSpark' | 'DataprocCluster';
     /** Project to link the job against. */
     projectId: string;
     /** Region to link the job against. */
@@ -478,29 +469,18 @@ export interface DetectedRunnerJob {
 }
 
 /**
- * Creates a stateful detector that reports the FIRST Serverless Spark batch ID,
- * Dataproc cluster job ID, or Dataflow job ID seen across output chunks, then
- * ignores all further chunks. Region/project parsed from a Console URL or full
- * GCP resource path take precedence over `target`.
+ * Creates a stateful detector that reports the FIRST Serverless Spark batch ID
+ * or Dataproc cluster job ID seen across output chunks, then ignores all further
+ * chunks. Region and project parsed from a Console URL or full GCP resource path
+ * take precedence over `target`.
  *
- * @param target Default project/region for reported jobs.
- * @returns A function to feed each output chunk; returns the job once, else null.
+ * @param target Default project and region for reported jobs.
+ * @returns A function to feed each output chunk that returns the job once, else null.
  */
 export function createJobIdTracker(target: RunTarget): (chunk: string) => DetectedRunnerJob | null {
     let detected = false;
     return (chunk: string) => {
         if (detected) return null;
-
-        const dataflowJob = detectDataflowJob(chunk);
-        if (dataflowJob) {
-            detected = true;
-            return {
-                jobId: dataflowJob.jobId,
-                runner: 'Dataflow',
-                projectId: dataflowJob.projectId || target.project,
-                region: dataflowJob.region || target.region
-            };
-        }
 
         const sparkJob = detectSparkJob(chunk);
         if (sparkJob) {
@@ -528,7 +508,7 @@ const SAFE_PROJECT_ID_REGEX = /^[a-zA-Z0-9.:_-]+$/;
 
 /** Options for {@link cancelRemoteSparkJob}. */
 export interface CancelRemoteSparkJobOptions {
-    /** Runner type: 'ServerlessSpark' | 'Spark' | 'DataprocCluster'. */
+    /** Runner type: 'ServerlessSpark' | 'DataprocCluster'. */
     runner: string;
     /** Remote Serverless batch ID or Dataproc cluster job ID to cancel. */
     jobId: string;
@@ -557,7 +537,7 @@ export interface CancelRemoteSparkJobResult {
 /**
  * Cancels an active remote Serverless Spark batch or kills a running Dataproc
  * Cluster job via `gcloud`:
- * - `ServerlessSpark` / `Spark`:
+ * - `ServerlessSpark`:
  *   `gcloud dataproc batches cancel <batchId> --region=<region> --project=<projectId> --quiet`
  * - `DataprocCluster`:
  *   `gcloud dataproc jobs kill <jobId> --region=<region> --project=<projectId> --quiet`
@@ -600,7 +580,7 @@ export async function cancelRemoteSparkJob(
     }
 
     let args: string[];
-    if (options.runner === 'ServerlessSpark' || options.runner === 'Spark') {
+    if (options.runner === 'ServerlessSpark') {
         args = [
             'dataproc',
             'batches',

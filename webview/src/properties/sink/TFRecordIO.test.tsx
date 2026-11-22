@@ -9,24 +9,28 @@
  * maxRecordsPerFile, recordType, writeLocality, and SystemInstructionsField updates.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TFRecordIOSinkProperties, TFRecordSinkProperties } from './TFRecordIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import {
+  TFRecordIOSinkProperties,
+  TFRecordSinkProperties,
+  type TFRecordIOSinkNode,
+} from './TFRecordIO';
 
 describe('TFRecordIOSinkProperties (SNK18 TFRecordSink)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports TFRecordSinkProperties as an alias for TFRecordIOSinkProperties', () => {
@@ -34,7 +38,7 @@ describe('TFRecordIOSinkProperties (SNK18 TFRecordSink)', () => {
   });
 
   it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
-    const mockNode: any = {
+    const mockNode: TFRecordIOSinkNode = {
       data: {
         label: 'TFRecordSink',
         type: 'SINK',
@@ -62,7 +66,7 @@ describe('TFRecordIOSinkProperties (SNK18 TFRecordSink)', () => {
   });
 
   it('renders populated properties including legacy compressionType normalization and SequenceExample', () => {
-    const mockNode: any = {
+    const mockNode: TFRecordIOSinkNode = {
       data: {
         label: 'TFRecordSink',
         spark_transform: 'TFRecordSink',
@@ -99,7 +103,7 @@ describe('TFRecordIOSinkProperties (SNK18 TFRecordSink)', () => {
   });
 
   it('propagates changes across all TFRecord sink fields and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: TFRecordIOSinkNode = {
       data: {
         properties: {
           path: 'gs://my-bucket/tfrecords/',

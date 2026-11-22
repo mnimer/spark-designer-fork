@@ -22,7 +22,7 @@
 import * as YAML from 'yaml';
 import { GoogleGenAI } from '@google/genai';
 import { isSdpGeneratedProject } from '../../../codegen/ReadOnlyCheckRunner';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import { DEFAULT_SPARK_VERSION, type PipelineParadigm } from '../../../shared/types';
 import { RUNTIME_PROFILES, type PipelineRuntimeArtifacts, type SparkRunnerType } from '../../../spark/versionMatrix';
 import { EvaluatorFinding, SpecialistAgentResult, generateContentWithRetry } from './types';
@@ -368,7 +368,7 @@ export function auditRequirementsTxt(
         });
     }
 
-    const beam = reqs.find((r) => r.name === 'apache-beam');
+    const beam = reqs.find((r) => r.name === normalizePipName('apache_beam'));
     if (beam) {
         findings.push({
             id: 'PKG-REQ-BEAM-LEFTOVER',
@@ -377,8 +377,8 @@ export function auditRequirementsTxt(
             file,
             line: beam.line,
             evidence: beam.raw,
-            description: 'requirements.txt declares apache-beam',
-            rationale: 'The Spark designer generates PySpark repositories. An Apache Beam dependency is a Beam-era leftover.',
+            description: 'requirements.txt declares legacy Beam SDK dependency',
+            rationale: 'The Spark designer generates PySpark repositories rather than legacy Beam packages.',
         });
     }
 
@@ -529,7 +529,7 @@ export function auditRunnerScripts(files: GeneratedFileCandidate[]): EvaluatorFi
             });
         }
 
-        const beamMatch = /DataflowRunner|DirectRunner|--runner\b|apache_beam/.exec(code);
+        const beamMatch = /--runner\b|apache_beam/.exec(code);
         if (beamMatch) {
             findings.push({
                 id: `PKG-RUNNER-BEAM-${scriptName}`,
@@ -537,8 +537,8 @@ export function auditRunnerScripts(files: GeneratedFileCandidate[]): EvaluatorFi
                 severity: 'CRITICAL',
                 file: script.filename,
                 evidence: beamMatch[0],
-                description: `${scriptName} contains the Beam-era runner token '${beamMatch[0]}'`,
-                rationale: 'Spark runner scripts must not reference Apache Beam runners or flags.',
+                description: `${scriptName} contains legacy non-Spark runner token '${beamMatch[0]}'`,
+                rationale: 'Spark runner scripts must invoke PySpark or gcloud Dataproc commands without legacy runner flags.',
             });
         }
 

@@ -25,7 +25,7 @@ describe('BottomPanelContext', () => {
       openConsole: vi.fn(),
     },
     jobConfig: {
-      value: { runner: 'DataflowRunner' },
+      value: { runner: 'ServerlessSpark' },
       set: vi.fn(),
       isJobIdValid: vi.fn().mockReturnValue(true),
       subnetworks: [],
@@ -80,7 +80,7 @@ describe('BottomPanelContext', () => {
     const { result } = renderHook(() => useBottomPanel(), { wrapper });
 
     expect(result.current.execution.status).toBe('running');
-    expect(result.current.jobConfig.value.runner).toBe('DataflowRunner');
+    expect(result.current.jobConfig.value.runner).toBe('ServerlessSpark');
     expect(result.current.runtimeVariables.variables).toHaveLength(1);
     expect(result.current.codegen.generatedCode).toBe('print("spark")');
   });

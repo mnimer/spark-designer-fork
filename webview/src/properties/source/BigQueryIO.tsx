@@ -14,7 +14,7 @@
  * - Supports Storage Read API filter pushdown and maxParallelism tuning.
  */
 
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SystemInstructionsField } from '../../components/common/SystemInstructionsField';
@@ -39,13 +39,13 @@ export interface BigQuerySourcePropertiesProps {
         maxParallelism?: number | string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
       system_instructions?: string;
       special_instructions?: string;
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**
@@ -54,7 +54,9 @@ export interface BigQuerySourcePropertiesProps {
 export const BigQuerySourceProperties: React.FC<BigQuerySourcePropertiesProps> = ({ node, onChange }) => {
   const properties = node.data.properties || {};
   const propertiesRef = useRef(properties);
-  propertiesRef.current = properties;
+  useEffect(() => {
+    propertiesRef.current = properties;
+  });
 
   const { items: datasets, error: datasetError, loading: datasetsLoading } = useAssetLoader<string>('datasets', {
     onLoaded: (_items, rawMessage) => {

@@ -28,13 +28,13 @@ import { SystemInstructionsField } from '../../components/common/SystemInstructi
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /** Read mode options for DeltaSource. */
-export const DELTA_READ_MODE_OPTIONS: SelectFieldOption[] = [
+const DELTA_READ_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'batch', label: 'Batch (spark.read.format("delta"))' },
   { value: 'streaming', label: 'Streaming (spark.readStream.format("delta"))' },
 ];
 
 /** Source resolution mode options for Delta Lake tables. */
-export const DELTA_SOURCE_MODE_OPTIONS: SelectFieldOption[] = [
+const DELTA_SOURCE_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'path', label: 'Storage Path (.load("gs://..."))' },
   { value: 'table', label: 'Catalog Table (.table("db.table"))' },
 ];
@@ -42,7 +42,7 @@ export const DELTA_SOURCE_MODE_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the DeltaSource panel. */
 export interface DeltaSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -62,7 +62,7 @@ export interface DeltaSourceNode {
       ignoreDeletes?: boolean;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -70,7 +70,7 @@ export interface DeltaSourceNode {
 /** Props for the {@link DeltaSourceProperties} component. */
 export interface DeltaSourcePropertiesProps {
   node: DeltaSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

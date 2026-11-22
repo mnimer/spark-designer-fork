@@ -181,7 +181,7 @@ export function handleMessages(
         }
     };
 
-    return async (message: any) => {
+    return async (message: unknown) => {
         // NOTE: this guard is new in the A1 refactor. The previous code read
         // `message.command` directly, so a null/undefined message threw a TypeError
         // inside an async handler and surfaced as an unhandled rejection. Malformed
@@ -191,14 +191,16 @@ export function handleMessages(
         if (!message || typeof message !== 'object') {
             return;
         }
-        const handler = MESSAGE_HANDLERS[message.command];
+        const record = message as Record<string, unknown>;
+        const command = typeof record.command === 'string' ? record.command : '';
+        const handler = MESSAGE_HANDLERS[command];
         if (handler) {
             // F11: asset responses echo their request parameters so the webview
             // can drop out-of-order responses meant for a different request.
-            const handlerCtx = ASSET_REQUEST_COMMANDS.has(message.command)
-                ? withRequestParamsEcho(ctx, message)
+            const handlerCtx = ASSET_REQUEST_COMMANDS.has(command)
+                ? withRequestParamsEcho(ctx, record)
                 : ctx;
-            await handler(handlerCtx, message);
+            await handler(handlerCtx, record);
         }
     };
 }

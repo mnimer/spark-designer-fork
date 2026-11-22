@@ -10,7 +10,6 @@
  * schema merging, datetime/INT96 rebase modes, streaming trigger limits, and schema definition.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -29,7 +28,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark Parquet datetime and INT96 rebase modes.
  */
-export const PARQUET_REBASE_MODES: SelectFieldOption[] = [
+const PARQUET_REBASE_MODES: SelectFieldOption[] = [
   { value: 'EXCEPTION', label: 'EXCEPTION (Fail on ambiguous ancient dates)' },
   { value: 'CORRECTED', label: 'CORRECTED (Load Proleptic Gregorian verbatim)' },
   { value: 'LEGACY', label: 'LEGACY (Rebase Julian to Gregorian calendar)' },
@@ -45,7 +44,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface ParquetIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -66,7 +65,7 @@ export interface ParquetIOSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -76,7 +75,7 @@ export interface ParquetIOSourceNode {
  */
 export interface ParquetIOSourcePropertiesProps {
   node: ParquetIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

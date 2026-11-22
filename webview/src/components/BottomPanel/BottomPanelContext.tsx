@@ -15,10 +15,13 @@
 import React, { createContext, useContext } from 'react';
 import type { LogEntry } from './DeploymentTab';
 import type { TokenUsage } from './SourceCodeTab';
-import type { DataprocClusterOption, SessionTemplateOption } from './deployment/AdvancedConfig';
+import type {
+  AdvancedJobConfig,
+  DataprocClusterOption,
+  SessionTemplateOption,
+} from './deployment/AdvancedConfig';
+import type { PipelineConfig } from '../../state/pipelineConfigReducer';
 import type { CodegenModelOption } from '../../utils/sharedTypes';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
  * Execution slice of the BottomPanel context.
@@ -37,8 +40,8 @@ export interface BottomPanelExecutionSlice {
  * Job configuration slice of the BottomPanel context.
  */
 export interface BottomPanelJobConfigSlice {
-  value: any;
-  set: (update: React.SetStateAction<any>) => void;
+  value: AdvancedJobConfig;
+  set: React.Dispatch<React.SetStateAction<AdvancedJobConfig>>;
   isJobIdValid: (value: string) => boolean;
   subnetworks: { name: string; region: string; network: string; value: string }[];
   clusters?: DataprocClusterOption[];
@@ -60,15 +63,10 @@ export interface BottomPanelRuntimeVariablesSlice {
  * Pipeline configuration slice of the BottomPanel context.
  */
 export interface BottomPanelPipelineConfigSlice {
-  config: {
-    language: 'Python' | 'Java';
-    outputFolder: string;
-    needsRebuild: boolean;
-    paradigm?: 'imperative' | 'sdp';
-  };
+  config: PipelineConfig;
   setLanguage: (lang: 'Python' | 'Java') => void;
   setOutputFolder: (folder: string) => void;
-  setPipelineConfig?: (config: any) => void;
+  setPipelineConfig?: React.Dispatch<React.SetStateAction<PipelineConfig>>;
 }
 
 /**
@@ -88,7 +86,7 @@ export interface BottomPanelCodegenSlice {
   selectFile: (fileName: string) => void;
   isGraphValid?: boolean;
   validationErrors?: string[];
-  nodes?: any[];
+  nodes?: readonly unknown[];
   tokenUsage?: TokenUsage | null;
   /**
    * When true, nodes without a native connector in the target language do not block

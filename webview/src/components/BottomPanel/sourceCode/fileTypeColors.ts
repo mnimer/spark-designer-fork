@@ -194,11 +194,17 @@ export function getFileDescription(fileName: string): string {
   ) {
     return 'Pipeline unit test suite';
   }
+  if (lower === 'spark-pipeline.yml' || lower === 'spark-pipeline.yaml') {
+    return 'Spark Declarative Pipeline specification';
+  }
+  if (lower === 'sdp_stage.pipeline.yaml' || lower === 'sdp_stage.pipeline.yml') {
+    return 'Managed Data Pipelines SDP stage definition';
+  }
   if (lower.endsWith('.py')) {
-    return 'Main Apache Beam pipeline implementation';
+    return 'PySpark pipeline implementation';
   }
   if (lower.endsWith('.java')) {
-    return 'Main Apache Beam pipeline implementation';
+    return 'JVM pipeline implementation';
   }
   if (lower === 'requirements.txt') {
     return 'Python runtime dependencies';
@@ -221,20 +227,26 @@ export function getFileDescription(fileName: string): string {
   if (lower === '.gitignore') {
     return 'Git version control exclusions';
   }
-  if (lower === 'metadata.json') {
-    return 'Dataflow Flex Template parameter metadata';
-  }
   if (lower === 'cloudbuild.yaml' || lower === 'cloudbuild-build.yaml') {
     return 'Cloud Build container build configuration';
   }
-  if (lower === 'run_directrunner.sh') {
-    return 'Local DirectRunner execution script';
+  if (lower === 'run_local.sh') {
+    return 'Local PySpark execution script';
   }
-  if (lower === 'run_dataflowrunner.sh') {
-    return 'Google Cloud Dataflow deployment script';
+  if (lower === 'run_dataproc_cluster.sh') {
+    return 'Google Cloud Dataproc Cluster submission script';
   }
-  if (lower === 'run_sparkrunner.sh') {
-    return 'Serverless Spark execution script';
+  if (lower === 'run_serverless_spark.sh') {
+    return 'Google Cloud Serverless Spark batch submission script';
+  }
+  if (lower === 'run_sdp_local.sh') {
+    return 'Local Spark Declarative Pipeline execution script';
+  }
+  if (lower === 'run_sdp_dataproc.sh') {
+    return 'Dataproc Spark Declarative Pipeline submission script';
+  }
+  if (lower === 'run_sdp_serverless.sh') {
+    return 'Serverless Spark Declarative Pipeline submission script';
   }
   return `${baseName} file`;
 }

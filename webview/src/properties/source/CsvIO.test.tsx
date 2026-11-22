@@ -10,24 +10,24 @@
  * and SystemInstructionsField for CsvIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { CsvIOSourceProperties, CsvSourceProperties } from './CsvIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { CsvIOSourceProperties, CsvSourceProperties, type CsvIOSourceNode } from './CsvIO';
 
 describe('CsvIOSourceProperties (SRC16 CsvSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports CsvSourceProperties as an alias for CsvIOSourceProperties', () => {
@@ -35,7 +35,7 @@ describe('CsvIOSourceProperties (SRC16 CsvSource)', () => {
   });
 
   it('renders Spark CSV defaults (header=true, inferSchema=true, delimiter=",", quote="\\"", escape="\\\\", mode="PERMISSIVE", columnNameOfCorruptRecord="_corrupt_record")', () => {
-    const mockNode: any = {
+    const mockNode: CsvIOSourceNode = {
       data: {
         label: 'CsvSource',
         spark_transform: 'CsvSource',
@@ -62,7 +62,7 @@ describe('CsvIOSourceProperties (SRC16 CsvSource)', () => {
   });
 
   it('renders populated streaming CSV properties and propagates changes across all fields', () => {
-    const mockNode: any = {
+    const mockNode: CsvIOSourceNode = {
       data: {
         label: 'CsvSource',
         spark_transform: 'CsvSource',

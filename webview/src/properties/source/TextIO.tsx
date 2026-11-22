@@ -10,7 +10,6 @@
  * maxFilesPerTrigger (for streaming), and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { InfoTooltip } from '../../components/InfoTooltip';
 import { PropertyField } from '../../components/common/PropertyField';
@@ -29,7 +28,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface TextIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -43,10 +42,11 @@ export interface TextIOSourceNode {
       recursiveFileLookup?: boolean;
       wholetext?: boolean;
       lineSep?: string;
+      delimiter?: string;
       maxFilesPerTrigger?: string | number;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -56,7 +56,7 @@ export interface TextIOSourceNode {
  */
 export interface TextIOSourcePropertiesProps {
   node: TextIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

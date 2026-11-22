@@ -59,13 +59,13 @@ export interface CloudSQLSourcePropertiesProps {
         socketFactoryJarUri?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
       system_instructions?: string;
       special_instructions?: string;
     };
   };
-  onChange: (properties: Record<string, any>) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

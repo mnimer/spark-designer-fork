@@ -13,8 +13,7 @@ import { fireEvent, screen } from '@testing-library/react';
 import { DeploymentTab } from './DeploymentTab';
 import { SourceCodeTab } from './SourceCodeTab';
 import { renderWithBottomPanel } from './testUtils';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { PipelineConfig } from '../../state/pipelineConfigReducer';
 
 describe('config updates never clobber sibling fields (regression)', () => {
   const jobConfig = {
@@ -61,7 +60,9 @@ describe('config updates never clobber sibling fields (regression)', () => {
       target: { value: 'DataprocCluster' },
     });
 
-    const updater = setJobConfig.mock.calls[0][0] as (p: any) => any;
+    const updater = setJobConfig.mock.calls[0][0] as (
+      p: typeof jobConfig
+    ) => typeof jobConfig;
 
     const fresher = {
       ...jobConfig,
@@ -91,7 +92,9 @@ describe('config updates never clobber sibling fields (regression)', () => {
     fireEvent.change(input, { target: { value: 'new_out' } });
 
     expect(setPipelineConfig).toHaveBeenCalledTimes(1);
-    const updater = setPipelineConfig.mock.calls[0][0] as (p: any) => any;
+    const updater = setPipelineConfig.mock.calls[0][0] as (
+      p: PipelineConfig
+    ) => PipelineConfig;
     expect(typeof updater).toBe('function');
 
     const fresher = { language: 'Python' as const, outputFolder: 'out', needsRebuild: false };

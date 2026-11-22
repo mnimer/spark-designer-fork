@@ -16,18 +16,54 @@ import type { LogEntry } from './DeploymentTab';
 import type { TokenUsage } from './SourceCodeTab';
 import type { CodegenModelOption } from '../../utils/sharedTypes';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+type JobConfigSlice = BottomPanelContextValue['jobConfig'];
+type RuntimeVariablesSlice = BottomPanelContextValue['runtimeVariables'];
+type PipelineConfigSlice = BottomPanelContextValue['pipelineConfig'];
+type CodegenSlice = BottomPanelContextValue['codegen'];
+type SetPipelineConfigFn = NonNullable<PipelineConfigSlice['setPipelineConfig']>;
 
+/**
+ * Checks whether an override object matches the nested `jobConfig` context slice shape.
+ */
+function isJobConfigSliceOverride(
+  input: unknown
+): input is Partial<JobConfigSlice> & { value: JobConfigSlice['value'] } {
+  return Boolean(input && typeof input === 'object' && 'value' in input);
+}
+
+/**
+ * Checks whether an override object matches the nested `runtimeVariables` context slice shape.
+ */
+function isRuntimeVariablesSliceOverride(
+  input: unknown
+): input is Partial<RuntimeVariablesSlice> & { variables?: RuntimeVariablesSlice['variables'] } {
+  return Boolean(
+    input && typeof input === 'object' && !Array.isArray(input) && 'variables' in input
+  );
+}
+
+/**
+ * Checks whether an override object matches the nested `pipelineConfig` context slice shape.
+ */
+function isPipelineConfigSliceOverride(
+  input: unknown
+): input is Partial<PipelineConfigSlice> {
+  return Boolean(input && typeof input === 'object' && 'config' in input);
+}
+
+/**
+ * Optional slice and convenience overrides accepted by {@link createBottomPanelContextValue}.
+ */
 export interface BottomPanelTestOverrides {
   // Direct slices
   execution?: Partial<BottomPanelContextValue['execution']>;
-  jobConfig?: Partial<BottomPanelContextValue['jobConfig']> | any;
-  runtimeVariables?: Partial<BottomPanelContextValue['runtimeVariables']> | { key: string; value: string }[];
-  pipelineConfig?: Partial<BottomPanelContextValue['pipelineConfig']> | PipelineConfig;
-  codegen?: Partial<BottomPanelContextValue['codegen']>;
+  jobConfig?: Partial<JobConfigSlice> | Record<string, unknown>;
+  runtimeVariables?: Partial<RuntimeVariablesSlice> | { key: string; value: string }[];
+  pipelineConfig?: Partial<PipelineConfigSlice> | PipelineConfig;
+  codegen?: Partial<CodegenSlice>;
 
   // Flat convenience fields
-  setJobConfig?: (update: React.SetStateAction<any>) => void;
+  setJobConfig?: JobConfigSlice['set'];
   addVariable?: () => void;
   updateVariable?: (index: number, field: 'key' | 'value', value: string) => void;
   deleteVariable?: (index: number) => void;
@@ -49,7 +85,7 @@ export interface BottomPanelTestOverrides {
   setLanguage?: (lang: 'Python' | 'Java') => void;
   outputFolder?: string;
   setOutputFolder?: (folder: string) => void;
-  setPipelineConfig?: (update: any) => void;
+  setPipelineConfig?: SetPipelineConfigFn;
   onPickFolder?: () => void;
   onRegenerate?: (options?: { enableReviewer?: boolean; model?: string }) => void;
   onStopGeneration?: () => void;
@@ -63,7 +99,7 @@ export interface BottomPanelTestOverrides {
   generationProgress?: string | null;
   isGraphValid?: boolean;
   validationErrors?: string[];
-  nodes?: any[];
+  nodes?: CodegenSlice['nodes'];
   tokenUsage?: TokenUsage | null;
   enableReviewer?: boolean;
   setEnableReviewer?: (value: boolean) => void;
@@ -81,14 +117,16 @@ export interface BottomPanelTestOverrides {
 export function createBottomPanelContextValue(
   overrides?: BottomPanelTestOverrides
 ): BottomPanelContextValue {
+  const pipelineSliceOverride = isPipelineConfigSliceOverride(overrides?.pipelineConfig)
+    ? overrides.pipelineConfig
+    : undefined;
   const setPipelineConfig =
-    overrides?.setPipelineConfig ??
-    (overrides?.pipelineConfig as any)?.setPipelineConfig;
+    overrides?.setPipelineConfig ?? pipelineSliceOverride?.setPipelineConfig;
 
   const rawConfig: Partial<PipelineConfig> =
-    (overrides?.pipelineConfig && 'config' in overrides.pipelineConfig
-      ? overrides.pipelineConfig.config
-      : (overrides?.pipelineConfig as Partial<PipelineConfig>)) ?? {};
+    (pipelineSliceOverride
+      ? pipelineSliceOverride.config
+      : (overrides?.pipelineConfig as Partial<PipelineConfig> | undefined)) ?? {};
 
   const config: PipelineConfig = {
     language: overrides?.language ?? rawConfig.language ?? 'Python',
@@ -96,21 +134,28 @@ export function createBottomPanelContextValue(
     needsRebuild: overrides?.needsRebuild ?? rawConfig.needsRebuild ?? false,
   };
 
-  const rawJobConfig =
-    overrides?.jobConfig && 'value' in overrides.jobConfig
-      ? overrides.jobConfig.value
-      : overrides?.jobConfig ?? { runner: 'DirectRunner' };
+  const jobSliceOverride = isJobConfigSliceOverride(overrides?.jobConfig)
+    ? overrides.jobConfig
+    : undefined;
+  const rawJobConfig = (
+    jobSliceOverride
+      ? jobSliceOverride.value
+      : (overrides?.jobConfig ?? { runner: 'Local' })
+  ) as JobConfigSlice['value'];
 
+  const rvSliceOverride = isRuntimeVariablesSliceOverride(overrides?.runtimeVariables)
+    ? overrides.runtimeVariables
+    : undefined;
   const rawVariables =
-    (overrides?.runtimeVariables && 'variables' in overrides.runtimeVariables
-      ? overrides.runtimeVariables.variables
+    (rvSliceOverride
+      ? rvSliceOverride.variables
       : Array.isArray(overrides?.runtimeVariables)
         ? overrides.runtimeVariables
         : []) ?? [];
 
   const rawExec = overrides?.execution ?? {};
-  const rawJob = (overrides?.jobConfig && 'value' in overrides.jobConfig ? overrides.jobConfig : {}) as any;
-  const rawRv = (overrides?.runtimeVariables && 'variables' in overrides.runtimeVariables ? overrides.runtimeVariables : {}) as any;
+  const rawJob: Partial<JobConfigSlice> = jobSliceOverride ?? {};
+  const rawRv: Partial<RuntimeVariablesSlice> = rvSliceOverride ?? {};
   const rawCodegen = overrides?.codegen ?? {};
 
   return {
@@ -142,16 +187,16 @@ export function createBottomPanelContextValue(
       config,
       setLanguage:
         overrides?.setLanguage ??
-        (overrides?.pipelineConfig as any)?.setLanguage ??
+        pipelineSliceOverride?.setLanguage ??
         ((lang) =>
-          setPipelineConfig?.((prev: any) =>
+          setPipelineConfig?.((prev: PipelineConfig) =>
             pipelineConfigReducer(prev, { type: 'setLanguage', language: lang })
           )),
       setOutputFolder:
         overrides?.setOutputFolder ??
-        (overrides?.pipelineConfig as any)?.setOutputFolder ??
+        pipelineSliceOverride?.setOutputFolder ??
         ((folder) =>
-          setPipelineConfig?.((prev: any) =>
+          setPipelineConfig?.((prev: PipelineConfig) =>
             pipelineConfigReducer(prev, { type: 'setOutputFolder', folder })
           )),
       setPipelineConfig,
@@ -185,6 +230,9 @@ export function createBottomPanelContextValue(
   };
 }
 
+/**
+ * Result returned by {@link renderWithBottomPanel}, exposing the active context and rerender helper.
+ */
 export interface RenderWithBottomPanelResult extends RenderResult {
   contextValue: BottomPanelContextValue;
   rerenderWithContext: (

@@ -45,13 +45,14 @@ export interface SpannerIOSourcePropertiesProps {
         timestampBound?: string;
         authMode?: string;
         secretName?: string;
+        serviceAccountKeySecret?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

@@ -67,34 +67,34 @@ import { findGcloudPath } from '../../cli/cliResolver';
 
 describe('runnerScriptCandidates', () => {
     it('lists scripts per runner in priority order', () => {
-        expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh', 'run_directrunner.sh']);
-        expect(runnerScriptCandidates('DirectRunner')).toEqual(['run_local.sh', 'run_directrunner.sh']);
+        expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh']);
         expect(runnerScriptCandidates('DataprocCluster')).toEqual(['run_dataproc_cluster.sh']);
-        expect(runnerScriptCandidates('ServerlessSpark')).toEqual([
-            'run_serverless_spark.sh',
-            'run_sparkrunner.sh',
-            'run_spark.sh',
+        expect(runnerScriptCandidates('ServerlessSpark')).toEqual(['run_serverless_spark.sh']);
+        expect(runnerScriptCandidates('Local', 'sdp')).toEqual(['run_sdp_local.sh', 'run_local.sh']);
+        expect(runnerScriptCandidates('DataprocCluster', 'sdp')).toEqual([
+            'run_sdp_dataproc.sh',
+            'run_dataproc_cluster.sh',
         ]);
-        expect(runnerScriptCandidates('Spark')).toEqual([
+        expect(runnerScriptCandidates('ServerlessSpark', 'sdp')).toEqual([
+            'run_sdp_serverless.sh',
+            'run_sdp_local.sh',
             'run_serverless_spark.sh',
-            'run_sparkrunner.sh',
-            'run_spark.sh',
         ]);
-        expect(runnerScriptCandidates('Dataflow')).toEqual(['run_dataflowrunner.sh', 'run_dataflow.sh']);
+        expect(runnerScriptCandidates('Spark')).toEqual([]);
         expect(runnerScriptCandidates('Flink')).toEqual([]);
     });
 });
 
 describe('findRunnerScript', () => {
     it('returns the first existing candidate', () => {
-        const existing = new Set([path.join('/p', 'run_dataflow.sh')]);
-        expect(findRunnerScript('/p', runnerScriptCandidates('Dataflow'), (p) => existing.has(p))).toBe('run_dataflow.sh');
+        const existing = new Set([path.join('/p', 'run_local.sh')]);
+        expect(findRunnerScript('/p', runnerScriptCandidates('Local', 'sdp'), (p) => existing.has(p))).toBe('run_local.sh');
     });
 
     it('prefers the earlier candidate when both exist', () => {
         expect(findRunnerScript('/p', runnerScriptCandidates('Local'), () => true)).toBe('run_local.sh');
         expect(findRunnerScript('/p', runnerScriptCandidates('ServerlessSpark'), () => true)).toBe('run_serverless_spark.sh');
-        expect(findRunnerScript('/p', runnerScriptCandidates('Dataflow'), () => true)).toBe('run_dataflowrunner.sh');
+        expect(findRunnerScript('/p', runnerScriptCandidates('Local', 'sdp'), () => true)).toBe('run_sdp_local.sh');
     });
 
     it('returns null when no candidate exists', () => {
@@ -103,13 +103,13 @@ describe('findRunnerScript', () => {
 });
 
 describe('describeRunner', () => {
-    it('describes each runner', () => {
+    it('describes each Spark runner in imperative and SDP modes', () => {
         expect(describeRunner('Local')).toContain('Local PySpark / Spark Connect');
-        expect(describeRunner('DirectRunner')).toContain('Direct Runner');
         expect(describeRunner('DataprocCluster')).toContain('Dataproc Cluster');
         expect(describeRunner('ServerlessSpark')).toContain('Serverless Spark');
-        expect(describeRunner('Spark')).toContain('Spark');
-        expect(describeRunner('Dataflow')).toContain('Dataflow');
+        expect(describeRunner('Local', 'sdp')).toContain('Spark Declarative Pipeline via Local Spark 4.2 Connect');
+        expect(describeRunner('DataprocCluster', 'sdp')).toContain('Dataproc 4.0 Cluster');
+        expect(describeRunner('ServerlessSpark', 'sdp')).toContain('Serverless Spark 4.0');
     });
 });
 
@@ -240,20 +240,28 @@ describe('resolveRunTarget', () => {
 describe('createJobIdTracker', () => {
     const target = { project: 'p1', region: 'r1' };
 
-    it('reports a Dataflow job once, using the default target', () => {
+    it('reports a ServerlessSpark batch once, using the default target', () => {
         const track = createJobIdTracker(target);
         expect(track('noise')).toBeNull();
-        expect(track('Submitted job: 2026-01-01_00_00_00-1234567890123\n')).toEqual({
-            jobId: '2026-01-01_00_00_00-1234567890123', runner: 'Dataflow', projectId: 'p1', region: 'r1',
+        expect(track('Batch [batch-2026-001] submitted.\n')).toEqual({
+            jobId: 'batch-2026-001',
+            runner: 'ServerlessSpark',
+            projectId: 'p1',
+            region: 'r1',
         });
-        expect(track('Submitted job: 2026-01-02_00_00_00-9999999999999\n')).toBeNull();
+        expect(track('Batch [batch-2026-002] submitted.\n')).toBeNull();
     });
 
-    it('prefers project/region parsed from a Console URL', () => {
+    it('prefers project and region parsed from a Console URL', () => {
         const job = createJobIdTracker(target)(
-            'https://console.cloud.google.com/dataflow/jobs/europe-west4/2026-09-30_02_00_00-1234567890123456?project=url-proj'
+            'https://console.cloud.google.com/dataproc/batches/europe-west4/batch-euro-99/monitoring?project=url-proj'
         );
-        expect(job).toMatchObject({ runner: 'Dataflow', projectId: 'url-proj', region: 'europe-west4' });
+        expect(job).toMatchObject({
+            jobId: 'batch-euro-99',
+            runner: 'ServerlessSpark',
+            projectId: 'url-proj',
+            region: 'europe-west4',
+        });
     });
 
     it('reports a ServerlessSpark batch ID but ignores status words', () => {
@@ -393,7 +401,7 @@ describe('PipelineRunner boundary and failure cases (T5)', () => {
         it('returns a fresh array so callers cannot mutate the next lookup', () => {
             const first = runnerScriptCandidates('Local');
             first.push('evil.sh');
-            expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh', 'run_directrunner.sh']);
+            expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh']);
         });
 
         it('falls back to the Serverless Spark description for an unknown runner', () => {
@@ -580,7 +588,7 @@ describe('PipelineRunner boundary and failure cases (T5)', () => {
     describe('cancelRemoteSparkJob', () => {
         it('trims the job ID and runs gcloud with a 15 second timeout', async () => {
             const result = await cancelRemoteSparkJob({
-                runner: 'Spark',
+                runner: 'ServerlessSpark',
                 jobId: '  batch-trim-1  ',
                 projectId: 'proj',
                 region: 'us-east1',

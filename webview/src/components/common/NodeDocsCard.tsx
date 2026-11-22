@@ -10,14 +10,17 @@
  */
 
 import React from 'react';
-import { getNodeDocumentation } from '../../utils/nodeDocumentation';
+import {
+  getNodeDocumentation,
+  type NodeDocumentationTarget,
+} from '../../utils/nodeDocumentation';
 import { ExternalDocsLink } from './ExternalDocsLink';
 
 /**
  * Props for the {@link NodeDocsCard} component.
  */
 export interface NodeDocsCardProps {
-  node?: any;
+  node?: NodeDocumentationTarget | null;
   title?: string;
   description?: string;
   docsUrl?: string;

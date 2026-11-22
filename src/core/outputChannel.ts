@@ -1,4 +1,4 @@
-/** @fileoverview Provides access to and lifecycle management for the Dataflow Designer output channel.
+/** @fileoverview Provides access to and lifecycle management for the Spark Designer output channel.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  */
@@ -10,11 +10,11 @@ let designerOutputChannel: vscode.OutputChannel | undefined;
 /**
  * Returns the active output channel, creating it lazily if necessary.
  *
- * @returns The active vscode.OutputChannel
+ * @returns The active vscode.OutputChannel.
  */
 export function getDesignerOutputChannel(): vscode.OutputChannel {
     if (!designerOutputChannel) {
-        designerOutputChannel = vscode.window.createOutputChannel('Dataflow Designer');
+        designerOutputChannel = vscode.window.createOutputChannel('Spark Designer');
     }
     return designerOutputChannel;
 }

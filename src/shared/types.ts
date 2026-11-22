@@ -1,12 +1,43 @@
 /**
- * @fileoverview Pure TypeScript data contracts crossing the host<->webview IPC boundary.
+ * @fileoverview Pure TypeScript data contracts and allowlist helpers crossing the host<->webview IPC boundary.
  *
  * Author: Mike Nimer <mikenimer@google.com>
  *
  * Rules:
- * - Pure interfaces / types only (zero runtime overhead, no enums).
+ * - Pure interfaces, types, and deterministic helpers only (no enums).
  * - Zero dependencies on vscode, node, or react.
  */
+
+/**
+ * Canonical allowlist of supported Apache Spark runner identifiers.
+ */
+export const SUPPORTED_SPARK_RUNNERS = [
+    'Local',
+    'DataprocCluster',
+    'ServerlessSpark',
+] as const;
+
+/**
+ * Supported Spark target execution environments.
+ */
+export type SparkRunnerType = (typeof SUPPORTED_SPARK_RUNNERS)[number];
+
+/**
+ * Normalizes a candidate runner value against the supported Spark runner allowlist.
+ * If the value is not an exact match in `SUPPORTED_SPARK_RUNNERS`, return `'Local'`.
+ *
+ * @param runner Raw runner value from serialized pipeline configuration or IPC payload.
+ * @returns Canonical Spark runner identifier (`'Local'` | `'DataprocCluster'` | `'ServerlessSpark'`).
+ */
+export function normalizeSparkRunner(runner?: unknown): SparkRunnerType {
+    if (
+        typeof runner === 'string' &&
+        (SUPPORTED_SPARK_RUNNERS as readonly string[]).includes(runner)
+    ) {
+        return runner as SparkRunnerType;
+    }
+    return 'Local';
+}
 
 /**
  * Token usage telemetry from Gemini code generation runs.

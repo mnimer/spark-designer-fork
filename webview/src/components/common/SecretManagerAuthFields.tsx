@@ -27,7 +27,7 @@ export interface SecretItem {
   id?: string;
   fullName?: string;
   value?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -51,6 +51,7 @@ export interface NormalizedSecret {
  * @param item SecretItem object or raw string identifier
  * @returns NormalizedSecret containing short id and display name
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function normalizeSecretItem(item: SecretItem | string): NormalizedSecret {
   if (typeof item === 'string') {
     const trimmed = item.trim();

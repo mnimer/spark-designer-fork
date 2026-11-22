@@ -268,6 +268,26 @@ export const RUNTIME_PROFILES: Readonly<Record<SparkRuntimeTarget, RuntimeProfil
   },
 };
 
+/**
+ * Formats the PEP 440 minor-line PySpark requirement pin for a Spark engine version.
+ * Falls back to the local runtime profile minor line when the input version is blank or malformed.
+ *
+ * @param sparkVersion Full Spark engine version string such as 4.0.1.
+ * @returns Minor-line PySpark requirement pin such as pyspark==4.0.*.
+ */
+export function getDefaultPysparkPin(
+  sparkVersion = RUNTIME_PROFILES.local.sparkVersion
+): string {
+  const match = /^(\d+)\.(\d+)/.exec(sparkVersion.trim());
+  if (match) {
+    return `pyspark==${match[1]}.${match[2]}.*`;
+  }
+  const fallbackMatch = /^(\d+)\.(\d+)/.exec(RUNTIME_PROFILES.local.sparkVersion);
+  const major = fallbackMatch?.[1] ?? '4';
+  const minor = fallbackMatch?.[2] ?? '0';
+  return `pyspark==${major}.${minor}.*`;
+}
+
 const FIXED_MAVEN_BY_TRANSFORM: Readonly<Record<string, string>> = {
   DeltaSource: 'io.delta:delta-spark_2.13:4.0.0',
   DeltaSink: 'io.delta:delta-spark_2.13:4.0.0',
@@ -547,7 +567,7 @@ export function resolveRuntimeProfile(
   if (lowerRunner === 'local_4.2_connect') {
     return cloneRuntimeProfile(RUNTIME_PROFILES['local_4.2_connect']);
   }
-  if (lowerRunner === 'local' || lowerRunner === 'directrunner' || lowerRunner === '') {
+  if (lowerRunner === 'local' || lowerRunner === '') {
     if (
       normalizedVersion === '4.2-connect' ||
       normalizedVersion === '4.2_connect' ||

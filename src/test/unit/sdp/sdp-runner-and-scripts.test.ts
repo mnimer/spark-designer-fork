@@ -140,7 +140,7 @@ describe('SDP8 — PipelineRunner SDP script candidates and environment exports'
         expect(runnerScriptCandidates('Unknown', 'sdp')).toEqual([]);
 
         // Imperative default remains unchanged.
-        expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh', 'run_directrunner.sh']);
+        expect(runnerScriptCandidates('Local')).toEqual(['run_local.sh']);
         expect(runnerScriptCandidates('DataprocCluster', 'imperative')).toEqual(['run_dataproc_cluster.sh']);
 
         const sdpFiles = new Set([path.join('/out', 'run_sdp_local.sh'), path.join('/out', 'run_local.sh')]);

@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { DagEdge, DagNode } from '../../dagValidator';
+import type { DagEdge, DagNode } from '../../shared/dagValidator';
 import {
     computeStreamingNodeSet,
     getConditionalSplitHandles,

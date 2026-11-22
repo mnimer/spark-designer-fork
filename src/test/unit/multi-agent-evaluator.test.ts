@@ -32,7 +32,7 @@ import {
     MultiAgentEvaluationResult,
     SpecialistAgentResult
 } from '../integration/evaluators/types';
-import { DEFAULT_GEMINI_MODEL } from '../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../core/constants';
 import { cleanSparkFiles } from './helpers/sparkPipelineFixtures';
 import { evaluatePackagingAndDeployability } from '../integration/evaluators/packaging-evaluator';
 

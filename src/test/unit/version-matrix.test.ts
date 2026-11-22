@@ -16,6 +16,7 @@ import * as path from 'path';
 import {
   DEFAULT_SERVERLESS_TIER,
   RUNTIME_PROFILES,
+  getDefaultPysparkPin,
   isManagedSparkRuntime,
   resolveServerlessTier,
   resolveRuntimeProfile,
@@ -234,8 +235,8 @@ describe('resolveRuntimeProfile', () => {
     }
   });
 
-  it('resolves Local profile for Local, DirectRunner, omitted, or unknown runners', () => {
-    for (const runner of [undefined, '', 'Local', 'DirectRunner', 'UnknownRunner']) {
+  it('resolves Local profile for Local, omitted, or unknown runners', () => {
+    for (const runner of [undefined, '', 'Local', 'LegacyRunner', 'UnknownRunner']) {
       const profile = resolveRuntimeProfile(runner);
       expect(profile).toEqual({
         id: 'local',
@@ -945,7 +946,7 @@ describe('versionMatrix boundary and failure conditions (T1)', () => {
     expect(resolveRuntimeProfile('dataproc_cluster').id).toBe('cluster_3.0');
     expect(resolveRuntimeProfile('cluster').id).toBe('cluster_3.0');
     expect(resolveRuntimeProfile('   ').id).toBe('local');
-    expect(resolveRuntimeProfile('DirectRunner').id).toBe('local');
+    expect(resolveRuntimeProfile('LegacyRunner').id).toBe('local');
     expect(resolveRuntimeProfile('FlinkRunner').id).toBe('local');
     expect(resolveRuntimeProfile(7 as unknown as string).id).toBe('local');
   });
@@ -1090,5 +1091,18 @@ describe('versionMatrix boundary and failure conditions (T1)', () => {
     const nonStringRunner = resolvePipelineRuntimeArtifacts([], { runner: 5, tier: true });
     expect(nonStringRunner.profile.id).toBe('local');
     expect(nonStringRunner.tier).toBe('standard');
+  });
+});
+
+describe('getDefaultPysparkPin', () => {
+  it('derives the minor-line PySpark pin from the local Spark profile by default', () => {
+    expect(getDefaultPysparkPin()).toBe('pyspark==4.0.*');
+    expect(getDefaultPysparkPin('4.2.0')).toBe('pyspark==4.2.*');
+    expect(getDefaultPysparkPin(' 4.1 ')).toBe('pyspark==4.1.*');
+  });
+
+  it('falls back to the local profile pin when version text is empty or malformed', () => {
+    expect(getDefaultPysparkPin('')).toBe('pyspark==4.0.*');
+    expect(getDefaultPysparkPin('invalid')).toBe('pyspark==4.0.*');
   });
 });

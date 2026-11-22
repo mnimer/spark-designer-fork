@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import {
     classifyGeminiModelTier,
     createDefaultCodegenModelOption,

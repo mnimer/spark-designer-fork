@@ -12,7 +12,6 @@
  * SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -23,7 +22,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const TEXT_SAVE_MODES: SelectFieldOption[] = [
+const TEXT_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -33,7 +32,7 @@ export const TEXT_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x Text output compression codecs.
  */
-export const TEXT_COMPRESSION_CODECS: SelectFieldOption[] = [
+const TEXT_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'none', label: 'none (Uncompressed plain text)' },
   { value: 'gzip', label: 'gzip (.txt.gz)' },
   { value: 'zstd', label: 'zstd (.txt.zst)' },
@@ -46,7 +45,7 @@ export const TEXT_COMPRESSION_CODECS: SelectFieldOption[] = [
 /**
  * Supported strategies for satisfying Spark Text writer's single StringType column requirement.
  */
-export const TEXT_SERIALIZATION_STRATEGIES: SelectFieldOption[] = [
+const TEXT_SERIALIZATION_STRATEGIES: SelectFieldOption[] = [
   { value: 'column', label: 'Project Single Column as String (F.col(name).cast("string"))' },
   { value: 'concat_ws', label: 'Concatenate Columns (F.concat_ws)' },
   { value: 'to_json', label: 'Serialize Row as JSON Line (F.to_json(F.struct(*cols)))' },
@@ -57,8 +56,10 @@ export const TEXT_SERIALIZATION_STRATEGIES: SelectFieldOption[] = [
  */
 export interface TextIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -79,7 +80,7 @@ export interface TextIOSinkNode {
       lineSep?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -89,7 +90,7 @@ export interface TextIOSinkNode {
  */
 export interface TextIOSinkPropertiesProps {
   node: TextIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

@@ -226,9 +226,9 @@ describe('handleRunPipeline', () => {
         spawned.execCalls.length = 0;
         vscodeState.isTrusted = true;
         vi.mocked(vscode.window.showErrorMessage).mockClear();
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beam-run-'));
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-run-'));
         fs.mkdirSync(path.join(tmpDir, 'demo'));
-        fs.writeFileSync(path.join(tmpDir, 'demo', 'run_directrunner.sh'), '#!/bin/bash\necho hi\n');
+        fs.writeFileSync(path.join(tmpDir, 'demo', 'run_local.sh'), '#!/bin/bash\necho hi\n');
     });
 
     /**
@@ -244,7 +244,7 @@ describe('handleRunPipeline', () => {
     it('drops dangerous runtime variables and keeps safe ones', async () => {
         const { ctx } = runCtx(new EditorSession());
         await handleRunPipeline(ctx, {
-            jobConfig: { runner: 'DirectRunner', projectId: 'p' },
+            jobConfig: { runner: 'Local', projectId: 'p' },
             runtimeVariables: [
                 { key: 'DB_HOST', value: 'db' },
                 { key: 'BASH_ENV', value: '/tmp/evil.sh' },
@@ -261,7 +261,7 @@ describe('handleRunPipeline', () => {
     it('refuses to run in an untrusted workspace', async () => {
         vscodeState.isTrusted = false;
         const { ctx, postToWebview } = runCtx(new EditorSession());
-        await handleRunPipeline(ctx, { jobConfig: { runner: 'DirectRunner' } });
+        await handleRunPipeline(ctx, { jobConfig: { runner: 'Local' } });
         expect(spawned.calls).toHaveLength(0);
         expect(postToWebview).toHaveBeenCalledWith(
             expect.objectContaining({ command: 'pipelineFinished', status: 'failed' })
@@ -270,9 +270,9 @@ describe('handleRunPipeline', () => {
 
     it('resolves the gcloud project before spawn and reports it with the job id', async () => {
         const { ctx, postToWebview } = runCtx(new EditorSession());
-        await handleRunPipeline(ctx, { jobConfig: { runner: 'DirectRunner' } });
+        await handleRunPipeline(ctx, { jobConfig: { runner: 'Local' } });
         const child = spawned.calls[0].child;
-        child.stdout.emit('data', 'Submitted job: 2026-01-01_00_00_00-1234567890123\n');
+        child.stdout.emit('data', 'Batch [batch-2026-001] submitted.\n');
         expect(postToWebview).toHaveBeenCalledWith(
             expect.objectContaining({ command: 'pipelineJobIdDetected', projectId: 'resolved-project' })
         );
@@ -280,18 +280,18 @@ describe('handleRunPipeline', () => {
 
     it('keeps an explicit projectId instead of overwriting it with gcloud config', async () => {
         const { ctx, postToWebview } = runCtx(new EditorSession());
-        await handleRunPipeline(ctx, { jobConfig: { runner: 'DirectRunner', projectId: 'explicit' } });
-        spawned.calls[0].child.stdout.emit('data', 'Submitted job: 2026-01-01_00_00_00-1234567890123\n');
+        await handleRunPipeline(ctx, { jobConfig: { runner: 'Local', projectId: 'explicit' } });
+        spawned.calls[0].child.stdout.emit('data', 'Batch [batch-2026-002] submitted.\n');
         expect(postToWebview).toHaveBeenCalledWith(
             expect.objectContaining({ command: 'pipelineJobIdDetected', projectId: 'explicit' })
         );
     });
 
-    it('runs in two sessions without killing each other; stop only affects its own', async () => {
+    it('runs in two sessions without killing each other and stop only affects its own', async () => {
         const a = runCtx(new EditorSession());
         const b = runCtx(new EditorSession());
-        await handleRunPipeline(a.ctx, { jobConfig: { runner: 'DirectRunner', projectId: 'p' } });
-        await handleRunPipeline(b.ctx, { jobConfig: { runner: 'DirectRunner', projectId: 'p' } });
+        await handleRunPipeline(a.ctx, { jobConfig: { runner: 'Local', projectId: 'p' } });
+        await handleRunPipeline(b.ctx, { jobConfig: { runner: 'Local', projectId: 'p' } });
         const [childA, childB] = spawned.calls.map((c) => c.child);
         expect(childA.kill).not.toHaveBeenCalled();
 

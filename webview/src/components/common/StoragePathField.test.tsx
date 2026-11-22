@@ -43,16 +43,17 @@ const emitBucketsLoaded = (buckets: string[], error?: string) => {
 };
 
 describe('StoragePathField', () => {
-  let originalVscode: any;
+  let originalVscode: typeof window.vscode;
+  const mockPostMessage = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: mockPostMessage };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('renders the label, placeholder, and current value', () => {
@@ -145,7 +146,7 @@ describe('StoragePathField', () => {
       />
     );
 
-    expect((window as any).vscode.postMessage).toHaveBeenCalledWith({ command: 'getStorageBuckets' });
+    expect(mockPostMessage).toHaveBeenCalledWith({ command: 'getStorageBuckets' });
   });
 
   it('renders gs:// datalist suggestions after a storageBucketsLoaded response', () => {
