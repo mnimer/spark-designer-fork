@@ -16,6 +16,7 @@
  * - Uses shared primitives on the 8pt grid system.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { Radio } from 'lucide-react';
 import { PropertyField } from '../../components/common/PropertyField';
@@ -32,7 +33,7 @@ export interface AwsRegionPreset {
 }
 
 /** Preset list of AWS regions used by Kinesis source and sink panels. */
-export const AWS_REGION_PRESETS: AwsRegionPreset[] = [
+const AWS_REGION_PRESETS: AwsRegionPreset[] = [
   { label: 'US East (N. Virginia) [us-east-1]', value: 'us-east-1' },
   { label: 'US East (Ohio) [us-east-2]', value: 'us-east-2' },
   { label: 'US West (N. California) [us-west-1]', value: 'us-west-1' },
@@ -52,7 +53,7 @@ export const AWS_REGION_OPTIONS: SelectFieldOption[] = AWS_REGION_PRESETS.filter
 );
 
 /** Initial shard iterator position options for Kinesis reads. */
-export const KINESIS_INITIAL_POSITION_OPTIONS: SelectFieldOption[] = [
+const KINESIS_INITIAL_POSITION_OPTIONS: SelectFieldOption[] = [
   { value: 'latest', label: 'latest (Read new incoming records)' },
   { value: 'trim_horizon', label: 'trim_horizon (Read from oldest retained record)' },
   { value: 'at_timestamp', label: 'at_timestamp (Start from specific timestamp)' },
@@ -61,7 +62,7 @@ export const KINESIS_INITIAL_POSITION_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the KinesisIO source panel. */
 export interface KinesisIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -77,7 +78,7 @@ export interface KinesisIOSourceNode {
       secretName?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -85,7 +86,7 @@ export interface KinesisIOSourceNode {
 /** Props for the {@link KinesisIOSourceProperties} component. */
 export interface KinesisIOSourcePropertiesProps {
   node: KinesisIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

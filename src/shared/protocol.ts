@@ -204,19 +204,19 @@ export interface PipelineStoppedMessage {
     command: 'pipelineStopped';
 }
 
-/** A Dataflow job ID was detected in runner output. */
+/** A Serverless Spark batch ID or Dataproc Cluster job ID was detected in runner output. */
 export interface PipelineJobIdDetectedMessage {
     command: 'pipelineJobIdDetected';
     jobId: string;
-    runner: string;
+    runner: 'ServerlessSpark' | 'DataprocCluster';
     projectId?: string;
     region?: string;
 }
 
-/** Result of listing Dataflow jobs. */
+/** Result of listing Dataproc jobs. */
 export interface RunningJobsLoadedMessage {
     command: 'runningJobsLoaded';
-    /** Raw job objects as returned by `gcloud dataflow jobs list`. */
+    /** Raw job objects as returned by `gcloud dataproc jobs list`. */
     jobs: unknown[];
     projectId?: string;
     error?: string;

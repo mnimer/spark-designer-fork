@@ -65,12 +65,6 @@ export { SOURCE_NODES, STEP_NODES, SINK_NODES } from '../catalog/nodes';
 export type { NodeDefinition } from '../catalog/nodes';
 export { DEFAULT_SAMPLES } from '../catalog/samples';
 export type { SamplePipeline } from '../catalog/samples';
-export {
-  GROUPS_STORAGE_KEY,
-  defaultGroupOpenState,
-  getPersistedGroupState,
-  persistGroupState,
-} from '../catalog/paletteGroupState';
 
 /**
  * Props for the NodesCard component.

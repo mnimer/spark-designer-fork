@@ -202,15 +202,15 @@ export const ASSET_CONFIGS: Record<string, AssetConfig> = {
 /**
  * Options for configuring asset discovery requests in {@link useAssetLoader}.
  */
-export interface UseAssetLoaderOptions<T = any> {
+export interface UseAssetLoaderOptions<T = unknown> {
   /** Optional parameter payload to send with the request (e.g. { dataset: 'my_dataset' }) */
-  params?: Record<string, any>;
+  params?: Record<string, unknown>;
   /** Optional shorthand for dataset param if loading tables */
   dataset?: string;
   /** Whether loading is enabled. Defaults to true (unless assetType has a requiredParam that is empty). */
   enabled?: boolean;
   /** Optional callback invoked when assets or error are loaded */
-  onLoaded?: (items: T[], rawMessage: any) => void;
+  onLoaded?: (items: T[], rawMessage: Record<string, unknown>) => void;
   /** Initial items fallback */
   initialItems?: T[];
 }
@@ -218,7 +218,7 @@ export interface UseAssetLoaderOptions<T = any> {
 /**
  * Result state returned by the {@link useAssetLoader} hook.
  */
-export interface UseAssetLoaderResult<T = any> {
+export interface UseAssetLoaderResult<T = unknown> {
   /** Loaded asset items */
   items: T[];
   /** Alias for items */
@@ -236,7 +236,7 @@ export interface UseAssetLoaderResult<T = any> {
   /** Set error manually */
   setError: React.Dispatch<React.SetStateAction<string | null>>;
   /** Raw response message */
-  rawResponse: any;
+  rawResponse: Record<string, unknown> | null;
 }
 
 /**
@@ -247,7 +247,7 @@ export interface UseAssetLoaderResult<T = any> {
  * @param options Optional configuration including params, enabled flag, and onLoaded callback
  * @returns State object with items, error, loading, and refresh callback
  */
-export function useAssetLoader<T = any>(
+export function useAssetLoader<T = unknown>(
   assetType: AssetType | string,
   options?: UseAssetLoaderOptions<T>
 ): UseAssetLoaderResult<T> {
@@ -270,51 +270,67 @@ export function useAssetLoader<T = any>(
   const autoEnabled = hasRequiredParam;
   const isEnabled = options?.enabled !== undefined ? options.enabled : autoEnabled;
 
-  const [items, setItems] = useState<T[]>(options?.initialItems || []);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(isEnabled);
-  const [rawResponse, setRawResponse] = useState<any>(null);
-
-  // Keep latest onLoaded callback in a ref to avoid stale closures
-  const onLoadedRef = useRef(options?.onLoaded);
-  onLoadedRef.current = options?.onLoaded;
-
   // Memoize stable serialized params key to re-trigger fetch on param changes
   const paramsKey = JSON.stringify(params);
+  const fetchKey = isEnabled ? `${config.requestCommand}:${paramsKey}` : null;
+
+  const [items, setItems] = useState<T[]>(options?.initialItems || []);
+  const [error, setError] = useState<string | null>(null);
+  const [settledFetchKey, setSettledFetchKey] = useState<string | null>(null);
+  const [manualLoading, setManualLoading] = useState<boolean>(false);
+  const [rawResponse, setRawResponse] = useState<Record<string, unknown> | null>(null);
+
+  // Keep latest onLoaded callback and active fetch key in refs via effect
+  const onLoadedRef = useRef(options?.onLoaded);
+  const activeFetchKeyRef = useRef<string | null>(fetchKey);
+  useEffect(() => {
+    onLoadedRef.current = options?.onLoaded;
+    activeFetchKeyRef.current = fetchKey;
+  });
 
   // F11: parameters of the most recent request. Responses echoing different
   // parameters (another panel's request, or a slower earlier request) are ignored.
   const lastRequestParamsRef = useRef<Record<string, unknown>>(params);
 
   /**
-   * Dispatches request to the VS Code extension host IPC.
+   * Dispatches the IPC request payload to the VS Code extension host without synchronous state updates.
+   */
+  const dispatchAssetRequest = useCallback(() => {
+    const parsedParams = JSON.parse(paramsKey) as Record<string, unknown>;
+    lastRequestParamsRef.current = parsedParams;
+    postToHost({
+      command: config.requestCommand,
+      ...parsedParams
+    });
+  }, [config.requestCommand, paramsKey]);
+
+  /**
+   * Manually triggers re-fetching assets from an event handler.
    */
   const requestAssets = useCallback(() => {
     if (!isEnabled) {
-      setLoading(false);
+      setManualLoading(false);
       return;
     }
 
-    setLoading(true);
-    lastRequestParamsRef.current = params;
-    postToHost({
-      command: config.requestCommand,
-      ...params
-    });
-  }, [config.requestCommand, isEnabled, paramsKey]);
+    setManualLoading(true);
+    dispatchAssetRequest();
+  }, [isEnabled, dispatchAssetRequest]);
 
   // NOTE: Listen for response command from extension host using useExtensionMessage
-  useExtensionMessage(config.responseCommand, (message: any) => {
+  useExtensionMessage<Record<string, unknown>>(config.responseCommand, (message) => {
     if (!isResponseForParams(message, lastRequestParamsRef.current)) {
       return;
     }
     const rawItems = message[config.responseKey];
-    const loadedItems: T[] = Array.isArray(rawItems) ? rawItems : [];
-    const receivedError: string | null = message.error || null;
+    const loadedItems: T[] = Array.isArray(rawItems) ? (rawItems as T[]) : [];
+    const receivedError: string | null =
+      typeof message.error === 'string' && message.error ? message.error : null;
 
     setItems(loadedItems);
     setError(receivedError);
-    setLoading(false);
+    setSettledFetchKey(activeFetchKeyRef.current);
+    setManualLoading(false);
     setRawResponse(message);
 
     if (onLoadedRef.current) {
@@ -325,20 +341,18 @@ export function useAssetLoader<T = any>(
   // Automatically request assets on mount or when dependencies change
   useEffect(() => {
     if (isEnabled) {
-      requestAssets();
-    } else {
-      setLoading(false);
-      if (!hasRequiredParam) {
-        setItems([]);
-        setError(null);
-      }
+      dispatchAssetRequest();
     }
-  }, [isEnabled, paramsKey, requestAssets]);
+  }, [isEnabled, dispatchAssetRequest]);
+
+  const effectiveItems = !isEnabled && !hasRequiredParam ? [] : items;
+  const effectiveError = !isEnabled && !hasRequiredParam ? null : error;
+  const loading = isEnabled && (manualLoading || settledFetchKey !== fetchKey);
 
   return {
-    items,
-    data: items,
-    error,
+    items: effectiveItems,
+    data: effectiveItems,
+    error: effectiveError,
     loading,
     isLoading: loading,
     refresh: requestAssets,

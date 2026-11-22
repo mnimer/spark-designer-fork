@@ -22,6 +22,8 @@ import ReactFlow, {
   Background,
   ReactFlowProvider,
   useReactFlow,
+  type Edge,
+  type Node,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './App.css';
@@ -39,7 +41,7 @@ import { DEFAULT_CODEGEN_MODEL } from './components/BottomPanel/SourceCodeTab';
 
 import { usePipelinePersistence } from './hooks/usePipelinePersistence';
 import { usePipelineGraph, type PipelineNodeData } from './hooks/usePipelineGraph';
-import { useVsCodeBridge, findMainPipelineFile, PLACEHOLDER_PROJECT_ID, type PipelineConfig } from './hooks/useVsCodeBridge';
+import { useVsCodeBridge, PLACEHOLDER_PROJECT_ID, type PipelineConfig } from './hooks/useVsCodeBridge';
 import { pipelineConfigReducer } from './state/pipelineConfigReducer';
 import { useRuntimeVariables, DEFAULT_RUNTIME_VARIABLES } from './hooks/useRuntimeVariables';
 import { usePipelineExecution } from './hooks/usePipelineExecution';
@@ -52,10 +54,13 @@ import {
   type SdpBlockingIssue,
 } from './utils/sdpPlanner';
 import { isRuntimeSdpCapable } from './utils/versionMatrix';
-import type { PipelineParadigm, SdpJobConfigFields } from './utils/sharedTypes';
+import {
+  normalizeSparkRunner,
+  type PipelineParadigm,
+  type SdpJobConfigFields,
+} from './utils/sharedTypes';
 import { AlertTriangle, X } from 'lucide-react';
 
-export { findMainPipelineFile };
 export type { PipelineNodeData };
 
 const vscode = getVsCodeApi() ?? null;
@@ -63,11 +68,11 @@ const vscode = getVsCodeApi() ?? null;
 /**
  * React Context providing the stable onLabelChange callback to canvas nodes.
  */
-export const LabelChangeContext = createContext<((id: string, newLabel: string) => void) | null>(null);
+const LabelChangeContext = createContext<((id: string, newLabel: string) => void) | null>(null);
 
 /**
  * CanvasPipelineNode
- * 
+ *
  * Stable wrapper around PipelineNode that injects the memoized onLabelChange callback
  * from React context. This avoids constructing new node/data objects on every App render,
  * preserving React Flow referential memoization and preventing canvas drag jank.
@@ -89,21 +94,33 @@ const nodeTypes = {
   pipeline: CanvasPipelineNode,
 };
 
+type AppJobConfig = BottomPanelContextValue['jobConfig']['value'] &
+  SdpJobConfigFields &
+  Record<string, unknown>;
+
 /**
- * State snapshot recorded for canvas undo/redo operations.
+ * Persisted VS Code webview state shape for active palette tab tracking.
+ */
+interface PersistedWebviewState {
+  activeNodePaletteTab?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * State snapshot recorded for canvas undo and redo operations.
  */
 interface PipelineSnapshot {
-  nodes: any[];
-  edges: any[];
+  nodes: Node<PipelineNodeData>[];
+  edges: Edge[];
   runtimeVariables: { key: string; value: string }[];
-  jobConfig: any;
+  jobConfig: AppJobConfig;
   pipelineConfig: PipelineConfig;
 }
 
 /**
  * Root designer workspace component hosting the React Flow canvas, node palette, property panel, and bottom panel.
  *
- * @returns The rendered Apache Beam pipeline designer application.
+ * @returns The rendered Apache Spark pipeline designer application.
  */
 function App() {
   const { project, fitView } = useReactFlow();
@@ -111,12 +128,13 @@ function App() {
   // Navigation and active tab state
   const [activeTab, setActiveTab] = useState<string | null>(() => {
     try {
-      const vsState = (getVsCodeApi()?.getState?.() as any)?.activeNodePaletteTab;
+      const vsState = (getVsCodeApi()?.getState?.() as PersistedWebviewState | undefined)
+        ?.activeNodePaletteTab;
       if (vsState !== undefined) {
         return vsState;
       }
       if (typeof localStorage !== 'undefined') {
-        const local = localStorage.getItem('beam_node_palette_active_tab');
+        const local = localStorage.getItem('spark_node_palette_active_tab');
         if (local !== null) {
           return local === '__NULL__' ? null : local;
         }
@@ -132,11 +150,11 @@ function App() {
     try {
       const vs = getVsCodeApi();
       if (vs?.setState) {
-        const current = (vs.getState?.() as any) || {};
+        const current = (vs.getState?.() as PersistedWebviewState | undefined) ?? {};
         vs.setState({ ...current, activeNodePaletteTab: tab });
       }
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('beam_node_palette_active_tab', tab === null ? '__NULL__' : tab);
+        localStorage.setItem('spark_node_palette_active_tab', tab === null ? '__NULL__' : tab);
       }
     } catch {
       // Ignore persistence write error
@@ -146,33 +164,7 @@ function App() {
   const [bottomTab, setBottomTab] = useState('SOURCE_CODE');
 
   // Job and pipeline configuration state
-  const [jobConfig, setJobConfig] = useState<{
-    runner: string;
-    useSparkConnect?: boolean;
-    sessionTemplate?: string;
-    clusterName?: string;
-    customJarUris?: string;
-    sparkJars?: string;
-    runtimeVersion?: string;
-    tier?: string;
-    serverlessTier?: string;
-    depsBucket?: string;
-    serviceAccount?: string;
-    batchTtlMinutes?: number | string;
-    checkpointRoot?: string;
-    defaultTriggerType?: string;
-    defaultTriggerInterval?: string;
-    machineType?: string;
-    minInstances?: number;
-    maxInstances?: number;
-    gcsStagingPath?: string;
-    network?: string;
-    subnetwork?: string;
-    jobId?: string;
-    region?: string;
-    projectId?: string;
-    [key: string]: unknown;
-  } & SdpJobConfigFields>({
+  const [jobConfig, setJobConfig] = useState<AppJobConfig>({
     runner: 'Local',
     useSparkConnect: false,
     sessionTemplate: '',
@@ -194,7 +186,7 @@ function App() {
     subnetwork: '',
     jobId: '',
     region: 'us-central1',
-    projectId: ''
+    projectId: '',
   });
   const [projectId, setProjectId] = useState(PLACEHOLDER_PROJECT_ID);
   const [filename, setFilename] = useState('default_job');
@@ -204,9 +196,10 @@ function App() {
     needsRebuild: false,
     paradigm: 'imperative',
   });
-  const [sdpCompatibilityIssues, setSdpCompatibilityIssues] = useState<SdpBlockingIssue[] | null>(
-    null
-  );
+  const [sdpIssueState, setSdpIssueState] = useState<{
+    revision: number;
+    issues: SdpBlockingIssue[];
+  } | null>(null);
   const activeParadigm: PipelineParadigm =
     pipelineConfig.paradigm === 'sdp' ? 'sdp' : 'imperative';
 
@@ -290,6 +283,19 @@ function App() {
     };
   }, [setNodes, setEdges, setRuntimeVariables, setJobConfig, setPipelineConfig]);
 
+  const handleBridgeSetJobConfig: BottomPanelContextValue['jobConfig']['set'] = useCallback(
+    (update) => {
+      setJobConfig((prev: AppJobConfig) => {
+        const next = typeof update === 'function' ? update(prev) : update;
+        return {
+          ...next,
+          runner: normalizeSparkRunner(next?.runner),
+        } as AppJobConfig;
+      });
+    },
+    []
+  );
+
   // Hook 2: VS Code IPC bridge and message handler (A6)
   const {
     isLoaded,
@@ -314,7 +320,7 @@ function App() {
     setNodes,
     setEdges,
     setRuntimeVariables,
-    setJobConfig,
+    setJobConfig: handleBridgeSetJobConfig,
     pipelineConfig,
     setPipelineConfig,
     filename,
@@ -324,6 +330,9 @@ function App() {
     fitView,
     vscode,
   });
+
+  const sdpCompatibilityIssues =
+    sdpIssueState && sdpIssueState.revision === loadRevision ? sdpIssueState.issues : null;
 
   // Hook 3: Pipeline Persistence with 2-second debounce and dirty-check (P6, A6)
   const { lastSavedYamlRef, serializePipeline } = usePipelinePersistence({
@@ -374,7 +383,7 @@ function App() {
 
       if (event.key === 'Escape' && sdpCompatibilityIssues && sdpCompatibilityIssues.length > 0) {
         event.preventDefault();
-        setSdpCompatibilityIssues(null);
+        setSdpIssueState(null);
         return;
       }
 
@@ -400,22 +409,19 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo, deleteSelected, sdpCompatibilityIssues]);
 
-  useEffect(() => {
-    setSdpCompatibilityIssues(null);
-  }, [loadRevision]);
-
   const handleParadigmChange = useCallback(
     (nextParadigm: PipelineParadigm) => {
       if (nextParadigm === activeParadigm) {
         return;
       }
       if (nextParadigm === 'imperative') {
-        setSdpCompatibilityIssues(null);
+        setSdpIssueState(null);
         takeSnapshot();
-        setJobConfig((prev) => {
+        setJobConfig((prev: AppJobConfig) => {
           if (prev.runtimeVersion === '4.2-connect') {
-            const { runtimeVersion: _staleConnectVersion, ...rest } = prev;
-            return { ...rest, useSparkConnect: false };
+            const next = { ...prev, useSparkConnect: false };
+            delete (next as Record<string, unknown>).runtimeVersion;
+            return next;
           }
           return prev;
         });
@@ -429,32 +435,34 @@ function App() {
         enforceRuntimeVersion: false,
       });
       if (!compatibility.isCompatible || compatibility.blockingIssues.length > 0) {
-        setSdpCompatibilityIssues(compatibility.blockingIssues);
+        setSdpIssueState({ revision: loadRevision, issues: compatibility.blockingIssues });
         return;
       }
 
-      setSdpCompatibilityIssues(null);
+      setSdpIssueState(null);
       takeSnapshot();
-      setJobConfig((prev) => {
+      setJobConfig((prev: AppJobConfig) => {
         const normalized = normalizeSdpJobConfig(prev);
-        if (!isRuntimeSdpCapable(normalized.runner, normalized.runtimeVersion)) {
-          const lowerRunner = String(normalized.runner ?? '').trim().toLowerCase();
-          return lowerRunner === '' || lowerRunner === 'local' || lowerRunner === 'directrunner'
+        const normalizedRunner = normalizeSparkRunner(normalized.runner);
+        const normalizedVersion =
+          typeof normalized.runtimeVersion === 'string' ? normalized.runtimeVersion : undefined;
+        if (!isRuntimeSdpCapable(normalizedRunner, normalizedVersion)) {
+          return normalizedRunner === 'Local'
             ? {
                 ...normalized,
-                runner: normalized.runner || 'Local',
+                runner: 'Local',
                 runtimeVersion: '4.2-connect',
                 useSparkConnect: true,
               }
-            : { ...normalized, runtimeVersion: '4.0' };
+            : { ...normalized, runner: normalizedRunner, runtimeVersion: '4.0' };
         }
-        return normalized;
+        return { ...normalized, runner: normalizedRunner };
       });
       setPipelineConfig((prev) =>
         pipelineConfigReducer(prev, { type: 'setParadigm', paradigm: 'sdp' })
       );
     },
-    [activeParadigm, nodes, edges, jobConfig, takeSnapshot]
+    [activeParadigm, nodes, edges, jobConfig, loadRevision, takeSnapshot]
   );
 
   /**
@@ -465,15 +473,22 @@ function App() {
    * updater: building `{...jobConfig, field}` from a props snapshot and returning it
    * wholesale means any other field changed since that render is silently reverted, because
    * the object replaces state entirely rather than merging into `prev`. That is how
-   * `runner` reverted from Dataflow to DirectRunner while the rest of the config survived.
+   * `runner` reverted from `ServerlessSpark` to `Local` when a stale snapshot replaced `prev`.
    */
-  const handleSetJobConfig = useCallback(
-    (update: React.SetStateAction<any>) => {
+  const handleSetJobConfig: BottomPanelContextValue['jobConfig']['set'] = useCallback(
+    (update) => {
       takeSnapshot();
-      setJobConfig((prev: any) => {
-        // Resolve the updater against the freshest state, so a stale snapshot captured in a
-        // child's render cannot clobber sibling fields.
-        const config = typeof update === 'function' ? (update as (p: any) => any)(prev) : update;
+      setJobConfig((prev: AppJobConfig) => {
+        // Resolve the updater against the freshest state so a stale snapshot captured in a
+        // child render cannot clobber sibling fields.
+        const rawConfig =
+          typeof update === 'function'
+            ? (update as (p: AppJobConfig) => AppJobConfig)(prev)
+            : (update as AppJobConfig);
+        const config: AppJobConfig = {
+          ...rawConfig,
+          runner: normalizeSparkRunner(rawConfig?.runner),
+        };
         const configChanged =
           prev.runner !== config.runner ||
           prev.useSparkConnect !== config.useSparkConnect ||
@@ -656,7 +671,7 @@ function App() {
     initialSize: () => {
       if (typeof window !== 'undefined' && window.localStorage) {
         try {
-          const saved = Number(window.localStorage.getItem('beam_property_panel_width'));
+          const saved = Number(window.localStorage.getItem('spark_property_panel_width'));
           if (!isNaN(saved) && saved >= 320) {
             return saved;
           }
@@ -685,7 +700,7 @@ function App() {
     onResizeEnd: (size) => {
       if (typeof window !== 'undefined' && window.localStorage) {
         try {
-          window.localStorage.setItem('beam_property_panel_width', String(size));
+          window.localStorage.setItem('spark_property_panel_width', String(size));
         } catch {
           // Ignore localStorage error
         }
@@ -881,7 +896,7 @@ function App() {
         {sdpCompatibilityIssues && sdpCompatibilityIssues.length > 0 && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-            onClick={() => setSdpCompatibilityIssues(null)}
+            onClick={() => setSdpIssueState(null)}
           >
             <div
               role="dialog"
@@ -903,7 +918,7 @@ function App() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSdpCompatibilityIssues(null)}
+                  onClick={() => setSdpIssueState(null)}
                   data-testid="sdp-compatibility-modal-close"
                   aria-label="Close compatibility dialog"
                   className="p-1 rounded text-[var(--vscode-text-muted,#94a3b8)] hover:text-[var(--vscode-text-primary,#ffffff)] hover:bg-[var(--vscode-hover,rgba(255,255,255,0.06))] transition-colors cursor-pointer"
@@ -949,7 +964,7 @@ function App() {
               <div className="px-4 py-3 border-t border-[var(--vscode-border,#334155)] bg-[var(--vscode-subcard-bg,#1e202a)] flex justify-end">
                 <button
                   type="button"
-                  onClick={() => setSdpCompatibilityIssues(null)}
+                  onClick={() => setSdpIssueState(null)}
                   className="px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--vscode-button-secondary,#334155)] text-[var(--vscode-text-primary,#ffffff)] hover:bg-[var(--vscode-hover,#475569)] transition-colors cursor-pointer"
                 >
                   Keep Imperative Mode

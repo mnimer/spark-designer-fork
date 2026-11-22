@@ -4,44 +4,27 @@
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
-import React from 'react';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-refresh/only-export-components */
+import React from 'react';
+import {
+  normalizeSparkRunner,
+  type SparkRunnerType,
+} from '../../../utils/sharedTypes';
+import type { BottomPanelContextValue } from '../BottomPanelContext';
 
-/**
- * Supported Spark target execution environments.
- */
-export type SparkRunnerType = 'Local' | 'DataprocCluster' | 'ServerlessSpark';
+export { normalizeSparkRunner };
+export type { SparkRunnerType };
 
-/**
- * Normalizes a raw or legacy runner string into one of the three supported Spark environments.
- *
- * - Unset, empty, `'Local'`, or legacy `'DirectRunner'` resolves to `'Local'`.
- * - `'DataprocCluster'` resolves to `'DataprocCluster'`.
- * - `'ServerlessSpark'` or legacy `'Spark'` resolves to `'ServerlessSpark'`.
- *
- * @param runner - Raw runner string from jobConfig.
- * @returns Normalized Spark runner identifier.
- */
-export function normalizeSparkRunner(runner?: string): SparkRunnerType {
-  if (runner === 'DataprocCluster') {
-    return 'DataprocCluster';
-  }
-  if (runner === 'ServerlessSpark' || runner === 'Spark') {
-    return 'ServerlessSpark';
-  }
-  return 'Local';
-}
+type JobConfigValue = BottomPanelContextValue['jobConfig']['value'];
 
 /**
  * Props for the RunnerSettings component.
  */
 export interface RunnerSettingsProps {
   /** Currently active runner identifier ('Local' | 'DataprocCluster' | 'ServerlessSpark'). */
-  runner: string;
+  runner?: string;
   /** State updater callback for modifying the parent job configuration. */
-  setJobConfig: (update: React.SetStateAction<any>) => void;
+  setJobConfig: BottomPanelContextValue['jobConfig']['set'];
   /** Optional pipeline paradigm ('imperative' | 'sdp'). */
   paradigm?: 'imperative' | 'sdp';
 }
@@ -68,17 +51,23 @@ export const RunnerSettings: React.FC<RunnerSettingsProps> = ({
         id="targetEnvironmentRunner"
         value={effectiveRunner}
         onChange={(e) => {
-          const nextValue = e.target.value;
-          setJobConfig((prev: any) => {
+          const nextValue = normalizeSparkRunner(e.target.value);
+          setJobConfig((prev: JobConfigValue) => {
+            const prevRecord =
+              prev && typeof prev === 'object' ? (prev as Record<string, unknown>) : {};
             if (isSdp) {
+              const currentVersion =
+                typeof prevRecord.runtimeVersion === 'string'
+                  ? prevRecord.runtimeVersion
+                  : '';
               const nextRuntimeVersion =
                 nextValue === 'Local'
                   ? '4.2-connect'
-                  : prev?.runtimeVersion === '3.0' ||
-                      prev?.runtimeVersion === '4.2-connect' ||
-                      !prev?.runtimeVersion
+                  : currentVersion === '3.0' ||
+                      currentVersion === '4.2-connect' ||
+                      !currentVersion
                     ? '4.0'
-                    : prev.runtimeVersion;
+                    : currentVersion;
               return {
                 ...prev,
                 runner: nextValue,

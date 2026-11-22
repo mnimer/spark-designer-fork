@@ -175,8 +175,16 @@ export function parseManifest(raw: unknown): GenerationManifest | null {
     const schemaVersion = m.schemaVersion as number;
     const files = Array.isArray(m.files) ? m.files : [];
     const validFiles: ManifestFileEntry[] = files
-        .filter((f: any) => f && typeof f.path === 'string' && typeof f.sha256 === 'string')
-        .map((f: any) => ({ path: f.path, sha256: f.sha256 }));
+        .filter(
+            (f: unknown): f is { path: string; sha256: string } =>
+                Boolean(
+                    f &&
+                        typeof f === 'object' &&
+                        typeof (f as { path?: unknown }).path === 'string' &&
+                        typeof (f as { sha256?: unknown }).sha256 === 'string'
+                )
+        )
+        .map((f) => ({ path: f.path, sha256: f.sha256 }));
     return {
         schemaVersion,
         pipelineId: m.pipelineId,

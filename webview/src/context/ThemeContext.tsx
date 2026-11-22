@@ -30,6 +30,7 @@ export interface ThemeOption {
   description: string;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const THEME_OPTIONS: ThemeOption[] = [
   {
     id: 'dark',
@@ -72,6 +73,7 @@ export interface ThemeContextType {
   isHighContrast: boolean;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const ThemeContext = createContext<ThemeContextType | null>(null);
 
 export const STORAGE_THEME_KEY = 'vscode_agent_flow_theme';
@@ -193,6 +195,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
  *
  * @returns The active {@link ThemeContextType} object.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = () => {
   const context = useContext(ThemeContext);
   if (!context) {

@@ -10,24 +10,24 @@
  * SystemInstructionsField updates.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TextIOSinkProperties, TextSinkProperties } from './TextIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { TextIOSinkProperties, TextSinkProperties, type TextIOSinkNode } from './TextIO';
 
 describe('TextIOSinkProperties (SNK16 TextSink)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports TextSinkProperties as an alias for TextIOSinkProperties', () => {
@@ -35,7 +35,7 @@ describe('TextIOSinkProperties (SNK16 TextSink)', () => {
   });
 
   it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
-    const mockNode: any = {
+    const mockNode: TextIOSinkNode = {
       data: {
         label: 'TextSink',
         type: 'SINK',
@@ -63,7 +63,7 @@ describe('TextIOSinkProperties (SNK16 TextSink)', () => {
   });
 
   it('renders populated properties including concat_ws strategy and local filesystem path', () => {
-    const mockNode: any = {
+    const mockNode: TextIOSinkNode = {
       data: {
         label: 'TextSink',
         spark_transform: 'TextSink',
@@ -102,7 +102,7 @@ describe('TextIOSinkProperties (SNK16 TextSink)', () => {
   });
 
   it('propagates changes across all Text sink fields and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: TextIOSinkNode = {
       data: {
         properties: {
           path: 'gs://my-bucket/logs/',

@@ -214,24 +214,25 @@ describe('PipelineNode', () => {
     expect(screen.queryByTestId('handle-source-right-error')).not.toBeInTheDocument();
   });
 
-  it('does not render a side_input handle or label for steps, sources, or sinks', () => {
-    const { unmount: unmountStep } = render(
+  it('never renders top target handles on steps, sources, or sinks', () => {
+    const { container: stepContainer, unmount: unmountStep } = render(
       <PipelineNode id="node-1" data={{ ...mockData, type: 'STEP', spark_transform: 'Select' }} />
     );
-    expect(screen.queryByTestId('handle-target-top-side_input')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('side-input-handle-label')).not.toBeInTheDocument();
+    expect(stepContainer.querySelector('[data-testid^="handle-target-top"]')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('handle-target-left-left')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('handle-target-left-right')).not.toBeInTheDocument();
     unmountStep();
 
-    const { unmount: unmountSource } = render(
+    const { container: sourceContainer, unmount: unmountSource } = render(
       <PipelineNode id="node-2" data={{ ...mockData, type: 'SOURCE', spark_transform: 'CsvSource' }} />
     );
-    expect(screen.queryByTestId('handle-target-top-side_input')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('side-input-handle-label')).not.toBeInTheDocument();
+    expect(sourceContainer.querySelector('[data-testid^="handle-target-top"]')).not.toBeInTheDocument();
     unmountSource();
 
-    render(<PipelineNode id="node-3" data={{ ...mockData, type: 'SINK', spark_transform: 'ParquetSink' }} />);
-    expect(screen.queryByTestId('handle-target-top-side_input')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('side-input-handle-label')).not.toBeInTheDocument();
+    const { container: sinkContainer } = render(
+      <PipelineNode id="node-3" data={{ ...mockData, type: 'SINK', spark_transform: 'ParquetSink' }} />
+    );
+    expect(sinkContainer.querySelector('[data-testid^="handle-target-top"]')).not.toBeInTheDocument();
   });
 
   it('opens text input on label double-click and commits on Enter', () => {

@@ -251,7 +251,7 @@ describe('AdvancedConfig', () => {
 
   describe('Streaming Defaults (A9)', () => {
     it('renders Streaming Defaults with processingTime and 10 seconds interval by default', () => {
-      const jobConfig: AdvancedJobConfig = { runner: 'Spark' };
+      const jobConfig: AdvancedJobConfig = { runner: 'ServerlessSpark' };
       render(
         <AdvancedConfig
           jobConfig={jobConfig}

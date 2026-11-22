@@ -23,7 +23,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /** React Flow node shape for the SocketSource panel. */
 export interface SocketSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -34,7 +34,7 @@ export interface SocketSourceNode {
       includeTimestamp?: boolean;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -42,7 +42,7 @@ export interface SocketSourceNode {
 /** Props for the {@link SocketSourceProperties} component. */
 export interface SocketSourcePropertiesProps {
   node: SocketSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

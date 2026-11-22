@@ -35,7 +35,7 @@ import {
     stripPythonCommentsAndDocstrings,
     validateSdpSpecYaml,
 } from '../../../codegen/ReadOnlyCheckRunner';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import type { DagEdge, DagNode } from '../../../shared/dagValidator';
 import { buildSdpPlan, type SdpExecutionPlan } from '../../../shared/sdpPlanner';
 import { DEFAULT_SPARK_VERSION, type PipelineParadigm } from '../../../shared/types';

@@ -10,7 +10,6 @@
  * maxFilesPerTrigger (for streaming), and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -28,7 +27,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface BinaryFileSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -43,7 +42,7 @@ export interface BinaryFileSourceNode {
       maxFilesPerTrigger?: string | number;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -53,7 +52,7 @@ export interface BinaryFileSourceNode {
  */
 export interface BinaryFileSourcePropertiesProps {
   node: BinaryFileSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

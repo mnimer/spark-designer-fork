@@ -20,7 +20,7 @@ import { isReviewerEnabled, runReviewerPass, ReviewerModelClient } from '../../.
 import { ReadOnlyCheckRunner } from '../../../codegen/ReadOnlyCheckRunner';
 import { REVIEW_REPORT_SCHEMA } from '../../../codegen/CodeReviewer';
 import { CODEGEN_MODEL_SETTINGS, CODEGEN_REVIEWER_SETTING } from '../../../codegen/codegenConfig';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import { clearCodegenSkillCatalogCache } from '../../../codegen/CodegenSkillCatalog';
 
 let skillsRoot: string;

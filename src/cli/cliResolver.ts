@@ -11,7 +11,7 @@ import * as fs from 'fs';
  * Searches process.env.PATH for an executable binary.
  *
  * @param executable The name of the binary to search for
- * @returns The resolved absolute path if found as a regular file on PATH; otherwise undefined
+ * @returns The resolved absolute path if found as a regular file on PATH, otherwise undefined.
  */
 export function findExecutableInPath(executable: string): string | undefined {
     const envPath = process.env.PATH;
@@ -43,14 +43,14 @@ export function findExecutableInPath(executable: string): string | undefined {
 
 /**
  * Resolves the path to a CLI executable across supported platforms and installation modes.
- * 
+ *
  * Resolution order:
- * 1. User configuration setting `dataflowDesigner.gcloudPath` (for gcloud or sibling tools bq/gsutil)
+ * 1. User configuration setting `sparkDesigner.gcloudPath` (for gcloud or sibling tools bq and gsutil)
  * 2. System PATH environment lookup via findExecutableInPath
  * 3. Platform standard candidate directories (Homebrew, /usr/local/bin, /usr/bin, user home)
- * 
- * @param cli CLI command name ('gcloud' | 'bq' | 'gsutil' | 'aws' | string)
- * @returns The resolved absolute path to the binary, or undefined if not found
+ *
+ * @param cli CLI command name ('gcloud' | 'bq' | 'gsutil' | 'aws' | string).
+ * @returns The resolved absolute path to the binary, or undefined if not found.
  */
 export function resolveCli(cli: 'gcloud' | 'bq' | 'gsutil' | 'aws' | string): string | undefined {
     // 1. Consult user configuration setting if explicitly set
@@ -115,14 +115,14 @@ export function resolveCli(cli: 'gcloud' | 'bq' | 'gsutil' | 'aws' | string): st
 
 /**
  * Resolves the path to the Google Cloud SDK (gcloud) executable.
- * 
+ *
  * Resolution order:
- * 1. User configuration setting `dataflowDesigner.gcloudPath`
+ * 1. User configuration setting `sparkDesigner.gcloudPath`
  * 2. System PATH environment lookup
  * 3. Generic standard installation locations
  * 4. Fallback executable name 'gcloud'
- * 
- * @returns The resolved path or command name for the gcloud binary
+ *
+ * @returns The resolved path or command name for the gcloud binary.
  */
 export function findGcloudPath(): string {
     return resolveCli('gcloud') || 'gcloud';

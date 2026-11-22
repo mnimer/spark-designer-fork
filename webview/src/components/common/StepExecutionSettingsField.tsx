@@ -4,9 +4,10 @@
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { SOURCE_NODES } from '../../catalog/nodes/sources';
+import type { PropertyFormNode } from '../../catalog/propertyFormRegistry';
 import { SelectField, type SelectFieldOption } from './SelectField';
 import type { PipelineParadigm } from '../../utils/sharedTypes';
 
@@ -15,9 +16,9 @@ import type { PipelineParadigm } from '../../utils/sharedTypes';
  */
 export interface StepExecutionSettingsFieldProps {
   /** Selected React Flow node inspected in PropertyForm. */
-  node: any;
+  node: PropertyFormNode | null | undefined;
   /** Callback invoked with the merged node properties object. */
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
   /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
   paradigm?: PipelineParadigm;
 }
@@ -46,9 +47,9 @@ const SDP_STEP_DATASET_OPTIONS: SelectFieldOption[] = [
  * @param node React Flow node object.
  * @returns Array of supported read modes when available.
  */
-function getSupportedReadModes(node: any): string[] | undefined {
+function getSupportedReadModes(node?: PropertyFormNode | null): readonly string[] | undefined {
   if (Array.isArray(node?.data?.supportedReadModes)) {
-    return node.data.supportedReadModes as string[];
+    return node.data.supportedReadModes;
   }
   const transform = node?.data?.spark_transform || node?.data?.componentType;
   if (!transform) {
@@ -68,7 +69,7 @@ function getSupportedReadModes(node: any): string[] | undefined {
  * @param node React Flow node object.
  * @returns True when the node is a dual-mode Source or already carries a `readMode` property.
  */
-export function shouldShowSourceReadModeToggle(node: any): boolean {
+export function shouldShowSourceReadModeToggle(node?: PropertyFormNode | null): boolean {
   const nodeType = String(node?.data?.type || '').toUpperCase();
   if (nodeType !== 'SOURCE') {
     return false;
@@ -89,7 +90,7 @@ export function shouldShowSourceReadModeToggle(node: any): boolean {
  * @returns True when the node is an imperative batch Step node.
  */
 export function shouldShowStepCacheToggle(
-  node: any,
+  node?: PropertyFormNode | null,
   paradigm?: PipelineParadigm
 ): boolean {
   if (paradigm === 'sdp' || node?.data?.paradigm === 'sdp') {

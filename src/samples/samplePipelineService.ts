@@ -12,6 +12,52 @@ import type { SamplePipeline } from '../shared/types';
 export type { SamplePipeline };
 
 /**
+ * Node representation parsed from a sample pipeline YAML file.
+ */
+export interface SampleYamlNode {
+    id?: string | number;
+    position?: { x?: number; y?: number };
+    data?: {
+        label?: string;
+        type?: string;
+        spark_transform?: string;
+    };
+}
+
+/**
+ * Edge representation parsed from a sample pipeline YAML file.
+ */
+export interface SampleYamlEdge {
+    source?: string | number;
+    target?: string | number;
+}
+
+/**
+ * Runtime variable entry parsed from a sample pipeline YAML file.
+ */
+export interface SampleRuntimeVariable {
+    key?: string;
+    value?: unknown;
+}
+
+/**
+ * Parsed sample pipeline YAML structure.
+ */
+export interface ParsedSampleYaml {
+    paradigm?: string;
+    pipelineConfig?: {
+        language?: string;
+        paradigm?: string;
+    };
+    jobConfig?: {
+        runner?: string;
+    };
+    nodes?: SampleYamlNode[];
+    edges?: SampleYamlEdge[];
+    runtimeVariables?: SampleRuntimeVariable[];
+}
+
+/**
  * Formats a sample filename base into a human-readable title.
  * 
  * @param baseName The file name without extension.
@@ -31,7 +77,10 @@ export function formatSampleTitle(baseName: string): string {
  * @param edges List of pipeline edges
  * @returns Formatted flow string (e.g. "PubSub Connector ➔ Parse Message ➔ [BigQuery, Log Message]")
  */
-export function computePipelineFlow(nodes: any[], edges: any[]): string {
+export function computePipelineFlow(
+    nodes?: readonly SampleYamlNode[] | null,
+    edges?: readonly SampleYamlEdge[] | null
+): string {
     if (!nodes || !Array.isArray(nodes) || nodes.length === 0) {
         return '';
     }
@@ -43,7 +92,7 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
 
     for (const node of nodes) {
         const id = String(node.id);
-        const label = node.data?.label || node.id || 'Unnamed';
+        const label = node.data?.label || String(node.id || 'Unnamed');
         const type = node.data?.type || 'STEP';
         const x = node.position?.x ?? 0;
         const y = node.position?.y ?? 0;
@@ -56,8 +105,9 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
         for (const edge of edges) {
             const src = String(edge.source);
             const tgt = String(edge.target);
-            if (nodeMap.has(src) && nodeMap.has(tgt)) {
-                adj.get(src)!.push(tgt);
+            const neighbors = adj.get(src);
+            if (neighbors && nodeMap.has(tgt)) {
+                neighbors.push(tgt);
                 inDegree.set(tgt, (inDegree.get(tgt) || 0) + 1);
             }
         }
@@ -73,8 +123,9 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
 
     // Sort root layer: SOURCE types first, then left-to-right (x), then top-to-bottom (y)
     currentLayer.sort((a, b) => {
-        const na = nodeMap.get(a)!;
-        const nb = nodeMap.get(b)!;
+        const na = nodeMap.get(a);
+        const nb = nodeMap.get(b);
+        if (!na || !nb) return 0;
         if (na.type === 'SOURCE' && nb.type !== 'SOURCE') return -1;
         if (nb.type === 'SOURCE' && na.type !== 'SOURCE') return 1;
         return na.x - nb.x || na.y - nb.y;
@@ -84,7 +135,7 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
     const visited = new Set<string>();
 
     while (currentLayer.length > 0) {
-        const labels = currentLayer.map(id => nodeMap.get(id)!.label);
+        const labels = currentLayer.map(id => nodeMap.get(id)?.label ?? id);
         if (labels.length === 1) {
             flowSegments.push(labels[0]);
         } else {
@@ -106,8 +157,9 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
         }
 
         currentLayer = Array.from(nextLayerCandidates).sort((a, b) => {
-            const na = nodeMap.get(a)!;
-            const nb = nodeMap.get(b)!;
+            const na = nodeMap.get(a);
+            const nb = nodeMap.get(b);
+            if (!na || !nb) return 0;
             return na.x - nb.x || na.y - nb.y;
         });
     }
@@ -117,7 +169,7 @@ export function computePipelineFlow(nodes: any[], edges: any[]): string {
     if (unvisited.length > 0) {
         const remainingLabels = unvisited
             .sort((a, b) => (a.position?.x ?? 0) - (b.position?.x ?? 0))
-            .map(n => n.data?.label || n.id);
+            .map(n => n.data?.label || String(n.id ?? 'Unnamed'));
         if (flowSegments.length === 0) {
             return remainingLabels.join(' ➔ ');
         }
@@ -143,10 +195,12 @@ export function buildSampleReadmeMarkdown(
     filename: string,
     flow: string,
     runner: string,
-    parsed: any
+    parsed: ParsedSampleYaml | null | undefined
 ): string {
-    const nodes: any[] = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
-    const runtimeVariables: any[] = Array.isArray(parsed?.runtimeVariables) ? parsed.runtimeVariables : [];
+    const nodes: SampleYamlNode[] = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
+    const runtimeVariables: SampleRuntimeVariable[] = Array.isArray(parsed?.runtimeVariables)
+        ? parsed.runtimeVariables
+        : [];
 
     const lines: string[] = [
         `# ${title}`,
@@ -275,11 +329,12 @@ export async function getSamplePipelines(context: vscode.ExtensionContext): Prom
                 let runner = 'Local';
                 let flow = '';
                 let nodesCount = 0;
-                let parsedYaml: any = null;
+                let parsedYaml: ParsedSampleYaml | null = null;
 
                 try {
-                    parsedYaml = YAML.parse(content);
-                    if (parsedYaml) {
+                    const rawParsed: unknown = YAML.parse(content);
+                    if (rawParsed && typeof rawParsed === 'object') {
+                        parsedYaml = rawParsed as ParsedSampleYaml;
                         language = parsedYaml.pipelineConfig?.language || 'PySpark';
                         if (parsedYaml.jobConfig?.runner) {
                             runner = parsedYaml.jobConfig.runner;

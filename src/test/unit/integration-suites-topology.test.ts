@@ -19,7 +19,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { validateDagTopology, DagNode, DagEdge } from '../../dagValidator';
+import { validateDagTopology, type DagNode, type DagEdge } from '../../shared/dagValidator';
 import { PIPELINE_FILE_EXT } from '../../core/constants';
 
 interface SparkFileContent {

@@ -10,24 +10,24 @@
  * SystemInstructionsField updates.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { CsvIOSinkProperties, CsvSinkProperties } from './CsvIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { CsvIOSinkProperties, CsvSinkProperties, type CsvIOSinkNode } from './CsvIO';
 
 describe('CsvIOSinkProperties (SNK14 CsvSink)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports CsvSinkProperties as an alias for CsvIOSinkProperties', () => {
@@ -35,7 +35,7 @@ describe('CsvIOSinkProperties (SNK14 CsvSink)', () => {
   });
 
   it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
-    const mockNode: any = {
+    const mockNode: CsvIOSinkNode = {
       data: {
         label: 'CsvSink',
         type: 'SINK',
@@ -66,7 +66,7 @@ describe('CsvIOSinkProperties (SNK14 CsvSink)', () => {
   });
 
   it('renders populated Azure Blob properties with dialect overrides and compression normalization', () => {
-    const mockNode: any = {
+    const mockNode: CsvIOSinkNode = {
       data: {
         label: 'CsvSink',
         spark_transform: 'CsvSink',
@@ -115,7 +115,7 @@ describe('CsvIOSinkProperties (SNK14 CsvSink)', () => {
   });
 
   it('propagates changes across all CSV sink fields and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: CsvIOSinkNode = {
       data: {
         properties: {
           path: 'gs://my-bucket/csv/',

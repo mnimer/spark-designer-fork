@@ -32,16 +32,22 @@ describe('usePipelinePersistence (P6 autosave)', () => {
     nodes: [{ id: 'n1', type: 'pipeline', position: { x: 0, y: 0 }, data: { label: 'Node 1', type: 'SOURCE', iconName: 'Radio' } }],
     edges: [],
     runtimeVariables: [{ key: 'LOG_LEVEL', value: 'INFO' }],
-    jobConfig: { runner: 'DirectRunner' },
+    jobConfig: { runner: 'Local' },
     pipelineConfig: { language: 'Python', outputFolder: 'test', needsRebuild: false },
   };
 
-  it('serializes pipeline state into valid YAML with paradigm as the first top-level key (SDP1)', () => {
+  it('serializes pipeline state into valid YAML with paradigm as the first top-level key and normalizes unknown runners to Local (SDP1, CLN2)', () => {
     const yaml = serializePipeline(sampleState);
     expect(yaml.startsWith('paradigm: imperative\n')).toBe(true);
     expect(yaml).toContain('Node 1');
     expect(yaml).toContain('LOG_LEVEL');
-    expect(yaml).toContain('DirectRunner');
+    expect(yaml).toContain('runner: Local');
+
+    const legacyYaml = serializePipeline({
+      ...sampleState,
+      jobConfig: { runner: 'LegacyRunner' },
+    });
+    expect(legacyYaml).toContain('runner: Local');
 
     const sdpYaml = serializePipeline({
       ...sampleState,
@@ -249,7 +255,7 @@ describe('usePipelinePersistence (P6 autosave)', () => {
       nodes: [{ id: 'n1', type: 'pipeline', position: { x: 10, y: 20 }, data: { label: 'Node 1', type: 'SOURCE', iconName: 'Radio' } }],
       edges: [],
       runtimeVariables: [{ key: 'LOG_LEVEL', value: 'INFO' }],
-      jobConfig: { runner: 'DirectRunner' },
+      jobConfig: { runner: 'Local' },
       pipelineConfig: { language: 'Python', outputFolder: 'test', needsRebuild: false },
       isLoaded: true,
       vscode: { postMessage: mockPostMessage },

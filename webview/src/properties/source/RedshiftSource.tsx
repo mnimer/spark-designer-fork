@@ -40,11 +40,11 @@ export interface RedshiftSourcePropertiesProps {
         secretName?: string;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
     };
   };
-  onChange: (properties: Record<string, any>) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

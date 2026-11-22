@@ -20,19 +20,19 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * React Flow node shape for the Parse Message step transform.
  */
-interface ParseMessageNode {
+export interface ParseMessageNode {
   data: {
     label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
-      messageType?: 'JSON' | 'Base64' | 'String';
+      messageType?: 'JSON' | 'Base64' | 'String' | string;
       system_instructions?: string;
       special_instructions?: string;
       codeGenerationPrompt?: string;
       prompt?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -40,9 +40,9 @@ interface ParseMessageNode {
 /**
  * Props for the {@link ParseMessageProperties} component.
  */
-interface ParseMessagePropertiesProps {
+export interface ParseMessagePropertiesProps {
   node: ParseMessageNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

@@ -26,7 +26,7 @@
 import * as yaml from 'yaml';
 import { GoogleGenAI } from '@google/genai';
 import { isSdpGeneratedProject } from '../../../codegen/ReadOnlyCheckRunner';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import { buildExecutionPlan, type ExecutionPlan } from '../../../shared/executionPlanner';
 import { buildSdpPlan, type SdpExecutionPlan } from '../../../shared/sdpPlanner';
 import type { DagEdge, DagNode } from '../../../shared/dagValidator';

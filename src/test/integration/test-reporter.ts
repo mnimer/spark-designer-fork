@@ -25,7 +25,7 @@ import {
     EvaluatorFinding,
     PromptRemediationDirective,
 } from './evaluators/types';
-import { DEFAULT_GEMINI_MODEL } from '../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../core/constants';
 
 export interface TestReportEntry {
     testName: string;

@@ -203,7 +203,7 @@ describe('A1 — Message Handler Registry & Dispatcher', () => {
 
             handleShowOutputChannel(ctx, { command: 'showOutputChannel' });
 
-            expect(vscode.window.createOutputChannel).toHaveBeenCalledWith('Dataflow Designer');
+            expect(vscode.window.createOutputChannel).toHaveBeenCalledWith('Spark Designer');
         });
     });
 
@@ -216,7 +216,7 @@ describe('A1 — Message Handler Registry & Dispatcher', () => {
                 postToWebview: vi.fn()
             };
 
-            handleOpenExternal(ctx, { command: 'openExternal', url: 'https://cloud.google.com/dataflow' });
+            handleOpenExternal(ctx, { command: 'openExternal', url: 'https://cloud.google.com/dataproc' });
 
             expect(mockOpen).toHaveBeenCalledTimes(1);
         });

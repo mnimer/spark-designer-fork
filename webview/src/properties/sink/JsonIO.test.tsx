@@ -9,24 +9,24 @@
  * ignoreNullFields, timestampFormat, dateFormat, lineSep, and SystemInstructionsField updates.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { JsonIOSinkProperties, JsonSinkProperties } from './JsonIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { JsonIOSinkProperties, JsonSinkProperties, type JsonIOSinkNode } from './JsonIO';
 
 describe('JsonIOSinkProperties (SNK15 JsonSink)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports JsonSinkProperties as an alias for JsonIOSinkProperties', () => {
@@ -34,7 +34,7 @@ describe('JsonIOSinkProperties (SNK15 JsonSink)', () => {
   });
 
   it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
-    const mockNode: any = {
+    const mockNode: JsonIOSinkNode = {
       data: {
         label: 'JsonSink',
         type: 'SINK',
@@ -61,7 +61,7 @@ describe('JsonIOSinkProperties (SNK15 JsonSink)', () => {
   });
 
   it('renders populated HDFS and formatting properties with legacy compression normalization', () => {
-    const mockNode: any = {
+    const mockNode: JsonIOSinkNode = {
       data: {
         label: 'JsonSink',
         spark_transform: 'JsonSink',
@@ -104,7 +104,7 @@ describe('JsonIOSinkProperties (SNK15 JsonSink)', () => {
   });
 
   it('propagates changes across all JSON sink fields and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: JsonIOSinkNode = {
       data: {
         properties: {
           path: 'gs://my-bucket/json/',

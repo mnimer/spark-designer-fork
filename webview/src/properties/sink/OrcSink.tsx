@@ -11,7 +11,6 @@
  * column indexing options, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -22,7 +21,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const ORC_SAVE_MODES: SelectFieldOption[] = [
+const ORC_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -32,7 +31,7 @@ export const ORC_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x ORC compression codecs.
  */
-export const ORC_COMPRESSION_CODECS: SelectFieldOption[] = [
+const ORC_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'snappy', label: 'snappy (Default, fast columnar compression)' },
   { value: 'zlib', label: 'zlib (High compression ratio)' },
   { value: 'zstd', label: 'zstd (Balanced high ratio and throughput)' },
@@ -45,8 +44,10 @@ export const ORC_COMPRESSION_CODECS: SelectFieldOption[] = [
  */
 export interface OrcSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -65,7 +66,7 @@ export interface OrcSinkNode {
       bloomFilterFpp?: string | number;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -75,7 +76,7 @@ export interface OrcSinkNode {
  */
 export interface OrcSinkPropertiesProps {
   node: OrcSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

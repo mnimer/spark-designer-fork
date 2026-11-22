@@ -305,7 +305,7 @@ describe('evaluateSdpCompatibility and runtime gating', () => {
         });
         expect(
             normalizeSdpJobConfig({
-                runner: 'DirectRunner',
+                runner: 'UnknownLegacyRunner',
                 runtimeVersion: '',
             })
         ).toEqual({
@@ -315,7 +315,7 @@ describe('evaluateSdpCompatibility and runtime gating', () => {
         });
         expect(
             normalizeSdpJobConfig({
-                runner: 'DirectRunner',
+                runner: 'UnknownLegacyRunner',
                 runtimeVersion: '4.0',
             })
         ).toEqual({
@@ -325,7 +325,7 @@ describe('evaluateSdpCompatibility and runtime gating', () => {
         });
         expect(
             normalizeSdpJobConfig({
-                runner: 'DirectRunner',
+                runner: 'UnknownLegacyRunner',
                 runtimeVersion: '3.5',
             })
         ).toEqual({
@@ -381,14 +381,14 @@ describe('evaluateSdpCompatibility and runtime gating', () => {
             runner: 'ServerlessSpark',
             runtimeVersion: '4.0',
         });
-        expect(normalizeSdpJobConfig({ runner: 'Spark' })).toEqual({
+        expect(normalizeSdpJobConfig({ runner: 'ServerlessSpark', runtimeVersion: '4.2-connect' })).toEqual({
             runner: 'ServerlessSpark',
             runtimeVersion: '4.0',
         });
         expect(
-            buildSdpPlan(simpleNodes, simpleEdges, normalizeSdpJobConfig({ runner: 'Spark' })).runtimeArtifacts.profile.id
+            buildSdpPlan(simpleNodes, simpleEdges, normalizeSdpJobConfig({ runner: 'ServerlessSpark' })).runtimeArtifacts.profile.id
         ).toBe('serverless_4.0');
-        expect(normalizeSdpJobConfig({ runner: 'Spark', runtimeVersion: '3.0' })).toEqual({
+        expect(normalizeSdpJobConfig({ runner: 'ServerlessSpark', runtimeVersion: '3.0' })).toEqual({
             runner: 'ServerlessSpark',
             runtimeVersion: '3.0',
         });
@@ -396,7 +396,7 @@ describe('evaluateSdpCompatibility and runtime gating', () => {
             buildSdpPlan(
                 simpleNodes,
                 simpleEdges,
-                normalizeSdpJobConfig({ runner: 'Spark', runtimeVersion: '3.0' })
+                normalizeSdpJobConfig({ runner: 'ServerlessSpark', runtimeVersion: '3.0' })
             ).runtimeArtifacts.profile.id
         ).toBe('serverless_3.0');
         expect(

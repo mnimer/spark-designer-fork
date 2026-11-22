@@ -4,9 +4,10 @@
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { Radio } from 'lucide-react';
+import type { PropertyFormNode } from '../../catalog/propertyFormRegistry';
 import { CollapsibleSection } from './CollapsibleSection';
 import { PropertyField } from './PropertyField';
 import { SelectField, type SelectFieldOption } from './SelectField';
@@ -21,9 +22,9 @@ import type {
  */
 export interface StreamingSinkSettingsFieldProps {
   /** Selected React Flow sink node. */
-  node: any;
+  node: PropertyFormNode | null | undefined;
   /** Callback invoked with the merged sink properties object. */
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
   /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
   paradigm?: PipelineParadigm;
 }
@@ -49,7 +50,7 @@ const SINK_TRIGGER_OPTIONS: SelectFieldOption[] = [
  * @returns True when the node is a streaming sink or already defines streaming sink overrides.
  */
 export function shouldShowStreamingSinkSettings(
-  node: any,
+  node?: PropertyFormNode | null,
   paradigm?: PipelineParadigm
 ): boolean {
   if (paradigm === 'sdp' || node?.data?.paradigm === 'sdp') {

@@ -23,17 +23,17 @@ export interface LogEntry {
  * Props for the ExecutionTerminal component.
  */
 export interface ExecutionTerminalProps {
-  /** Currently selected runner identifier ('DirectRunner' | 'Dataflow' | 'Spark') */
+  /** Currently selected runner identifier ('Local' | 'DataprocCluster' | 'ServerlessSpark'). */
   runner: string;
-  /** Command line string to preview in the terminal header */
+  /** Command line string to preview in the terminal header. */
   displayedCommand: string;
-  /** Array of streamed log entries from stdout/stderr */
+  /** Array of streamed log entries from stdout and stderr. */
   pipelineLogs?: LogEntry[];
-  /** Optional Cloud Console URL for the active or completed job */
+  /** Optional Cloud Console URL for the active or completed job. */
   gcpConsoleUrl?: string;
-  /** Callback invoked when the user clicks the open console button */
+  /** Callback invoked when the user clicks the open console button. */
   onOpenConsole?: (url: string) => void;
-  /** Callback invoked when the user clicks the clear logs button */
+  /** Callback invoked when the user clicks the clear logs button. */
   onClearLogs?: () => void;
 }
 
@@ -78,13 +78,11 @@ export const ExecutionTerminal: React.FC<ExecutionTerminalProps> = ({
             EXECUTION SANDBOX
           </span>
           <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-300 border border-slate-700">
-            {runner === 'Local' || runner === 'DirectRunner'
-              ? 'local'
-              : runner === 'DataprocCluster'
-                ? 'dataproc-cluster'
-                : runner === 'Dataflow'
-                  ? 'dataflow'
-                  : 'serverless-spark'}
+            {runner === 'DataprocCluster'
+              ? 'dataproc-cluster'
+              : runner === 'ServerlessSpark'
+                ? 'serverless-spark'
+                : 'local'}
           </span>
         </div>
 

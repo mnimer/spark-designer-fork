@@ -10,17 +10,23 @@
  * `test_imports` for `src.transforms`, and `sdp_dry_run`).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
     CHECK_IDS,
     CommandExecutor,
     GeneratedFile,
     ReadOnlyCheckRunner,
+    buildCheckCommandEnv,
+    cleanupCheckWorkspaceArtifacts,
     defaultCommandExecutor,
     expectedSourceFiles,
     isSdpDryRunEnvironmentSkip,
     isSdpGeneratedProject,
     isStaticSdpSparkConfigKey,
+    resolveCheckCacheRoot,
     scanSdpPythonViolations,
     truncateCheckOutput,
     validateSdpSpecYaml,
@@ -584,5 +590,147 @@ describe('helpers', () => {
         );
         expect(bad.exitCode).toBe(3);
         expect(bad.stderr).toBe('no');
+    });
+});
+
+describe('disk hygiene and cache isolation (CLN11)', () => {
+    const tempDirs: string[] = [];
+
+    /**
+     * Creates a temporary directory in `os.tmpdir()` tracked for `afterEach` cleanup.
+     *
+     * @param prefix Directory name prefix.
+     * @returns Absolute path of the created directory.
+     */
+    function createTempRoot(prefix: string): string {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+        tempDirs.push(dir);
+        return dir;
+    }
+
+    afterEach(() => {
+        while (tempDirs.length > 0) {
+            const dir = tempDirs.pop();
+            if (dir) {
+                fs.rmSync(dir, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('routes PIP_CACHE_DIR and Ivy to shared cacheRoot and isolates XDG_CACHE_HOME across syntax, pytest, and sdp_dry_run', async () => {
+        const cacheRoot = createTempRoot('check-shared-cache-');
+        const observedCwds: string[] = [];
+        const observedEnvs: Array<Record<string, string | undefined> | undefined> = [];
+
+        const executor = vi.fn<CommandExecutor>(async (_cmd, _args, opts) => {
+            observedCwds.push(opts.cwd);
+            observedEnvs.push(opts.env);
+            expect(fs.existsSync(path.join(opts.cwd, '.xdg-cache'))).toBe(true);
+            return { exitCode: 0, stdout: 'ok', stderr: '' };
+        });
+
+        const runner = new ReadOnlyCheckRunner(executor, 'python3', 'spark-pipelines', cacheRoot, {
+            PATH: process.env.PATH,
+        });
+        const results = await runner.run({
+            files: SDP_FILES,
+            language: 'python',
+            baseName: 'medallion_orders',
+            runnerFiles: ['run_sdp_local.sh'],
+        });
+
+        expect(results.every((r) => r.status === 'passed')).toBe(true);
+        expect(observedEnvs).toHaveLength(3);
+        for (let i = 0; i < observedEnvs.length; i++) {
+            const env = observedEnvs[i];
+            const cwd = observedCwds[i];
+            expect(env?.PIP_CACHE_DIR).toBe(path.join(cacheRoot, 'pip'));
+            expect(env?.SPARK_IVY_CACHE_DIR).toBe(path.join(cacheRoot, 'ivy2'));
+            expect(env?.XDG_CACHE_HOME).toBe(path.join(cwd, '.xdg-cache'));
+            expect(env?.PYTHONDONTWRITEBYTECODE).toBe('1');
+            expect(env?.PYTEST_ADDOPTS).toContain('-p no:cacheprovider');
+            expect(fs.existsSync(cwd)).toBe(false);
+        }
+    });
+
+    it('cleans per-run .venv, .spark-ivy, .pytest_cache, __pycache__, and XDG scratch in finally on failure or thrown timeout while preserving cacheRoot', async () => {
+        const cacheRoot = createTempRoot('check-cache-protect-');
+        const sharedPipWheel = path.join(cacheRoot, 'pip', 'cached.whl');
+        const sharedJdkRelease = path.join(cacheRoot, 'jdk-21', 'jdk-21.0.13', 'release');
+        fs.mkdirSync(path.dirname(sharedPipWheel), { recursive: true });
+        fs.mkdirSync(path.dirname(sharedJdkRelease), { recursive: true });
+        fs.writeFileSync(sharedPipWheel, 'wheel', 'utf8');
+        fs.writeFileSync(sharedJdkRelease, 'JAVA_VERSION="21.0.13"\n', 'utf8');
+
+        let leakedWorkDir = '';
+        const throwingExecutor = vi.fn<CommandExecutor>(async (_cmd, args, opts) => {
+            leakedWorkDir = opts.cwd;
+            await fs.promises.mkdir(path.join(opts.cwd, '.venv'), { recursive: true });
+            await fs.promises.mkdir(path.join(opts.cwd, '.spark-ivy', 'jars'), { recursive: true });
+            await fs.promises.mkdir(path.join(opts.cwd, '.pytest_cache'), { recursive: true });
+            await fs.promises.mkdir(path.join(opts.cwd, 'src', '__pycache__'), { recursive: true });
+            await fs.promises.writeFile(path.join(opts.cwd, 'src', '__pycache__', 'pipeline.cpython-312.pyc'), 'pyc');
+            if (opts.env?.XDG_CACHE_HOME) {
+                await fs.promises.writeFile(path.join(opts.env.XDG_CACHE_HOME, 'scratch.tmp'), 'tmp');
+            }
+            if (args.includes('pytest')) {
+                throw new Error('Command timed out');
+            }
+            return { exitCode: 0, stdout: '', stderr: '' };
+        });
+
+        await expect(
+            new ReadOnlyCheckRunner(throwingExecutor).run({
+                files: PYSPARK_FILES,
+                language: 'python',
+                baseName: 'orders',
+                runnerFiles: ['run_local.sh'],
+                cacheRoot,
+            })
+        ).rejects.toThrow('Command timed out');
+
+        expect(leakedWorkDir).not.toBe('');
+        expect(fs.existsSync(leakedWorkDir)).toBe(false);
+        expect(fs.readFileSync(sharedPipWheel, 'utf8')).toBe('wheel');
+        expect(fs.readFileSync(sharedJdkRelease, 'utf8')).toContain('21.0.13');
+    });
+
+    it('cleans per-run artifacts inside an existing workspace when removeProjectDir is false and honors boundary overrides', async () => {
+        const root = createTempRoot('check-inplace-clean-');
+        const cacheRoot = path.join(root, 'shared-cache');
+        const projectDir = path.join(root, 'project');
+
+        fs.mkdirSync(path.join(cacheRoot, 'ivy2'), { recursive: true });
+        fs.writeFileSync(path.join(cacheRoot, 'ivy2', 'keep.jar'), 'jar', 'utf8');
+
+        fs.mkdirSync(path.join(projectDir, 'src', '__pycache__'), { recursive: true });
+        fs.mkdirSync(path.join(projectDir, 'tests', '__pycache__'), { recursive: true });
+        fs.mkdirSync(path.join(projectDir, '.venv'), { recursive: true });
+        fs.mkdirSync(path.join(projectDir, '.spark-ivy'), { recursive: true });
+        fs.mkdirSync(path.join(projectDir, '.pytest_cache'), { recursive: true });
+        fs.mkdirSync(path.join(projectDir, '.xdg-cache'), { recursive: true });
+        fs.writeFileSync(path.join(projectDir, 'src', 'pipeline.py'), 'x = 1\n', 'utf8');
+
+        expect(resolveCheckCacheRoot(cacheRoot, {})).toBe(path.resolve(cacheRoot));
+        const builtEnv = buildCheckCommandEnv(projectDir, { cacheRoot, baseEnv: { PYTEST_ADDOPTS: '-k smoke' } });
+        expect(builtEnv.env.PYTEST_ADDOPTS).toBe('-k smoke -p no:cacheprovider');
+
+        const removed = await cleanupCheckWorkspaceArtifacts(projectDir, {
+            cacheRoot,
+            xdgScratchDir: builtEnv.xdgScratchDir,
+            removeProjectDir: false,
+        });
+        expect(removed.length).toBeGreaterThanOrEqual(6);
+        expect(fs.existsSync(path.join(projectDir, 'src', 'pipeline.py'))).toBe(true);
+        expect(fs.existsSync(path.join(projectDir, 'src', '__pycache__'))).toBe(false);
+        expect(fs.existsSync(path.join(projectDir, 'tests', '__pycache__'))).toBe(false);
+        expect(fs.existsSync(path.join(projectDir, '.venv'))).toBe(false);
+        expect(fs.existsSync(path.join(projectDir, '.spark-ivy'))).toBe(false);
+        expect(fs.existsSync(path.join(projectDir, '.pytest_cache'))).toBe(false);
+        expect(fs.existsSync(path.join(projectDir, '.xdg-cache'))).toBe(false);
+
+        // Boundary guard: never deletes shared cacheRoot even if passed directly as projectDir.
+        await cleanupCheckWorkspaceArtifacts(cacheRoot, { cacheRoot, removeProjectDir: true });
+        expect(fs.readFileSync(path.join(cacheRoot, 'ivy2', 'keep.jar'), 'utf8')).toBe('jar');
     });
 });

@@ -371,7 +371,7 @@ describe('codegen skill library invariants', () => {
                 id: `n_${idx}`,
                 data: { type: 'SOURCE', spark_transform: t, system_instructions: 'x' },
             }));
-            const edges = [{ targetHandle: 'side_input' }, { sourceHandle: 'valid' }];
+            const edges = [{ targetHandle: 'left' }, { targetHandle: 'right' }, { sourceHandle: 'valid' }];
             const { prompt } = new CodegenPromptBuilder(LIBRARY).build({
                 parsedPipeline: { nodes, edges },
                 redactedYaml: 'nodes: []',

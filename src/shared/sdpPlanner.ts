@@ -672,34 +672,12 @@ export function normalizeSdpJobConfig<T extends Record<string, unknown> = Record
     const lowerVersion = rawVersion.toLowerCase();
 
     if (
-        lowerRunner === '' ||
-        lowerRunner === 'local' ||
-        lowerRunner === 'directrunner'
+        lowerRunner === 'serverless_4.0' ||
+        lowerRunner === 'serverless_3.0' ||
+        lowerRunner === 'cluster_4.0' ||
+        lowerRunner === 'cluster_3.0' ||
+        lowerRunner === 'local_4.2_connect'
     ) {
-        const canonicalLocalRunner =
-            lowerRunner === '' || lowerRunner === 'directrunner' ? 'Local' : rawRunner;
-        if (lowerVersion === '' || lowerVersion === '4.0') {
-            return {
-                ...base,
-                runner: canonicalLocalRunner,
-                runtimeVersion: '4.2-connect',
-                useSparkConnect: true,
-            } as unknown as T;
-        }
-        if (lowerVersion === '4.2-connect' || lowerVersion === '4.2_connect') {
-            return {
-                ...base,
-                runner: canonicalLocalRunner,
-                runtimeVersion: '4.2-connect',
-                useSparkConnect: true,
-            } as unknown as T;
-        }
-        if (lowerRunner === 'directrunner') {
-            return {
-                ...base,
-                runner: 'Local',
-            } as unknown as T;
-        }
         return base as unknown as T;
     }
 
@@ -725,10 +703,8 @@ export function normalizeSdpJobConfig<T extends Record<string, unknown> = Record
     if (
         lowerRunner === 'serverlessspark' ||
         lowerRunner === 'serverless_spark' ||
-        lowerRunner === 'serverless' ||
-        lowerRunner === 'spark'
+        lowerRunner === 'serverless'
     ) {
-        const canonicalRunner = lowerRunner === 'spark' ? 'ServerlessSpark' : base.runner;
         if (
             lowerVersion === '' ||
             lowerVersion === '4.2-connect' ||
@@ -736,19 +712,35 @@ export function normalizeSdpJobConfig<T extends Record<string, unknown> = Record
         ) {
             return {
                 ...base,
-                runner: canonicalRunner,
                 runtimeVersion: '4.0',
-            } as unknown as T;
-        }
-        if (lowerRunner === 'spark') {
-            return {
-                ...base,
-                runner: 'ServerlessSpark',
             } as unknown as T;
         }
         return base as unknown as T;
     }
 
+    const canonicalLocalRunner = lowerRunner === 'local' ? rawRunner : 'Local';
+    if (lowerVersion === '' || lowerVersion === '4.0') {
+        return {
+            ...base,
+            runner: canonicalLocalRunner,
+            runtimeVersion: '4.2-connect',
+            useSparkConnect: true,
+        } as unknown as T;
+    }
+    if (lowerVersion === '4.2-connect' || lowerVersion === '4.2_connect') {
+        return {
+            ...base,
+            runner: canonicalLocalRunner,
+            runtimeVersion: '4.2-connect',
+            useSparkConnect: true,
+        } as unknown as T;
+    }
+    if (lowerRunner !== '' && lowerRunner !== 'local') {
+        return {
+            ...base,
+            runner: 'Local',
+        } as unknown as T;
+    }
     return base as unknown as T;
 }
 

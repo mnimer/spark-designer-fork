@@ -83,11 +83,6 @@ export interface RawClusterJob {
 }
 
 /**
- * Backward-compatible alias for legacy tests and consumers.
- */
-export type DataflowJob = SparkJob;
-
-/**
  * Categorizes a Spark batch or cluster job state into one of the three standard groups:
  * 'Running' (1st), 'Cancelled' (2nd), or 'Completed' (3rd).
  *
@@ -910,11 +905,6 @@ export class SparkTreeProvider implements vscode.TreeDataProvider<DataItem> {
         return [];
     }
 }
-
-/**
- * Backward-compatible alias for `SparkTreeProvider`.
- */
-export { SparkTreeProvider as DataFlowTreeProvider };
 
 /**
  * Represents individual items (categories, folders, pipeline files, and batch/job nodes)

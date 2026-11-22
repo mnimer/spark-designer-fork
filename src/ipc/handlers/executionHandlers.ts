@@ -12,6 +12,7 @@ import { EditorSession } from '../../editor/EditorSession';
 import { resolveOutputFolder } from '../../editor/outputFolder';
 import { savePipelineFiles } from '../../editor/pipelineFileWriter';
 import { isSafeFolderPath, isAllowedExecutableScript } from '../../security/scriptGuard';
+import { normalizeSparkRunner } from '../../shared/types';
 import {
     PLACEHOLDER_PROJECT_ID,
     buildRunnerEnvironment,
@@ -118,7 +119,7 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
             return;
         }
 
-        const runner = message.jobConfig?.runner || 'Local';
+        const runner = normalizeSparkRunner(message.jobConfig?.runner);
         const resolveCandidates = runnerScriptCandidates as (
             runnerName: string,
             paradigm?: string
@@ -191,11 +192,9 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
                         const job = trackJobId(text);
                         if (job) {
                             activeRemoteJobBySession.set(session, job);
-                            const label = job.runner === 'Dataflow'
-                                ? 'Dataflow Job ID'
-                                : job.runner === 'DataprocCluster'
-                                    ? 'Dataproc Cluster Job ID'
-                                    : 'Serverless Spark Batch ID';
+                            const label = job.runner === 'DataprocCluster'
+                                ? 'Dataproc Cluster Job ID'
+                                : 'Serverless Spark Batch ID';
                             channel.appendLine(`[${new Date().toLocaleTimeString()}] Detected ${label}: ${job.jobId}`);
                             ctx.postToWebview({ command: 'pipelineJobIdDetected', ...job });
                         }
@@ -274,7 +273,6 @@ export async function handleStopPipeline(ctx: MessageContext, message: any): Pro
 
     const isRemoteSparkRunner =
         effectiveRunner === 'ServerlessSpark' ||
-        effectiveRunner === 'Spark' ||
         effectiveRunner === 'DataprocCluster';
     const shouldCancelRemote = Boolean(
         effectiveJobId &&
@@ -348,7 +346,6 @@ export async function handleRegenerateCodeCommand(ctx: MessageContext, message: 
         await savePipelineFiles(
             targetUri,
             message.data,
-            undefined,
             undefined,
             undefined,
             undefined,

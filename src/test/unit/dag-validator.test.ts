@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { validateDagTopology, type DagEdge, type DagNode } from '../../dagValidator';
+import { validateDagTopology, type DagEdge, type DagNode } from '../../shared/dagValidator';
 
 describe('Extension Host validateDagTopology — Core Topology & Direct Source->Sink', () => {
     it('approves a valid linear pipeline graph and direct SOURCE -> SINK pipelines', () => {
@@ -171,10 +171,46 @@ describe('Extension Host validateDagTopology — Join Handles, Stream-Static & S
         expect(duplicateLeft.isValid).toBe(false);
         expect(duplicateLeft.invalidUpstreamNodeIds).toEqual(['join_1']);
         expect(duplicateLeft.errors[0]).toContain('at most 1 incoming edge per handle');
+
+        // Broadcast lookup Join (broadcastRight: true) with explicit left and right handles passes cleanly
+        const broadcastLookupJoin: DagNode = {
+            id: 'join_lookup',
+            data: {
+                label: 'Broadcast Lookup',
+                type: 'STEP',
+                spark_transform: 'Join',
+                properties: { joinType: 'left_outer', broadcastRight: true },
+            },
+        };
+        const lookupValid = validateDagTopology(
+            [batchLeft, batchRight, broadcastLookupJoin, batchSink],
+            [
+                { id: 'e1', source: 'left_src', target: 'join_lookup', targetHandle: 'left' },
+                { id: 'e2', source: 'right_src', target: 'join_lookup', targetHandle: 'right' },
+                { id: 'e3', source: 'join_lookup', target: 'sink' },
+            ]
+        );
+        expect(lookupValid.isValid).toBe(true);
+        expect(Object.keys(lookupValid).sort()).toEqual([
+            'cycleEdgeIds',
+            'cycleNodeIds',
+            'cyclePathString',
+            'cyclePaths',
+            'errors',
+            'hasCycles',
+            'invalidUpstreamNodeIds',
+            'isValid',
+            'missingUpstreamNodeIds',
+            'nodeErrors',
+            'nodeWarnings',
+            'orphanNodeIds',
+            'sortedNodeIds',
+            'warnings',
+        ]);
     });
 
     it('enforces Spark Structured Streaming join type matrix on stream-static joins', () => {
-        // Streaming left + static right: inner, left_outer, left_semi, left_anti are valid; right_outer & full_outer are rejected
+        // Streaming left + static right allows inner, left_outer, left_semi, and left_anti while rejecting right_outer and full_outer
         for (const allowedType of ['inner', 'left', 'left_outer', 'left_semi', 'left_anti']) {
             const res = validateDagTopology(
                 [streamLeft, batchRight, makeJoin(allowedType), streamSinkWithCkpt],
@@ -200,7 +236,7 @@ describe('Extension Host validateDagTopology — Join Handles, Stream-Static & S
             expect(res.errors[0]).toContain('Stream-static Join');
         }
 
-        // Static left + streaming right: inner & right_outer pass; left, left_outer, left_semi, left_anti, full_outer fail
+        // Static left + streaming right allows inner and right_outer while rejecting left, left_outer, left_semi, left_anti, and full_outer
         for (const allowedType of ['inner', 'right', 'right_outer']) {
             const res = validateDagTopology(
                 [batchLeft, streamRight, makeJoin(allowedType), streamSinkWithCkpt],
@@ -281,7 +317,7 @@ describe('Extension Host validateDagTopology — Multi-Input, Watermark Warnings
         const s3: DagNode = { id: 's3', data: { label: 'S3', type: 'SOURCE', spark_transform: 'JsonSource' } };
         const sink: DagNode = { id: 'sink', data: { label: 'Sink', type: 'SINK', spark_transform: 'IcebergSink' } };
 
-        // UnionByName with 1 input fails; with 2 inputs passes
+        // UnionByName fails with 1 input and passes with 2 inputs
         const unionNode: DagNode = { id: 'u1', data: { label: 'Union', type: 'STEP', spark_transform: 'UnionByName' } };
         const unionOne = validateDagTopology(
             [s1, unionNode, sink],
@@ -304,7 +340,7 @@ describe('Extension Host validateDagTopology — Multi-Input, Watermark Warnings
         );
         expect(unionTwo.isValid).toBe(true);
 
-        // SetOperation with 1 input fails; with 2 inputs passes
+        // SetOperation fails with 1 input and passes with 2 inputs
         const setOpNode: DagNode = { id: 'set1', data: { label: 'Intersect', type: 'STEP', spark_transform: 'SetOperation' } };
         expect(
             validateDagTopology(

@@ -27,7 +27,7 @@ import type { CheckResult, GeneratedFile } from '../../../codegen/ReadOnlyCheckR
 /** Files from the generation call. */
 const FILES: GeneratedFile[] = [
     { filename: 'src/orders.py', content: 'bad' },
-    { filename: 'requirements.txt', content: 'apache-beam' },
+    { filename: 'requirements.txt', content: 'pyspark==4.0.*' },
 ];
 
 /** Review request with fixed templates. */
@@ -82,7 +82,7 @@ describe('reviewAndFix', () => {
         const outcome = await reviewAndFix(REQUEST, deps);
         expect(outcome.fixRounds).toBe(1);
         expect(outcome.files.find((f) => f.filename === 'src/orders.py')?.content).toBe('good');
-        expect(outcome.files.find((f) => f.filename === 'requirements.txt')?.content).toBe('apache-beam');
+        expect(outcome.files.find((f) => f.filename === 'requirements.txt')?.content).toBe('pyspark==4.0.*');
         expect(outcome.unresolved).toEqual([]);
         expect(deps.fixFn.mock.calls[0][0]).toContain('GENERATION PROMPT');
         expect(deps.onProgress).toHaveBeenCalledWith('Reviewer round 1: fixing 1 file(s): src/orders.py');

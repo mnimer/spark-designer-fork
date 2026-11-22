@@ -25,7 +25,7 @@ import { SystemInstructionsField } from '../../components/common/SystemInstructi
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /** Rate source format options in Spark Structured Streaming. */
-export const RATE_FORMAT_OPTIONS: SelectFieldOption[] = [
+const RATE_FORMAT_OPTIONS: SelectFieldOption[] = [
   { value: 'rate', label: 'rate (Wall-clock rowsPerSecond)' },
   { value: 'rate-micro-batch', label: 'rate-micro-batch (Deterministic per-batch advancement)' },
 ];
@@ -33,7 +33,7 @@ export const RATE_FORMAT_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the RateSource panel. */
 export interface RateSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -47,7 +47,7 @@ export interface RateSourceNode {
       advanceMillisPerBatch?: number | string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -55,7 +55,7 @@ export interface RateSourceNode {
 /** Props for the {@link RateSourceProperties} component. */
 export interface RateSourcePropertiesProps {
   node: RateSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

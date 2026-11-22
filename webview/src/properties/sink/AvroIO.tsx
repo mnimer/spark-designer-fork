@@ -11,7 +11,7 @@
  * recordNamespace, explicit avroSchema writer schema JSON, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -40,7 +40,7 @@ export const SAMPLE_AVRO_WRITER_SCHEMA = JSON.stringify(
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const AVRO_SAVE_MODES: SelectFieldOption[] = [
+const AVRO_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -50,7 +50,7 @@ export const AVRO_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.x spark-avro compression codecs.
  */
-export const AVRO_COMPRESSION_CODECS: SelectFieldOption[] = [
+const AVRO_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'snappy', label: 'snappy (Default, fast low-CPU compression)' },
   { value: 'deflate', label: 'deflate (Standard balanced Avro compression)' },
   { value: 'zstandard', label: 'zstandard (Modern high-ratio compression)' },
@@ -64,8 +64,10 @@ export const AVRO_COMPRESSION_CODECS: SelectFieldOption[] = [
  */
 export interface AvroIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -86,7 +88,7 @@ export interface AvroIOSinkNode {
       avroSchema?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -96,7 +98,7 @@ export interface AvroIOSinkNode {
  */
 export interface AvroIOSinkPropertiesProps {
   node: AvroIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

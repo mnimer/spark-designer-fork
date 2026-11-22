@@ -158,15 +158,27 @@ export const PropertyField: React.FC<PropertyFieldProps> = ({
 
   // Also extract suggestions from children if a <datalist> was passed as a child
   const optionsFromChildren: PropertyFieldOption[] = [];
-  React.Children.forEach(children, (child: any) => {
-    if (child && child.type === 'datalist' && child.props && child.props.children) {
-      React.Children.forEach(child.props.children, (opt: any) => {
-        if (opt && opt.props && opt.props.value !== undefined) {
+  React.Children.forEach(children, (child) => {
+    if (
+      React.isValidElement<{ children?: React.ReactNode }>(child) &&
+      child.type === 'datalist' &&
+      child.props?.children
+    ) {
+      React.Children.forEach(child.props.children, (opt) => {
+        if (
+          React.isValidElement<{
+            value?: unknown;
+            label?: string;
+            children?: React.ReactNode;
+          }>(opt) &&
+          opt.props?.value !== undefined
+        ) {
           optionsFromChildren.push({
             value: String(opt.props.value),
-            label: typeof opt.props.children === 'string'
-              ? opt.props.children
-              : (opt.props.label || String(opt.props.value)),
+            label:
+              typeof opt.props.children === 'string'
+                ? opt.props.children
+                : opt.props.label || String(opt.props.value),
           });
         }
       });

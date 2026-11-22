@@ -11,7 +11,6 @@
  * SchemaEditor, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -30,7 +29,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark JSON parsing modes for malformed records.
  */
-export const JSON_PARSE_MODES: SelectFieldOption[] = [
+const JSON_PARSE_MODES: SelectFieldOption[] = [
   { value: 'PERMISSIVE', label: 'PERMISSIVE (Capture malformed rows in _corrupt_record)' },
   { value: 'DROPMALFORMED', label: 'DROPMALFORMED (Drop malformed rows silently)' },
   { value: 'FAILFAST', label: 'FAILFAST (Abort job immediately on malformed row)' },
@@ -46,7 +45,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface JsonIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -69,7 +68,7 @@ export interface JsonIOSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -79,7 +78,7 @@ export interface JsonIOSourceNode {
  */
 export interface JsonIOSourcePropertiesProps {
   node: JsonIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

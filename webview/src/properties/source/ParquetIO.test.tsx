@@ -9,24 +9,28 @@
  * SchemaEditor, and SystemInstructionsField for ParquetIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { ParquetIOSourceProperties, ParquetSourceProperties } from './ParquetIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import {
+  ParquetIOSourceProperties,
+  ParquetSourceProperties,
+  type ParquetIOSourceNode,
+} from './ParquetIO';
 
 describe('ParquetIOSourceProperties (SRC13 ParquetSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports ParquetSourceProperties as an alias for ParquetIOSourceProperties', () => {
@@ -34,7 +38,7 @@ describe('ParquetIOSourceProperties (SRC13 ParquetSource)', () => {
   });
 
   it('renders default batch settings and flags required validation when path is empty', () => {
-    const mockNode: any = {
+    const mockNode: ParquetIOSourceNode = {
       data: {
         label: 'ParquetSource',
         spark_transform: 'ParquetSource',
@@ -58,7 +62,7 @@ describe('ParquetIOSourceProperties (SRC13 ParquetSource)', () => {
   });
 
   it('renders populated properties including streaming maxFilesPerTrigger and rebase modes', () => {
-    const mockNode: any = {
+    const mockNode: ParquetIOSourceNode = {
       data: {
         label: 'ParquetSource',
         spark_transform: 'ParquetSource',
@@ -95,7 +99,7 @@ describe('ParquetIOSourceProperties (SRC13 ParquetSource)', () => {
   });
 
   it('propagates changes for readMode, path, mergeSchema, rebase modes, maxFilesPerTrigger, SchemaEditor, and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: ParquetIOSourceNode = {
       data: {
         properties: {
           readMode: 'streaming',

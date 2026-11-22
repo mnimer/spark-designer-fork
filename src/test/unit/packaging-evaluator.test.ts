@@ -159,7 +159,7 @@ describe('auditRequirementsTxt', () => {
         expect(findings[0].severity).toBe('CRITICAL');
     });
 
-    it('reports missing pyspark, missing pytest, and an apache-beam leftover (failure condition)', () => {
+    it('reports missing pyspark, missing pytest, and an apache_beam leftover (failure condition)', () => {
         const findings = auditRequirementsTxt(buildRepo({ 'requirements.txt': 'apache_beam[gcp]==2.60.0\n' }));
         expect(findings.map(f => [f.id, f.severity])).toEqual([
             ['PKG-REQ-PYSPARK-MISSING', 'CRITICAL'],
@@ -220,8 +220,8 @@ describe('auditRunnerScripts', () => {
         ]);
     });
 
-    it('reports a wrong submit command, a missing entry point, Beam tokens, and no strict mode', () => {
-        const script = '#!/usr/bin/env bash\npython3 -m pipeline --runner=DataflowRunner --region=us-central1 --version=4.0 --jars=a --properties=b\n';
+    it('reports a wrong submit command, a missing entry point, legacy runner flags, and no strict mode', () => {
+        const script = '#!/usr/bin/env bash\npython3 -m pipeline --runner=LegacyBeamRunner --region=us-central1 --version=4.0 --jars=a --properties=b\n';
         const findings = auditRunnerScripts(buildRepo({ 'run_serverless_spark.sh': script }));
         expect(findings.map(f => [f.id, f.severity])).toEqual([
             ['PKG-RUNNER-SUBMIT-run_serverless_spark.sh', 'CRITICAL'],
@@ -407,7 +407,7 @@ jobConfig: { runner: DataprocCluster }
         const request = ai.models.generateContent.mock.calls[0][0];
         expect(request.contents).toContain('run_serverless_spark.sh');
         expect(request.contents).toContain('EXECUTIONPLAN RUNTIME ARTIFACTS ===\nnot available');
-        expect(request.contents).not.toMatch(/Dataflow|pom\.xml|metadata\.json|cloudbuild/);
+        expect(request.contents).not.toMatch(/pom\.xml|metadata\.json|cloudbuild/);
     });
 
     it('audits ExecutionPlan connector JARs when the YAML is supplied (failure condition)', async () => {

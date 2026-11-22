@@ -9,24 +9,24 @@
  * for OrcSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { OrcSourceProperties, OrcIOSourceProperties } from './OrcSource';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { OrcSourceProperties, OrcIOSourceProperties, type OrcSourceNode } from './OrcSource';
 
 describe('OrcSourceProperties (SRC14 OrcSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports OrcIOSourceProperties as an alias for OrcSourceProperties', () => {
@@ -34,7 +34,7 @@ describe('OrcSourceProperties (SRC14 OrcSource)', () => {
   });
 
   it('renders default batch settings and flags required validation when path is empty', () => {
-    const mockNode: any = {
+    const mockNode: OrcSourceNode = {
       data: {
         label: 'OrcSource',
         spark_transform: 'OrcSource',
@@ -54,7 +54,7 @@ describe('OrcSourceProperties (SRC14 OrcSource)', () => {
   });
 
   it('renders streaming mode with maxFilesPerTrigger, mergeSchema, SchemaEditor, and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: OrcSourceNode = {
       data: {
         label: 'OrcSource',
         spark_transform: 'OrcSource',
@@ -84,7 +84,7 @@ describe('OrcSourceProperties (SRC14 OrcSource)', () => {
   });
 
   it('propagates updates for readMode, mergeSchema, maxFilesPerTrigger, SchemaEditor, and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: OrcSourceNode = {
       data: {
         properties: {
           readMode: 'streaming',

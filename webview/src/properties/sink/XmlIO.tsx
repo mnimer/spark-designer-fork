@@ -11,7 +11,6 @@
  * declaration, nullValue, attributePrefix, valueTag, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -22,7 +21,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const XML_SAVE_MODES: SelectFieldOption[] = [
+const XML_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -32,7 +31,7 @@ export const XML_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Spark 4.0 built-in XML writer compression codecs.
  */
-export const XML_COMPRESSION_CODECS: SelectFieldOption[] = [
+const XML_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'none', label: 'none (Uncompressed XML)' },
   { value: 'gzip', label: 'gzip (.xml.gz)' },
   { value: 'zstd', label: 'zstd (.xml.zst)' },
@@ -46,8 +45,10 @@ export const XML_COMPRESSION_CODECS: SelectFieldOption[] = [
  */
 export interface XmlIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -71,7 +72,7 @@ export interface XmlIOSinkNode {
       valueTag?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -81,7 +82,7 @@ export interface XmlIOSinkNode {
  */
 export interface XmlIOSinkPropertiesProps {
   node: XmlIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

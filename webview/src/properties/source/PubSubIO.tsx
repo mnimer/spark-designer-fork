@@ -25,7 +25,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 import { useAssetLoader } from '../../hooks/useAssetLoader';
 
 /** Read mode options for PubSubSource. */
-export const PUBSUB_READ_MODE_OPTIONS: SelectFieldOption[] = [
+const PUBSUB_READ_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'streaming', label: 'Streaming (DataSourceStreamReader)' },
   { value: 'batch', label: 'Batch (DataSourceReaderBoundedPull)' },
 ];
@@ -46,13 +46,13 @@ export interface PubSubPropertiesProps {
         includeAttributes?: boolean;
         system_instructions?: string;
         special_instructions?: string;
-        [key: string]: any;
+        [key: string]: unknown;
       };
       system_instructions?: string;
       special_instructions?: string;
     };
   };
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

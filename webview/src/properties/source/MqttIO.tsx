@@ -17,6 +17,7 @@
  * - Uses shared primitives on the 8pt grid system.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react';
 import { Radio } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -37,7 +38,7 @@ export const MQTT_QOS_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the MqttIO source panel. */
 export interface MqttIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -54,7 +55,7 @@ export interface MqttIOSourceNode {
       secretName?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -62,7 +63,7 @@ export interface MqttIOSourceNode {
 /** Props for the {@link MqttIOSourceProperties} component. */
 export interface MqttIOSourcePropertiesProps {
   node: MqttIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

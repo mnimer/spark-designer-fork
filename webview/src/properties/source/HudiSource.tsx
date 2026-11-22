@@ -25,13 +25,13 @@ import { SystemInstructionsField } from '../../components/common/SystemInstructi
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /** Read mode options for HudiSource. */
-export const HUDI_READ_MODE_OPTIONS: SelectFieldOption[] = [
+const HUDI_READ_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'batch', label: 'Batch (spark.read.format("hudi"))' },
   { value: 'streaming', label: 'Streaming (spark.readStream.format("hudi"))' },
 ];
 
 /** Hudi query type options (`hoodie.datasource.query.type`). */
-export const HUDI_QUERY_TYPE_OPTIONS: SelectFieldOption[] = [
+const HUDI_QUERY_TYPE_OPTIONS: SelectFieldOption[] = [
   { value: 'snapshot', label: 'snapshot (Latest table state across base + log files)' },
   { value: 'incremental', label: 'incremental (Changes since beginInstantTime)' },
   { value: 'read_optimized', label: 'read_optimized (Columnar base files only for MOR tables)' },
@@ -40,7 +40,7 @@ export const HUDI_QUERY_TYPE_OPTIONS: SelectFieldOption[] = [
 /** React Flow node shape for the HudiSource panel. */
 export interface HudiSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -54,7 +54,7 @@ export interface HudiSourceNode {
       readPaths?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -62,7 +62,7 @@ export interface HudiSourceNode {
 /** Props for the {@link HudiSourceProperties} component. */
 export interface HudiSourcePropertiesProps {
   node: HudiSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

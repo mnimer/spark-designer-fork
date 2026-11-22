@@ -97,7 +97,7 @@ describe('ParseMessageProperties', () => {
       data: {
         label: 'Parse Message',
         properties: {
-          messageType: 'UnknownType' as any
+          messageType: 'UnknownType'
         }
       }
     };

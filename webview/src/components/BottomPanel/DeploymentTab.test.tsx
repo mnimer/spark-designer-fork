@@ -202,7 +202,7 @@ describe('DeploymentTab', () => {
     expect(nextState.projectId).toBe('my-project');
   });
 
-  it('defaults Target Environment to Local when runner is unset or legacy DirectRunner (R1)', () => {
+  it('defaults Target Environment to Local when runner is unset or unrecognized (R1)', () => {
     renderWithBottomPanel(<DeploymentTab />, {
       ...defaultProps,
       jobConfig: { region: 'us-central1' },

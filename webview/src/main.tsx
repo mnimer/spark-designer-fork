@@ -4,7 +4,7 @@
  * Author: Mike Nimer <mikenimer@google.com>
  * 
  * Purpose:
- * Bootstraps the React root for the Apache Beam Designer webview extension,
+ * Bootstraps the React root for the Apache Spark Designer webview extension,
  * wrapping the application in StrictMode and the VS Code Agent Flow ThemeProvider.
  */
 

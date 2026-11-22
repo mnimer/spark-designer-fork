@@ -9,24 +9,28 @@
  * maxRecordsPerFile, advanced rebase modes, and SystemInstructionsField updates.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { ParquetIOSinkProperties, ParquetSinkProperties } from './ParquetIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import {
+  ParquetIOSinkProperties,
+  ParquetSinkProperties,
+  type ParquetIOSinkNode,
+} from './ParquetIO';
 
 describe('ParquetIOSinkProperties (SNK11 ParquetSink)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports ParquetSinkProperties as an alias for ParquetIOSinkProperties', () => {
@@ -34,7 +38,7 @@ describe('ParquetIOSinkProperties (SNK11 ParquetSink)', () => {
   });
 
   it('renders defaults, omits StreamingSinkSettingsField and NodeDocsCard, and flags empty path', () => {
-    const mockNode: any = {
+    const mockNode: ParquetIOSinkNode = {
       data: {
         label: 'ParquetSink',
         type: 'SINK',
@@ -61,7 +65,7 @@ describe('ParquetIOSinkProperties (SNK11 ParquetSink)', () => {
   });
 
   it('renders populated S3A properties with Secret Manager auth and legacy codec normalization', () => {
-    const mockNode: any = {
+    const mockNode: ParquetIOSinkNode = {
       data: {
         label: 'ParquetSink',
         spark_transform: 'ParquetSink',
@@ -102,7 +106,7 @@ describe('ParquetIOSinkProperties (SNK11 ParquetSink)', () => {
   });
 
   it('propagates changes for path, saveMode, compression, partitionBy, maxRecordsPerFile, rebase modes, and system_instructions', () => {
-    const mockNode: any = {
+    const mockNode: ParquetIOSinkNode = {
       data: {
         properties: {
           path: 'gs://my-bucket/out/',

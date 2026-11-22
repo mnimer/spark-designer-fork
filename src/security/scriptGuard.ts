@@ -14,8 +14,6 @@ import * as path from 'path';
  * - `run_sdp_local.sh`
  * - `run_sdp_dataproc.sh`
  * - `run_sdp_serverless.sh`
- * - Legacy aliases retained for backward compatibility: `run_directrunner.sh`, `run_dataflowrunner.sh`,
- *   `run_dataflow.sh`, `run_sparkrunner.sh`, `run_spark.sh`
  */
 export const ALLOWED_EXECUTABLE_SCRIPTS: ReadonlySet<string> = new Set([
     'run_local.sh',
@@ -24,11 +22,6 @@ export const ALLOWED_EXECUTABLE_SCRIPTS: ReadonlySet<string> = new Set([
     'run_sdp_local.sh',
     'run_sdp_dataproc.sh',
     'run_sdp_serverless.sh',
-    'run_directrunner.sh',
-    'run_dataflowrunner.sh',
-    'run_dataflow.sh',
-    'run_sparkrunner.sh',
-    'run_spark.sh',
 ]);
 
 /**

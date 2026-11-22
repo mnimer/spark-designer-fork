@@ -36,21 +36,21 @@ export interface FormattedReadmeResult {
  * @returns Synthesized README markdown string
  */
 export function buildFallbackSampleReadme(sample: SamplePipeline): string {
-  const runner = sample.runner || 'DirectRunner';
+  const runner = sample.runner || 'Local';
   return [
     `# ${sample.title}`,
     '',
     '## Overview',
-    sample.description || `Pre-configured Apache Beam sample pipeline (\`${sample.filename}\`).`,
+    sample.description || `Pre-configured Apache Spark sample pipeline (\`${sample.filename}\`).`,
     '',
-    'This sample pipeline can be generated and executed in either **Python** or **Java** using the **Generate Code** tab.',
+    'This sample pipeline generates a standalone **PySpark 4.x** project using the **Generate Code** tab.',
     '',
     '## Code Generation & Execution',
     `1. Click **New File** to save a copy of \`${sample.filename}\` in your workspace.`,
-    '2. Open the **Generate Code** tab at the bottom, choose **Python** or **Java**, and click **Generate Code**.',
-    `3. Run locally with DirectRunner or deploy to **${runner}**:`,
+    '2. Open the **Generate Code** tab at the bottom and click **Generate Code**.',
+    `3. Run locally with PySpark or deploy to **${runner}**:`,
     '```bash',
-    './run_directrunner.sh',
+    './run_local.sh',
     '```',
   ].join('\n');
 }
@@ -221,7 +221,7 @@ export const SampleInfoModal: React.FC<SampleInfoModalProps> = ({
           )}
           <div className="flex items-center gap-2">
             <Code2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Python &amp; Java</span>
+            <span>{sample.language || 'PySpark'}</span>
           </div>
           {sample.runner && (
             <>

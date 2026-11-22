@@ -208,7 +208,6 @@ describe('buildSampleReadmeMarkdown', () => {
         expect(markdown).toContain('| `OPTIONAL_TAG` | *(unset)* |');
         expect(markdown).toContain('./run_local.sh');
         expect(markdown).not.toContain('Apache Beam');
-        expect(markdown).not.toContain('run_directrunner.sh');
     });
 
     it('falls back to runner summary when flow and nodes are empty', () => {

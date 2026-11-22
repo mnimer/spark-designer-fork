@@ -6,6 +6,7 @@
 
 export * from '../../../src/shared/types';
 export type {
+    SparkRunnerType,
     TokenUsage,
     SamplePipeline,
     LogStream,

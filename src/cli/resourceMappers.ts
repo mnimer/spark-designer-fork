@@ -11,6 +11,18 @@ export interface SecretManagerItem {
 }
 
 /**
+ * Safely narrows an unknown JSON value to a plain property record.
+ *
+ * @param value Candidate JSON value
+ * @returns Plain object record or undefined when non-object
+ */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    return value !== null && typeof value === 'object'
+        ? (value as Record<string, unknown>)
+        : undefined;
+}
+
+/**
  * Extracts the short secret ID from a Secret Manager fully-qualified resource path or secret name.
  * Handles paths like "projects/123/secrets/my-secret", names with trailing slashes, or simple IDs.
  * 
@@ -48,12 +60,13 @@ export function toShortSecretId(fullName?: string | null): string {
  * @param json Parsed JSON from `gcloud secrets list --format=json`
  * @returns Array of SecretManagerItem objects containing short IDs and full resource names
  */
-export function mapSecretManagerItems(json: any): SecretManagerItem[] {
+export function mapSecretManagerItems(json: unknown): SecretManagerItem[] {
     if (!Array.isArray(json)) {
         return [];
     }
-    return json.map((s: any) => {
-        const rawName = s?.name || '';
+    return json.map((entry: unknown) => {
+        const s = asRecord(entry);
+        const rawName = typeof s?.name === 'string' ? s.name : '';
         const shortName = toShortSecretId(rawName) || rawName;
         return {
             name: shortName,
@@ -97,8 +110,10 @@ function lastPathSegment(value: unknown): string {
  * @param json Parsed gcloud JSON output
  * @returns Short Bigtable instance IDs
  */
-export function mapBigtableInstances(json: any): string[] {
-    return Array.isArray(json) ? json.map((i: any) => lastPathSegment(i?.name)).filter(Boolean) : [];
+export function mapBigtableInstances(json: unknown): string[] {
+    return Array.isArray(json)
+        ? json.map((i: unknown) => lastPathSegment(asRecord(i)?.name)).filter(Boolean)
+        : [];
 }
 
 /**
@@ -107,8 +122,10 @@ export function mapBigtableInstances(json: any): string[] {
  * @param json Parsed gcloud JSON output
  * @returns Short Bigtable table IDs
  */
-export function mapBigtableTables(json: any): string[] {
-    return Array.isArray(json) ? json.map((t: any) => lastPathSegment(t?.name)).filter(Boolean) : [];
+export function mapBigtableTables(json: unknown): string[] {
+    return Array.isArray(json)
+        ? json.map((t: unknown) => lastPathSegment(asRecord(t)?.name)).filter(Boolean)
+        : [];
 }
 
 /**
@@ -119,15 +136,18 @@ export function mapBigtableTables(json: any): string[] {
  * @param json Parsed gcloud JSON output
  * @returns Cloud SQL instance connection names
  */
-export function mapSqlInstances(json: any): string[] {
+export function mapSqlInstances(json: unknown): string[] {
     if (!Array.isArray(json)) {
         return [];
     }
-    return json.map((i: any) => {
+    return json.map((entry: unknown) => {
+        const i = asRecord(entry);
         if (typeof i?.connectionName === 'string' && i.connectionName) {
             return i.connectionName;
         }
-        return i?.project && i?.region && i?.name ? `${i.project}:${i.region}:${i.name}` : '';
+        return i?.project && i?.region && i?.name
+            ? `${String(i.project)}:${String(i.region)}:${String(i.name)}`
+            : '';
     }).filter(Boolean);
 }
 
@@ -137,8 +157,12 @@ export function mapSqlInstances(json: any): string[] {
  * @param json Parsed gcloud JSON output
  * @returns Database names
  */
-export function mapSqlDatabases(json: any): string[] {
-    return Array.isArray(json) ? json.map((d: any) => d?.name).filter(Boolean) : [];
+export function mapSqlDatabases(json: unknown): string[] {
+    return Array.isArray(json)
+        ? json
+              .map((d: unknown) => asRecord(d)?.name)
+              .filter((name): name is string => typeof name === 'string' && Boolean(name))
+        : [];
 }
 
 /**
@@ -147,8 +171,12 @@ export function mapSqlDatabases(json: any): string[] {
  * @param json Parsed gcloud JSON output
  * @returns Project IDs
  */
-export function mapProjects(json: any): string[] {
-    return Array.isArray(json) ? json.map((p: any) => p?.projectId).filter(Boolean) : [];
+export function mapProjects(json: unknown): string[] {
+    return Array.isArray(json)
+        ? json
+              .map((p: unknown) => asRecord(p)?.projectId)
+              .filter((id): id is string => typeof id === 'string' && Boolean(id))
+        : [];
 }
 
 /**
@@ -196,12 +224,15 @@ export function parseSqlInstanceParam(raw: unknown): { instance: string; project
  * @param json Parsed JSON array from gcloud healthcare datasets list
  * @returns Array of non-empty dataset resource name strings
  */
-export function mapHealthcareDatasetItems(json: any): string[] {
+export function mapHealthcareDatasetItems(json: unknown): string[] {
     if (!Array.isArray(json)) {
         return [];
     }
     return json
-        .map((d: any) => (typeof d?.name === 'string' ? d.name.trim() : ''))
+        .map((entry: unknown) => {
+            const name = asRecord(entry)?.name;
+            return typeof name === 'string' ? name.trim() : '';
+        })
         .filter((name: string) => name.length > 0);
 }
 
@@ -220,12 +251,13 @@ export interface DataprocClusterItem {
  * @param json Parsed JSON array from gcloud dataproc clusters list
  * @returns Array of normalized DataprocClusterItem entries
  */
-export function mapDataprocClusters(json: any): DataprocClusterItem[] {
+export function mapDataprocClusters(json: unknown): DataprocClusterItem[] {
     if (!Array.isArray(json)) {
         return [];
     }
     return json
-        .map((c: any): DataprocClusterItem | null => {
+        .map((entry: unknown): DataprocClusterItem | null => {
+            const c = asRecord(entry);
             const rawClusterName =
                 typeof c?.clusterName === 'string' && c.clusterName.trim()
                     ? c.clusterName.trim()
@@ -233,18 +265,20 @@ export function mapDataprocClusters(json: any): DataprocClusterItem[] {
             if (!rawClusterName) {
                 return null;
             }
+            const statusRecord = asRecord(c?.status);
             const status =
-                typeof c?.status?.state === 'string' && c.status.state.trim()
-                    ? c.status.state.trim()
+                typeof statusRecord?.state === 'string' && statusRecord.state.trim()
+                    ? statusRecord.state.trim()
                     : typeof c?.status === 'string' && c.status.trim()
                         ? c.status.trim()
                         : undefined;
+            const labelsRecord = asRecord(c?.labels);
+            const labelLoc = labelsRecord?.['goog-dataproc-location'];
             const rawRegion =
                 typeof c?.region === 'string' && c.region.trim()
                     ? c.region.trim()
-                    : typeof c?.labels?.['goog-dataproc-location'] === 'string' &&
-                        c.labels['goog-dataproc-location'].trim()
-                        ? c.labels['goog-dataproc-location'].trim()
+                    : typeof labelLoc === 'string' && labelLoc.trim()
+                        ? labelLoc.trim()
                         : undefined;
             const region = rawRegion ? lastPathSegment(rawRegion) || rawRegion : undefined;
             return {
@@ -276,12 +310,13 @@ export interface SessionTemplateItem {
  * @param json Parsed JSON array from gcloud beta dataproc session-templates list
  * @returns Array of normalized SessionTemplateItem entries
  */
-export function mapSessionTemplates(json: any): SessionTemplateItem[] {
+export function mapSessionTemplates(json: unknown): SessionTemplateItem[] {
     if (!Array.isArray(json)) {
         return [];
     }
     return json
-        .map((t: any): SessionTemplateItem | null => {
+        .map((entry: unknown): SessionTemplateItem | null => {
+            const t = asRecord(entry);
             const rawName = typeof t?.name === 'string' ? t.name.trim() : '';
             const shortName = lastPathSegment(rawName);
             if (!shortName) {
@@ -296,13 +331,12 @@ export function mapSessionTemplates(json: any): SessionTemplateItem[] {
             const catalogSet = new Set<string>();
             const warehouseByCatalog: Record<string, string> = {};
 
-            const props = t?.runtimeConfig?.properties;
-            if (props && typeof props === 'object') {
-                if (
-                    typeof props['spark.sql.defaultCatalog'] === 'string' &&
-                    props['spark.sql.defaultCatalog'].trim()
-                ) {
-                    defaultCatalog = props['spark.sql.defaultCatalog'].trim();
+            const runtimeConfig = asRecord(t?.runtimeConfig);
+            const props = asRecord(runtimeConfig?.properties);
+            if (props) {
+                const rawDefaultCatalog = props['spark.sql.defaultCatalog'];
+                if (typeof rawDefaultCatalog === 'string' && rawDefaultCatalog.trim()) {
+                    defaultCatalog = rawDefaultCatalog.trim();
                     catalogSet.add(defaultCatalog);
                 }
                 for (const [key, val] of Object.entries(props)) {
@@ -354,19 +388,20 @@ export interface BigLakeCatalogItem {
  * @param json Parsed JSON array from gcloud biglake iceberg catalogs list
  * @returns Array of normalized BigLakeCatalogItem entries
  */
-export function mapBigLakeCatalogs(json: any): BigLakeCatalogItem[] {
+export function mapBigLakeCatalogs(json: unknown): BigLakeCatalogItem[] {
     if (!Array.isArray(json)) {
         return [];
     }
     return json
-        .map((item: any): BigLakeCatalogItem | null => {
+        .map((item: unknown): BigLakeCatalogItem | null => {
+            const rec = asRecord(item);
             const rawName =
                 typeof item === 'string'
                     ? item.trim()
-                    : typeof item?.name === 'string'
-                        ? item.name.trim()
-                        : typeof item?.id === 'string'
-                            ? item.id.trim()
+                    : typeof rec?.name === 'string'
+                        ? rec.name.trim()
+                        : typeof rec?.id === 'string'
+                            ? rec.id.trim()
                             : '';
             if (!rawName) {
                 return null;
@@ -377,13 +412,13 @@ export function mapBigLakeCatalogs(json: any): BigLakeCatalogItem[] {
                 return null;
             }
             const warehouse =
-                (typeof item?.warehouse === 'string' && item.warehouse.trim()) ||
-                (typeof item?.default_location === 'string' && item.default_location.trim()) ||
-                (typeof item?.defaultLocation === 'string' && item.defaultLocation.trim()) ||
+                (typeof rec?.warehouse === 'string' && rec.warehouse.trim()) ||
+                (typeof rec?.default_location === 'string' && rec.default_location.trim()) ||
+                (typeof rec?.defaultLocation === 'string' && rec.defaultLocation.trim()) ||
                 `gs://${shortId}`;
             const catalogType =
-                (typeof item?.catalog_type === 'string' && item.catalog_type.trim()) ||
-                (typeof item?.catalogType === 'string' && item.catalogType.trim()) ||
+                (typeof rec?.catalog_type === 'string' && rec.catalog_type.trim()) ||
+                (typeof rec?.catalogType === 'string' && rec.catalogType.trim()) ||
                 'biglake';
             return {
                 name: shortId,
@@ -403,11 +438,13 @@ export function mapBigLakeCatalogs(json: any): BigLakeCatalogItem[] {
  * @param json Parsed JSON array from gcloud compute regions list
  * @returns Array of region name strings
  */
-export function mapRegions(json: any): string[] {
+export function mapRegions(json: unknown): string[] {
     if (!Array.isArray(json)) {
         return [];
     }
     return json
-        .map((r: any) => (typeof r === 'string' ? lastPathSegment(r.trim()) : lastPathSegment(r?.name)))
+        .map((r: unknown) =>
+            typeof r === 'string' ? lastPathSegment(r.trim()) : lastPathSegment(asRecord(r)?.name)
+        )
         .filter(Boolean);
 }

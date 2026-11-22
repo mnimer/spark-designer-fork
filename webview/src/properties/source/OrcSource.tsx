@@ -10,7 +10,6 @@
  * SchemaEditor, and SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { FileCode } from 'lucide-react';
 import { InfoTooltip } from '../../components/InfoTooltip';
@@ -36,7 +35,7 @@ const READ_MODE_OPTIONS: SelectFieldOption[] = [
  */
 export interface OrcSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -55,7 +54,7 @@ export interface OrcSourceNode {
       schemaFields?: SchemaField[];
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -65,7 +64,7 @@ export interface OrcSourceNode {
  */
 export interface OrcSourcePropertiesProps {
   node: OrcSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

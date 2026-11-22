@@ -25,18 +25,38 @@ import {
 } from './sparkDagRules';
 
 /**
+ * Data payload carried by a DAG node during topology and semantic validation.
+ */
+export interface DagNodeData {
+    label?: string;
+    type?: string;
+    iconName?: string;
+    spark_transform?: string;
+    sparkTransform?: string;
+    system_instructions?: string;
+    special_instructions?: string;
+    properties?: Record<string, unknown>;
+    defaultReadMode?: unknown;
+    streamingSinkMode?: unknown;
+    errorOutput?: boolean;
+    inputArity?: unknown;
+}
+
+/**
  * Node representation accepted by the DAG topology validator.
  */
 export interface DagNode {
     id: string;
     type?: string;
-    data?: {
-        label?: string;
-        type?: string;
-        spark_transform?: string;
-        [key: string]: any;
-    };
-    [key: string]: any;
+    spark_transform?: string;
+    sparkTransform?: string;
+    properties?: Record<string, unknown>;
+    position?: { x: number; y: number };
+    width?: number | null;
+    height?: number | null;
+    selected?: boolean;
+    data?: DagNodeData | (DagNodeData & Record<string, unknown>);
+    [key: string]: unknown;
 }
 
 /**
@@ -48,14 +68,23 @@ export interface DagEdge {
     target: string;
     sourceHandle?: string | null;
     targetHandle?: string | null;
-    [key: string]: any;
+    [key: string]: unknown;
+}
+
+/**
+ * Subset of pipeline job configuration fields read by semantic DAG validation.
+ */
+export interface DagJobConfigView {
+    paradigm?: unknown;
+    sdpStorage?: unknown;
+    checkpointRoot?: unknown;
 }
 
 /**
  * Optional pipeline configuration context for Spark semantic validation.
  */
 export interface DagValidationOptions {
-    jobConfig?: Record<string, any>;
+    jobConfig?: DagJobConfigView | Record<string, unknown>;
     requireCheckpoints?: boolean;
     paradigm?: 'imperative' | 'sdp';
 }
@@ -84,8 +113,6 @@ export interface DagValidationResult {
     missingUpstreamNodeIds: string[];
     /** Nodes with disallowed or excess upstream connections */
     invalidUpstreamNodeIds: string[];
-    /** Legacy compatibility array for side-input mismatches (always empty in Spark) */
-    sideInputMismatchNodeIds: string[];
     /** Fatal error messages that block pipeline code generation */
     errors: string[];
     /** Non-fatal warning messages for user feedback */
@@ -315,7 +342,6 @@ export function validateDagTopology(
             orphanNodeIds: [],
             missingUpstreamNodeIds: [],
             invalidUpstreamNodeIds: [],
-            sideInputMismatchNodeIds: [],
             errors: [],
             warnings: [],
             nodeErrors: {},
@@ -403,7 +429,6 @@ export function validateDagTopology(
     const orphanNodeIds: string[] = [];
     const missingUpstreamNodeIds: string[] = [];
     const invalidUpstreamNodeIds: string[] = [];
-    const sideInputMismatchNodeIds: string[] = [];
     const errors: string[] = [];
     const warnings: string[] = [];
     const nodeErrors: Record<string, string[]> = {};
@@ -941,7 +966,6 @@ export function validateDagTopology(
         orphanNodeIds,
         missingUpstreamNodeIds,
         invalidUpstreamNodeIds,
-        sideInputMismatchNodeIds,
         errors,
         warnings,
         nodeErrors,

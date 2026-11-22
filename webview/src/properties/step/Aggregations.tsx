@@ -25,9 +25,9 @@ import {
 /**
  * React Flow node shape for an aggregation transform node.
  */
-interface AggregationNode {
+export interface AggregationNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -37,7 +37,7 @@ interface AggregationNode {
       special_instructions?: string;
       codeGenerationPrompt?: string;
       prompt?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -45,9 +45,9 @@ interface AggregationNode {
 /**
  * Props for the {@link AggregationProperties} component.
  */
-interface AggregationPropertiesProps {
+export interface AggregationPropertiesProps {
   node: AggregationNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 const DESCRIPTIONS: Record<string, string> = {
@@ -84,8 +84,8 @@ const DESCRIPTIONS: Record<string, string> = {
  * @returns The rendered aggregation properties panel.
  */
 export const AggregationProperties: React.FC<AggregationPropertiesProps> = ({ node, onChange }) => {
-  const transform = node.data.spark_transform || node.data.label;
-  const label = node.data.label;
+  const label = node.data.label || '';
+  const transform = node.data.spark_transform || label;
   const description = DESCRIPTIONS[transform] || DESCRIPTIONS[label] || 'Aggregation properties are currently empty.';
   const doc = getNodeDocumentation(node);
   const docsUrl = doc?.docsUrl ?? DEFAULT_BEAM_TRANSFORMS_DOCS_URL;

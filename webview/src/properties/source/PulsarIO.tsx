@@ -27,33 +27,28 @@ import { SystemInstructionsField } from '../../components/common/SystemInstructi
 import { resolveSystemInstructions } from '../../utils/systemInstructions';
 
 /** Read mode options for PulsarSource. */
-export const PULSAR_READ_MODE_OPTIONS: SelectFieldOption[] = [
+const PULSAR_READ_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'streaming', label: 'Streaming (spark.readStream)' },
   { value: 'batch', label: 'Batch (spark.read)' },
 ];
 
 /** Subscription mode options for the Pulsar Spark connector. */
-export const PULSAR_SUBSCRIPTION_MODE_OPTIONS: SelectFieldOption[] = [
+const PULSAR_SUBSCRIPTION_MODE_OPTIONS: SelectFieldOption[] = [
   { value: 'topic', label: 'Single Topic (topic)' },
   { value: 'topics', label: 'Multiple Topics (topics)' },
   { value: 'topicsPattern', label: 'Topics Regex Pattern (topicsPattern)' },
 ];
 
 /** Starting offset options for Pulsar reads. */
-export const PULSAR_STARTING_OFFSETS_OPTIONS: SelectFieldOption[] = [
+const PULSAR_STARTING_OFFSETS_OPTIONS: SelectFieldOption[] = [
   { value: 'latest', label: 'latest (Read latest messages)' },
   { value: 'earliest', label: 'earliest (Read from earliest retained message)' },
-];
-
-/** Ending offset options for batch Pulsar reads. */
-export const PULSAR_ENDING_OFFSETS_OPTIONS: SelectFieldOption[] = [
-  { value: 'latest', label: 'latest (Read up to latest available message)' },
 ];
 
 /** React Flow node shape for the PulsarIO source panel. */
 export interface PulsarIOSourceNode {
   data: {
-    label: string;
+    label?: string;
     spark_transform?: string;
     system_instructions?: string;
     special_instructions?: string;
@@ -70,7 +65,7 @@ export interface PulsarIOSourceNode {
       secretName?: string;
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -78,7 +73,7 @@ export interface PulsarIOSourceNode {
 /** Props for the {@link PulsarIOSourceProperties} component. */
 export interface PulsarIOSourcePropertiesProps {
   node: PulsarIOSourceNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

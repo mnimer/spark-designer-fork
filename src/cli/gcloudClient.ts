@@ -23,11 +23,11 @@ import type { AssetListResponse, AssetResponseCommand } from '../shared/protocol
 export async function listAssets<T>(
     cli: string,
     args: string[],
-    map: (json: any) => T[],
+    map: (json: unknown) => T[],
     responseCommand: string,
     key: string,
     postMessage?: (message: AssetListResponse) => unknown,
-    extraFields?: (json: any) => Record<string, any>
+    extraFields?: (json: unknown) => Record<string, unknown>
 ): Promise<void> {
     const resolvedCli = resolveCli(cli);
     if (!resolvedCli) {
@@ -82,8 +82,9 @@ export async function listAssets<T>(
                     ...extra,
                     debugLog: `Command: ${resolvedCli} ${args.join(' ')}\nRetrieved ${Array.isArray(items) ? items.length : 0} items.`
                 });
-            } catch (e: any) {
-                const parseErrMsg = `Failed to parse ${cli} JSON output: ${e.message}`;
+            } catch (e: unknown) {
+                const errMessage = e instanceof Error ? e.message : String(e);
+                const parseErrMsg = `Failed to parse ${cli} JSON output: ${errMessage}`;
                 console.error('[@extension.ts]', parseErrMsg);
                 tryGetDesignerOutputChannel()?.appendLine(`[${new Date().toLocaleTimeString()}] ERROR: ${parseErrMsg}`);
 

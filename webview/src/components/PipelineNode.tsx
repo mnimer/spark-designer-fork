@@ -39,8 +39,7 @@ export interface PipelineNodeProps {
     iconName: string;
     spark_transform?: string;
     system_instructions?: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    properties?: Record<string, any>;
+    properties?: Record<string, unknown>;
     hasCycle?: boolean;
     hasValidationError?: boolean;
     isOrphan?: boolean;

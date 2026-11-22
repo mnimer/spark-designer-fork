@@ -14,17 +14,17 @@ import '@testing-library/jest-dom';
 import { SpannerIOSourceProperties, SpannerSourceProperties, DEFAULT_SPANNER_JAR_URI } from './SpannerIO';
 
 describe('SpannerIOSourceProperties', () => {
-  const mockOnChange = vi.fn();
-  let postMessageSpy: ReturnType<typeof vi.fn>;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let postMessageSpy: ReturnType<typeof vi.fn<(message: unknown) => void>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
+    postMessageSpy = vi.fn<(message: unknown) => void>();
+    window.vscode = { postMessage: postMessageSpy };
   });
 
   afterEach(() => {
-    delete (window as any).vscode;
+    delete window.vscode;
   });
 
   it('exports SpannerSourceProperties alias and displays Spanner connector JAR URI', () => {

@@ -6,7 +6,7 @@
  * Purpose:
  * Reads the parsed `.spark` pipeline (React Flow `nodes` + `edges`) and returns the facts
  * that drive skill selection: the language, the runners that the project must support,
- * the set of `spark_transform` values, and the pipeline features (side inputs, multi-output,
+ * the set of `spark_transform` values, and the pipeline features (multi-output,
  * streaming, custom instructions, Python 4.0 DataSource API, cross-language transforms).
  *
  * Architectural decisions / notes for future sessions:
@@ -317,12 +317,9 @@ export function detectPipelineFeatures(
         }
     }
 
-    // 3. Edges: side inputs and multi-output routing.
+    // 3. Edges: multi-output routing.
     for (const edge of rawEdges) {
         const edgeRecord = asRecord(edge) ?? {};
-        if (edgeRecord.targetHandle === EDGE_HANDLES.sideInput) {
-            features.add(PIPELINE_FEATURES.sideInputs);
-        }
         if (typeof edgeRecord.sourceHandle === 'string' && EDGE_HANDLES.multiOutput.includes(edgeRecord.sourceHandle)) {
             features.add(PIPELINE_FEATURES.multiOutput);
         }

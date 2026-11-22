@@ -19,7 +19,7 @@
  */
 
 import { GoogleGenAI } from '@google/genai';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import { SpecialistAgentResult, generateContentWithRetry } from './types';
 import { GeneratedFileCandidate } from './deterministic-gate';
 import { formatFilesWithLineNumbers } from './format-utils';

@@ -133,7 +133,7 @@ describe('security wiring — C1 chmod stays behind the allowlist', () => {
                 }
 
                 // Form 2: the target is built from a hardcoded literal in this source file,
-                // e.g. `const runScriptPath = path.join(folderPath, 'run_directrunner.sh')`.
+                // e.g. `const runScriptPath = path.join(folderPath, 'run_local.sh')`.
                 // The model cannot influence that name, so C1 does not apply. This escape
                 // hatch is intentionally narrow: it requires a quoted .sh literal on the
                 // very assignment of the variable being chmod'ed.

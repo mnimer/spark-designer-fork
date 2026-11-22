@@ -10,24 +10,24 @@
  * SystemInstructionsField for XmlIOSourceProperties.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { XmlIOSourceProperties, XmlSourceProperties } from './XmlIO';
+import type { VsCodeApi } from '../../bridge/vscodeApi';
+import { XmlIOSourceProperties, XmlSourceProperties, type XmlIOSourceNode } from './XmlIO';
 
 describe('XmlIOSourceProperties (SRC19 XmlSource)', () => {
-  const mockOnChange = vi.fn();
-  let originalVscode: any;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let originalVscode: VsCodeApi | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: vi.fn() };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   it('exports XmlSourceProperties as an alias for XmlIOSourceProperties', () => {
@@ -35,7 +35,7 @@ describe('XmlIOSourceProperties (SRC19 XmlSource)', () => {
   });
 
   it('renders defaults and flags required validation errors when path and rowTag are empty', () => {
-    const mockNode: any = {
+    const mockNode: XmlIOSourceNode = {
       data: {
         label: 'XmlSource',
         spark_transform: 'XmlSource',
@@ -62,7 +62,7 @@ describe('XmlIOSourceProperties (SRC19 XmlSource)', () => {
   });
 
   it('renders populated streaming XML properties and propagates changes across all fields', () => {
-    const mockNode: any = {
+    const mockNode: XmlIOSourceNode = {
       data: {
         label: 'XmlSource',
         spark_transform: 'XmlSource',

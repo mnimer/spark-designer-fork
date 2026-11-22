@@ -9,7 +9,6 @@
  * integration, and SystemInstructionsField updates.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -17,6 +16,7 @@ import {
   CreateProperties,
   CreateDataFrameSourceProperties,
   normalizeElements,
+  type CreateSourceNode,
 } from './CreateIO';
 
 describe('CreateProperties (SRC38 CreateDataFrameSource)', () => {
@@ -118,7 +118,7 @@ describe('CreateProperties (SRC38 CreateDataFrameSource)', () => {
   });
 
   it('renders faker mode controls (rowCount, fakerSpec, SchemaEditor) and propagates updates', () => {
-    const mockNode = {
+    const mockNode: CreateSourceNode = {
       data: {
         properties: {
           generationMode: 'faker',

@@ -32,4 +32,7 @@ export interface MessageContext {
 /**
  * Handler function signature for webview IPC message dispatching.
  */
-export type MessageHandler = (ctx: MessageContext, message: any) => Promise<void> | void;
+export type MessageHandler = (
+    ctx: MessageContext,
+    message: Record<string, unknown>
+) => Promise<void> | void;

@@ -5,7 +5,6 @@
  */
 
 /* eslint-disable react-refresh/only-export-components */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState } from 'react';
 import {
   Play,
@@ -15,7 +14,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { RunnerSettings, normalizeSparkRunner } from './deployment/RunnerSettings';
-import { AdvancedConfig } from './deployment/AdvancedConfig';
+import { AdvancedConfig, type AdvancedJobConfig } from './deployment/AdvancedConfig';
 import {
   SdpRefreshControls,
   type SdpRefreshDatasetOption,
@@ -24,6 +23,7 @@ import { RuntimeVariablesGrid } from './deployment/RuntimeVariablesGrid';
 import { ExecutionTerminal, type LogEntry } from './deployment/ExecutionTerminal';
 import { buildGcpConsoleUrl } from './deployment/consoleUrl';
 import { useBottomPanel } from './BottomPanelContext';
+import type { DagNode } from '../../utils/dagValidator';
 import { buildSdpPlan, sanitizeSdpIdentifier } from '../../utils/sdpPlanner';
 
 export type { LogEntry };
@@ -108,7 +108,7 @@ export function extractSdpDatasetsFromGraph(
     return [];
   }
 
-  const plan = buildSdpPlan(nodes as any, [], jobConfig, {
+  const plan = buildSdpPlan(nodes as DagNode[], [], jobConfig, {
     enforceRuntimeVersion: false,
   });
   const byName = new Map<string, SdpRefreshDatasetOption>();
@@ -377,7 +377,7 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
   const [cancelRemoteJob, setCancelRemoteJob] = useState<boolean>(true);
   const [showFullRefreshConfirm, setShowFullRefreshConfirm] = useState<boolean>(false);
 
-  const jobConfig = React.useMemo(
+  const jobConfig = React.useMemo<AdvancedJobConfig>(
     () => jobConfigSlice.value ?? { runner: 'Local' },
     [jobConfigSlice.value]
   );

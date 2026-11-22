@@ -8,6 +8,19 @@ import { DEFAULT_IGNORE_PATTERNS } from '../resources/resourceLoader';
 import { DEFAULT_PIPELINE_PARADIGM, type PipelineParadigm } from '../shared/types';
 
 /**
+ * Default Gemini model identifier shared by the extension host and code generation pipeline.
+ *
+ * Architectural notes:
+ * - Pin the fallback model in code rather than reading user settings so offline fallback
+ *   behavior remains reproducible from the extension version alone.
+ * - Follow the model-selection agent rule by defaulting to 'gemini-4-hydrogen'. Never
+ *   reintroduce deprecated Gemini 1.x or 2.x model families.
+ * - Invoke Vertex AI on the 'global' endpoint only. Regional endpoints do not host current
+ *   publisher Gemini models and return 404 NOT_FOUND.
+ */
+export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
+
+/**
  * File extension for Apache Spark pipeline design files.
  */
 export const PIPELINE_FILE_EXT = '.spark';
@@ -82,21 +95,20 @@ export const PIPELINE_SEARCH_EXCLUDE_DIRS: readonly string[] = [
  * Glob pattern for excluding dependency, build, and VCS directories when scanning
  * workspace files for .spark pipelines.
  */
-export const PIPELINE_SEARCH_EXCLUDE_PATTERN: string = `{${PIPELINE_SEARCH_EXCLUDE_DIRS.map(dir => `**/${dir}/**`).join(',')}}`;
+export const PIPELINE_SEARCH_EXCLUDE_PATTERN = `{${PIPELINE_SEARCH_EXCLUDE_DIRS.map(dir => `**/${dir}/**`).join(',')}}`;
 
 /**
  * Directory names to skip when listing the files of a generated pipeline project
  * for display in the Source Code tab.
  *
- * The Source Code tab is meant to show the ~10 files the generator produced. Running the
- * pipeline once creates a virtualenv (`venv`, created by the generated run_directrunner.sh)
+ * The Source Code tab shows the ~10 files the generator produced. Running the
+ * pipeline once creates a virtualenv (`venv`, created by the generated `run_local.sh`)
  * or a Maven `target/` directory, either of which adds thousands of entries and makes the
  * tab unusable.
  *
- * NOTE: the walker independently skips every dot-prefixed entry, which already covers
- * `.venv`, `.git` and friends. This list therefore exists for the directories that do NOT
- * start with a dot -- `venv` being the one that actually caused the reported bug. The
- * dot-prefixed names are still included so the list stays correct on its own terms if the
- * walker's dot rule is ever relaxed.
+ * NOTE: The walker independently skips every dot-prefixed entry, which already covers
+ * `.venv`, `.git` and friends. This list exists for directories that do NOT
+ * start with a dot, such as `venv`. The dot-prefixed names remain included so the
+ * list stays complete if the walker dot rule is ever relaxed.
  */
 export const GENERATED_FILE_LIST_EXCLUDE_DIRS: readonly string[] = PIPELINE_SEARCH_EXCLUDE_DIRS;

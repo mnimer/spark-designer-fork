@@ -101,32 +101,25 @@ describe('resolveSafeOutputPath - Path Traversal Containment', () => {
 });
 
 describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
-    it('accepts all expected runner script templates and execution scripts', () => {
-        // Direct basenames (Spark 4.x, SDP 4.2+, and legacy aliases)
+    it('accepts all expected Spark 4.x and SDP 4.2+ runner scripts', () => {
         expect(isAllowedExecutableScript('run_local.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_dataproc_cluster.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_serverless_spark.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_sdp_local.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_sdp_dataproc.sh')).toBe(true);
         expect(isAllowedExecutableScript('run_sdp_serverless.sh')).toBe(true);
-        expect(isAllowedExecutableScript('run_directrunner.sh')).toBe(true);
-        expect(isAllowedExecutableScript('run_dataflowrunner.sh')).toBe(true);
-        expect(isAllowedExecutableScript('run_dataflow.sh')).toBe(true);
-        expect(isAllowedExecutableScript('run_sparkrunner.sh')).toBe(true);
-        expect(isAllowedExecutableScript('run_spark.sh')).toBe(true);
 
         // Full paths containing allowlisted basenames
         expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_local.sh')).toBe(true);
         expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_dataproc_cluster.sh')).toBe(true);
         expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_serverless_spark.sh')).toBe(true);
-        expect(isAllowedExecutableScript('/Users/me/ws/mypipeline/run_directrunner.sh')).toBe(true);
-        expect(isAllowedExecutableScript('src/run_dataflowrunner.sh')).toBe(true);
     });
 
-    it('rejects unapproved script names not in the allowlist', () => {
-        // Arbitrary attacker scripts
+    it('rejects unapproved or legacy script names not in the allowlist', () => {
         expect(isAllowedExecutableScript('evil.sh')).toBe(false);
         expect(isAllowedExecutableScript('run_evil.sh')).toBe(false);
+        expect(isAllowedExecutableScript('run_sparkrunner.sh')).toBe(false);
+        expect(isAllowedExecutableScript('run_spark.sh')).toBe(false);
         expect(isAllowedExecutableScript('exploit.sh')).toBe(false);
         expect(isAllowedExecutableScript('malicious.sh')).toBe(false);
         expect(isAllowedExecutableScript('/tmp/evil.sh')).toBe(false);
@@ -134,9 +127,8 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
 
     it('rejects non-.sh files even if they share similar runner names', () => {
         expect(isAllowedExecutableScript('run_local.py')).toBe(false);
-        expect(isAllowedExecutableScript('run_directrunner.py')).toBe(false);
-        expect(isAllowedExecutableScript('run_directrunner.bat')).toBe(false);
-        expect(isAllowedExecutableScript('run_directrunner.sh.exe')).toBe(false);
+        expect(isAllowedExecutableScript('run_local.bat')).toBe(false);
+        expect(isAllowedExecutableScript('run_local.sh.exe')).toBe(false);
         expect(isAllowedExecutableScript('main.py')).toBe(false);
         expect(isAllowedExecutableScript('src/main/java/App.java')).toBe(false);
         expect(isAllowedExecutableScript('Dockerfile')).toBe(false);
@@ -150,18 +142,13 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
         expect(isAllowedExecutableScript(undefined as any)).toBe(false);
     });
 
-    it('verifies the set of allowlisted scripts contains expected entries', () => {
+    it('verifies the set of allowlisted scripts contains the 6 canonical Spark scripts', () => {
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_local.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataproc_cluster.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_serverless_spark.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_local.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_dataproc.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_serverless.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_directrunner.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataflowrunner.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataflow.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sparkrunner.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_spark.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(11);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(6);
     });
 });

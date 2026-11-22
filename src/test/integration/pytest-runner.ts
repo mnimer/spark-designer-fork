@@ -26,6 +26,14 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { applyRuntimeVariables, RuntimeVariable } from '../../security/envSanitizer';
+import {
+    SHARED_CACHE_ENV_VAR,
+    SPARK_IVY_CACHE_ENV_VAR,
+    cleanupPerRunRepoArtifacts,
+    ensureSharedTestCacheDirs,
+    getSharedTestCachePaths,
+    resolveSparkJavaHome,
+} from './sharedTestCache';
 
 /** Default wall-clock limit for one pytest run (5 minutes). */
 export const DEFAULT_PYTEST_TIMEOUT_MS = 300_000;
@@ -133,10 +141,12 @@ export type ConftestAction = 'verified' | 'written' | 'appended';
 export interface PytestRunOptions {
     /** Python interpreter to use. Defaults to `python3`. */
     python?: string;
-    /** Virtual environment directory. If it holds an interpreter, the runner uses it. */
+    /** Virtual environment directory. Defaults to `<cacheRoot>/pytest-venv` when omitted. */
     venvDir?: string;
-    /** If true and `venvDir` has no interpreter, create it with `--system-site-packages`. */
+    /** If true and the target venv has no interpreter, create it with `--system-site-packages`. */
     createVenv?: boolean;
+    /** Shared cache root directory override for virtualenv, pip, Ivy, and JDK 21 caches. */
+    cacheRoot?: string;
     /** Wall-clock limit for the pytest run. Defaults to {@link DEFAULT_PYTEST_TIMEOUT_MS}. */
     timeoutMs?: number;
     /** Extra environment variables. Denied keys are dropped. */
@@ -145,6 +155,14 @@ export interface PytestRunOptions {
     baseEnv?: ChildEnv;
     /** Keep the JUnit report directory after the run. Defaults to false. */
     keepReport?: boolean;
+}
+
+/** Shared cache and scratch path overrides passed to {@link buildChildEnv}. */
+export interface ChildEnvCacheOptions {
+    /** Optional shared cache root directory override. */
+    cacheRoot?: string;
+    /** Optional per-run `XDG_CACHE_HOME` scratch directory inside the generated repository. */
+    xdgCacheHome?: string;
 }
 
 /** Raw result of one child process. */
@@ -169,6 +187,7 @@ const PASSTHROUGH_ENV_KEYS: readonly string[] = [
     'TMP',
     'JAVA_HOME',
     'SYSTEMROOT',
+    SHARED_CACHE_ENV_VAR,
 ];
 
 /**
@@ -271,12 +290,14 @@ export function buildPytestArgs(junitXmlPath: string, testPath: string = GENERAT
  * @param python Interpreter path that PySpark workers must use.
  * @param baseEnv Parent environment. Only allowlisted keys are copied.
  * @param extraEnv Caller variables. Keys denied by `envSanitizer` are dropped.
+ * @param cacheOptions Optional shared cache root and per-run XDG scratch paths.
  * @returns The environment and the list of rejected keys.
  */
 export function buildChildEnv(
     python: string,
     baseEnv: ChildEnv = process.env,
-    extraEnv?: readonly RuntimeVariable[]
+    extraEnv?: readonly RuntimeVariable[],
+    cacheOptions?: ChildEnvCacheOptions
 ): { env: Record<string, string>; rejected: string[] } {
     const env: Record<string, string> = {};
     for (const key of PASSTHROUGH_ENV_KEYS) {
@@ -286,6 +307,33 @@ export function buildChildEnv(
         }
     }
     const rejected = applyRuntimeVariables(env, extraEnv);
+    const cachePaths = getSharedTestCachePaths(cacheOptions?.cacheRoot, baseEnv);
+
+    env[SHARED_CACHE_ENV_VAR] = cachePaths.rootDir;
+    if (!env.PIP_CACHE_DIR) {
+        env.PIP_CACHE_DIR = cachePaths.pipCacheDir;
+    }
+    if (!env[SPARK_IVY_CACHE_ENV_VAR]) {
+        env[SPARK_IVY_CACHE_ENV_VAR] = cachePaths.ivyCacheDir;
+    }
+    if (cacheOptions?.xdgCacheHome && !env.XDG_CACHE_HOME) {
+        env.XDG_CACHE_HOME = cacheOptions.xdgCacheHome;
+    }
+
+    const resolvedJava = resolveSparkJavaHome({ cacheRoot: cacheOptions?.cacheRoot, env });
+    if (resolvedJava.javaHome) {
+        env.JAVA_HOME = resolvedJava.javaHome;
+        if (resolvedJava.fromSharedCache) {
+            const javaBinDir = path.join(resolvedJava.javaHome, 'bin');
+            env.PATH = env.PATH ? `${javaBinDir}${path.delimiter}${env.PATH}` : javaBinDir;
+        }
+    }
+
+    const escapedIvy = env[SPARK_IVY_CACHE_ENV_VAR].replace(/\\/g, '/').replace(/"/g, '\\"');
+    if (!env.PYSPARK_SUBMIT_ARGS) {
+        env.PYSPARK_SUBMIT_ARGS = `--conf "spark.jars.ivy=${escapedIvy}" pyspark-shell`;
+    }
+
     // NOTE: These keys are set after caller variables so a caller cannot override them.
     env.PYSPARK_PYTHON = python;
     env.PYSPARK_DRIVER_PYTHON = python;
@@ -295,6 +343,14 @@ export function buildChildEnv(
     env.PYTHONHASHSEED = '0';
     return { env, rejected };
 }
+
+/** Shared Python lines that resolve `_IVY_DIR` from the shared test cache root. */
+const SHARED_IVY_INIT_LINES: readonly string[] = [
+    `_DEFAULT_CACHE_ROOT = os.environ.get("${SHARED_CACHE_ENV_VAR}") or os.path.join(`,
+    '    os.path.expanduser("~"), ".cache", "spark-pipeline-builder"',
+    ')',
+    `_IVY_DIR = os.environ.get("${SPARK_IVY_CACHE_ENV_VAR}") or os.path.join(_DEFAULT_CACHE_ROOT, "ivy2")`,
+];
 
 /**
  * Python expression lines that build the local test SparkSession.
@@ -309,6 +365,7 @@ const SESSION_BUILDER_LINES: readonly string[] = [
     '.config("spark.driver.host", "127.0.0.1")',
     '.config("spark.driver.bindAddress", "127.0.0.1")',
     '.config("spark.sql.session.timeZone", "UTC")',
+    '.config("spark.jars.ivy", _IVY_DIR)',
     '.getOrCreate()',
 ];
 
@@ -317,7 +374,10 @@ export const SPARK_SESSION_OK = 'SPARK_SESSION_OK';
 
 /** Python source that starts a local SparkSession, runs one job, and stops it. */
 export const SPARK_SESSION_PROBE_SCRIPT = [
+    'import os',
     'from pyspark.sql import SparkSession',
+    ...SHARED_IVY_INIT_LINES,
+    'os.makedirs(_IVY_DIR, exist_ok=True)',
     'session = (',
     ...SESSION_BUILDER_LINES.map((l) => `    ${l}`),
     ')',
@@ -329,9 +389,13 @@ export const SPARK_SESSION_PROBE_SCRIPT = [
 /**
  * Returns the conftest source that defines the session `spark` fixture.
  *
+ * @param ivyCacheDir Optional explicit fallback path for the shared Spark Ivy cache.
  * @returns Python source with a local, network-free SparkSession fixture.
  */
-export function buildConftestSource(): string {
+export function buildConftestSource(ivyCacheDir?: string): string {
+    const ivySetupLines = ivyCacheDir
+        ? [`_IVY_DIR = os.environ.get("${SPARK_IVY_CACHE_ENV_VAR}") or ${JSON.stringify(ivyCacheDir)}`]
+        : SHARED_IVY_INIT_LINES;
     return [
         CONFTEST_MARKER,
         'import os',
@@ -346,11 +410,14 @@ export function buildConftestSource(): string {
         '    if _p not in sys.path:',
         '        sys.path.insert(0, _p)',
         '',
+        ...ivySetupLines,
+        '',
         '',
         '@pytest.fixture(scope="session")',
         'def spark():',
         '    from pyspark.sql import SparkSession',
         '',
+        '    os.makedirs(_IVY_DIR, exist_ok=True)',
         '    session = (',
         ...SESSION_BUILDER_LINES.map((l) => `        ${l}`),
         '    )',
@@ -378,9 +445,10 @@ export function definesSparkFixture(source: string): boolean {
  * the fixture, it appends the fixture to the root `conftest.py`.
  *
  * @param repoDir Root of the generated repository.
+ * @param ivyCacheDir Optional fallback path for the shared Spark Ivy cache.
  * @returns How the fixture was provided.
  */
-export function ensureConftest(repoDir: string): ConftestAction {
+export function ensureConftest(repoDir: string, ivyCacheDir?: string): ConftestAction {
     const candidates = [path.join(repoDir, 'tests', 'conftest.py'), path.join(repoDir, 'conftest.py')];
     for (const file of candidates) {
         if (fs.existsSync(file) && definesSparkFixture(fs.readFileSync(file, 'utf8'))) {
@@ -388,11 +456,12 @@ export function ensureConftest(repoDir: string): ConftestAction {
         }
     }
     const rootConftest = candidates[1];
+    const source = buildConftestSource(ivyCacheDir);
     if (!fs.existsSync(rootConftest)) {
-        fs.writeFileSync(rootConftest, buildConftestSource(), 'utf8');
+        fs.writeFileSync(rootConftest, source, 'utf8');
         return 'written';
     }
-    fs.appendFileSync(rootConftest, `\n\n${buildConftestSource()}`, 'utf8');
+    fs.appendFileSync(rootConftest, `\n\n${source}`, 'utf8');
     return 'appended';
 }
 
@@ -653,7 +722,7 @@ export function venvPython(venvDir: string): string {
 }
 
 /**
- * Resolves the interpreter, and reuses or creates a venv if requested.
+ * Resolves the interpreter, reusing or creating `<cacheRoot>/pytest-venv` when `venvDir` is omitted.
  *
  * @param options Runner options.
  * @param env Child environment.
@@ -664,24 +733,31 @@ export async function resolvePython(
     env: ChildEnv
 ): Promise<{ python: string; reason?: string }> {
     const base = options.python ?? 'python3';
-    if (!options.venvDir) {
+    const hasExplicitCustomPython = Boolean(options.python && options.python !== 'python3');
+    const sharedVenvDir = getSharedTestCachePaths(options.cacheRoot, env).venvDir;
+    const targetVenvDir =
+        options.venvDir ?? (!hasExplicitCustomPython || options.createVenv ? sharedVenvDir : undefined);
+    if (!targetVenvDir) {
         return { python: base };
     }
-    const venvPy = venvPython(options.venvDir);
+    const venvPy = venvPython(targetVenvDir);
     if (fs.existsSync(venvPy)) {
         return { python: venvPy };
     }
     if (!options.createVenv) {
         return { python: base };
     }
+    if (!options.venvDir) {
+        ensureSharedTestCacheDirs(options.cacheRoot, env);
+    }
     // NOTE: The venv inherits system site packages so it works offline without pip.
-    const res = await execFileSafe(base, ['-m', 'venv', '--system-site-packages', options.venvDir], {
+    const res = await execFileSafe(base, ['-m', 'venv', '--system-site-packages', targetVenvDir], {
         env,
         timeoutMs: PROBE_TIMEOUT_MS,
     });
     if (res.spawnError || res.exitCode !== 0 || !fs.existsSync(venvPy)) {
         const detail = res.spawnError ?? (res.stderr.trim() || `exit code ${res.exitCode}`);
-        return { python: base, reason: `Could not create venv at ${options.venvDir} (${detail}).` };
+        return { python: base, reason: `Could not create venv at ${targetVenvDir} (${detail}).` };
     }
     return { python: venvPy };
 }
@@ -716,45 +792,58 @@ function emptyResult(status: PytestRunStatus, reason: string, startedAt: number)
  * Runs the generated `tests/test_pipeline.py` offline with a local PySpark session.
  *
  * @param repoDir Root of the generated repository.
- * @param options Interpreter, venv, timeout, and environment options.
+ * @param options Interpreter, venv, shared cache root, timeout, and environment options.
  * @returns Typed run result. Missing tooling gives `skipped`. Never rejects for tooling problems.
  */
 export async function runGeneratedRepoTests(repoDir: string, options: PytestRunOptions = {}): Promise<PytestRunResult> {
     const startedAt = Date.now();
     const repo = path.resolve(repoDir);
-    if (!fs.existsSync(path.join(repo, GENERATED_TEST_FILE))) {
-        return emptyResult('skipped', `Generated repository has no ${GENERATED_TEST_FILE}.`, startedAt);
-    }
-
     const baseEnv = options.baseEnv ?? process.env;
-    const probeEnv = buildChildEnv(options.python ?? 'python3', baseEnv, options.extraEnv).env;
-    const resolved = await resolvePython(options, probeEnv);
-    if (resolved.reason) {
-        return { ...emptyResult('skipped', resolved.reason, startedAt), python: resolved.python };
-    }
-    const python = resolved.python;
-    const { env } = buildChildEnv(python, baseEnv, options.extraEnv);
+    const cachePaths = getSharedTestCachePaths(options.cacheRoot, baseEnv);
+    const perRunXdgDir = path.join(repo, '.xdg-cache');
+    let reportDir: string | undefined;
 
-    const tooling = await probeTooling(python, env);
-    if (!tooling.ok) {
-        return { ...emptyResult('skipped', tooling.reason ?? 'Tooling is not available.', startedAt), python, tooling };
-    }
-
-    let conftest: ConftestAction;
     try {
-        conftest = ensureConftest(repo);
-    } catch (err) {
-        return {
-            ...emptyResult('error', `Could not provide the spark fixture: ${(err as Error).message}`, startedAt),
-            python,
-            tooling,
+        if (!fs.existsSync(path.join(repo, GENERATED_TEST_FILE))) {
+            return emptyResult('skipped', `Generated repository has no ${GENERATED_TEST_FILE}.`, startedAt);
+        }
+
+        ensureSharedTestCacheDirs(options.cacheRoot, baseEnv);
+        const cacheEnvOptions: ChildEnvCacheOptions = {
+            cacheRoot: options.cacheRoot,
+            xdgCacheHome: perRunXdgDir,
         };
-    }
-    const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-pytest-'));
-    const junitXmlPath = path.join(reportDir, 'junit.xml');
-    const timeoutMs = options.timeoutMs ?? DEFAULT_PYTEST_TIMEOUT_MS;
+        const probeEnv = buildChildEnv(options.python ?? 'python3', baseEnv, options.extraEnv, cacheEnvOptions).env;
+        const resolved = await resolvePython(options, probeEnv);
+        if (resolved.reason) {
+            return { ...emptyResult('skipped', resolved.reason, startedAt), python: resolved.python };
+        }
+        const python = resolved.python;
+        const { env } = buildChildEnv(python, baseEnv, options.extraEnv, cacheEnvOptions);
 
-    try {
+        const tooling = await probeTooling(python, env);
+        if (!tooling.ok) {
+            return {
+                ...emptyResult('skipped', tooling.reason ?? 'Tooling is not available.', startedAt),
+                python,
+                tooling,
+            };
+        }
+
+        let conftest: ConftestAction;
+        try {
+            conftest = ensureConftest(repo, options.cacheRoot ? cachePaths.ivyCacheDir : undefined);
+        } catch (err) {
+            return {
+                ...emptyResult('error', `Could not provide the spark fixture: ${(err as Error).message}`, startedAt),
+                python,
+                tooling,
+            };
+        }
+        reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-pytest-'));
+        const junitXmlPath = path.join(reportDir, 'junit.xml');
+        const timeoutMs = options.timeoutMs ?? DEFAULT_PYTEST_TIMEOUT_MS;
+
         const res = await execFileSafe(python, buildPytestArgs(junitXmlPath), { cwd: repo, env, timeoutMs });
         const base = {
             ...emptyResult('error', '', startedAt),
@@ -772,7 +861,11 @@ export async function runGeneratedRepoTests(repoDir: string, options: PytestRunO
             return { ...base, status: 'error', reason: `pytest could not start (${res.spawnError}).` };
         }
         if (!fs.existsSync(junitXmlPath)) {
-            return { ...base, status: 'error', reason: `pytest exited with code ${res.exitCode} and wrote no JUnit report.` };
+            return {
+                ...base,
+                status: 'error',
+                reason: `pytest exited with code ${res.exitCode} and wrote no JUnit report.`,
+            };
         }
         let summary: JUnitSummary;
         try {
@@ -808,9 +901,19 @@ export async function runGeneratedRepoTests(repoDir: string, options: PytestRunO
             durationMs: Date.now() - startedAt,
         };
     } finally {
-        if (!options.keepReport) {
+        if (reportDir && !options.keepReport) {
             fs.rmSync(reportDir, { recursive: true, force: true });
         }
+        const extraScratchDirs = [perRunXdgDir];
+        const extraXdg = options.extraEnv?.find((v) => v?.key?.trim() === 'XDG_CACHE_HOME')?.value;
+        if (extraXdg) {
+            extraScratchDirs.push(extraXdg);
+        }
+        cleanupPerRunRepoArtifacts(repo, {
+            cacheRoot: options.cacheRoot,
+            extraScratchDirs,
+            env: baseEnv,
+        });
     }
 }
 

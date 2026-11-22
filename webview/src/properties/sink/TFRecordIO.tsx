@@ -12,7 +12,6 @@
  * SystemInstructionsField.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components */
 import React from 'react';
 import { PropertyField } from '../../components/common/PropertyField';
 import { SelectField, type SelectFieldOption } from '../../components/common/SelectField';
@@ -23,7 +22,7 @@ import { resolveSystemInstructions } from '../../utils/systemInstructions';
 /**
  * Supported Spark 4.x batch DataFrameWriter save modes.
  */
-export const TFRECORD_SAVE_MODES: SelectFieldOption[] = [
+const TFRECORD_SAVE_MODES: SelectFieldOption[] = [
   { value: 'append', label: 'append (Append rows to existing path)' },
   { value: 'overwrite', label: 'overwrite (Replace existing data)' },
   { value: 'errorifexists', label: 'errorifexists (Fail if destination exists)' },
@@ -33,7 +32,7 @@ export const TFRECORD_SAVE_MODES: SelectFieldOption[] = [
 /**
  * Supported Hadoop compression codecs for spark-tfrecord output files.
  */
-export const TFRECORD_COMPRESSION_CODECS: SelectFieldOption[] = [
+const TFRECORD_COMPRESSION_CODECS: SelectFieldOption[] = [
   { value: 'none', label: 'none (Uncompressed TFRecord)' },
   { value: 'gzip', label: 'gzip (Hadoop GzipCodec .tfrecord.gz)' },
   { value: 'deflate', label: 'deflate (Hadoop DeflateCodec)' },
@@ -42,7 +41,7 @@ export const TFRECORD_COMPRESSION_CODECS: SelectFieldOption[] = [
 /**
  * Supported TensorFlow protobuf message types for spark-tfrecord writes.
  */
-export const TFRECORD_WRITE_RECORD_TYPES: SelectFieldOption[] = [
+const TFRECORD_WRITE_RECORD_TYPES: SelectFieldOption[] = [
   { value: 'Example', label: 'Example (tf.train.Example flat feature map)' },
   {
     value: 'SequenceExample',
@@ -53,7 +52,7 @@ export const TFRECORD_WRITE_RECORD_TYPES: SelectFieldOption[] = [
 /**
  * Supported writeLocality modes in spark-tfrecord.
  */
-export const TFRECORD_WRITE_LOCALITY_MODES: SelectFieldOption[] = [
+const TFRECORD_WRITE_LOCALITY_MODES: SelectFieldOption[] = [
   {
     value: 'distributed',
     label: 'distributed (Write through Hadoop FileSystem to GCS, S3A, ADLS, or HDFS)',
@@ -69,8 +68,10 @@ export const TFRECORD_WRITE_LOCALITY_MODES: SelectFieldOption[] = [
  */
 export interface TFRecordIOSinkNode {
   data: {
-    label: string;
+    label?: string;
+    type?: string;
     spark_transform?: string;
+    executionMode?: string;
     system_instructions?: string;
     special_instructions?: string;
     properties?: {
@@ -90,7 +91,7 @@ export interface TFRecordIOSinkNode {
       writeLocality?: 'distributed' | 'local';
       system_instructions?: string;
       special_instructions?: string;
-      [key: string]: any;
+      [key: string]: unknown;
     };
   };
 }
@@ -100,7 +101,7 @@ export interface TFRecordIOSinkNode {
  */
 export interface TFRecordIOSinkPropertiesProps {
   node: TFRecordIOSinkNode;
-  onChange: (properties: any) => void;
+  onChange: (properties: Record<string, unknown>) => void;
 }
 
 /**

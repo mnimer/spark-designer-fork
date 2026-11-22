@@ -5,27 +5,6 @@
  */
 
 /**
- * Builds a Google Cloud Console URL for a Dataflow job (retained for legacy compatibility).
- *
- * All path and query parameters are encoded with encodeURIComponent.
- *
- * @param projectId - Google Cloud Project ID.
- * @param region - GCP region (e.g. 'us-central1').
- * @param jobId - Dataflow Job ID.
- * @returns Fully qualified Cloud Console URL for the Dataflow job.
- */
-export function buildDataflowConsoleUrl(
-  projectId: string,
-  region: string,
-  jobId: string
-): string {
-  const encRegion = encodeURIComponent(region);
-  const encJobId = encodeURIComponent(jobId);
-  const encProjectId = encodeURIComponent(projectId);
-  return `https://console.cloud.google.com/dataflow/jobs/${encRegion}/${encJobId}?project=${encProjectId}`;
-}
-
-/**
  * Builds a Google Cloud Console monitoring URL for a GCP Serverless for Apache Spark batch.
  *
  * All path and query parameters are encoded with encodeURIComponent.
@@ -84,9 +63,9 @@ export function buildDataprocJobConsoleUrl(
 }
 
 /**
- * Builds a Google Cloud Console URL based on the selected runner and detected job/batch ID.
+ * Builds a Google Cloud Console URL based on the selected runner and detected job or batch ID.
  *
- * @param runner - Selected pipeline runner ('ServerlessSpark', 'Spark', 'DataprocCluster', 'Local', etc.).
+ * @param runner - Selected pipeline runner ('ServerlessSpark' | 'DataprocCluster' | 'Local').
  * @param jobId - Job ID or Batch ID. If omitted or empty, returns empty string.
  * @param region - GCP region (defaults to 'us-central1').
  * @param projectId - Google Cloud Project ID (defaults to 'YOUR_PROJECT_ID').
@@ -105,16 +84,12 @@ export function buildGcpConsoleUrl(
   const effectiveRegion = region || 'us-central1';
   const effectiveProjectId = projectId || 'YOUR_PROJECT_ID';
 
-  if (runner === 'ServerlessSpark' || runner === 'Spark') {
+  if (runner === 'ServerlessSpark') {
     return buildServerlessBatchConsoleUrl(effectiveProjectId, effectiveRegion, jobId);
   }
 
   if (runner === 'DataprocCluster') {
     return buildDataprocJobConsoleUrl(effectiveProjectId, effectiveRegion, jobId);
-  }
-
-  if (runner === 'Dataflow') {
-    return buildDataflowConsoleUrl(effectiveProjectId, effectiveRegion, jobId);
   }
 
   return '';

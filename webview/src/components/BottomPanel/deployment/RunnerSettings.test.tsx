@@ -10,14 +10,14 @@ import '@testing-library/jest-dom';
 import { RunnerSettings, normalizeSparkRunner } from './RunnerSettings';
 
 describe('RunnerSettings (R1)', () => {
-  it('normalizes legacy and unset runner identifiers cleanly', () => {
+  it('normalizes unknown and unset runner identifiers to Local using the allowlist', () => {
     expect(normalizeSparkRunner(undefined)).toBe('Local');
     expect(normalizeSparkRunner('')).toBe('Local');
-    expect(normalizeSparkRunner('DirectRunner')).toBe('Local');
+    expect(normalizeSparkRunner('LegacyRunner')).toBe('Local');
+    expect(normalizeSparkRunner('Spark')).toBe('Local');
     expect(normalizeSparkRunner('Local')).toBe('Local');
     expect(normalizeSparkRunner('DataprocCluster')).toBe('DataprocCluster');
     expect(normalizeSparkRunner('ServerlessSpark')).toBe('ServerlessSpark');
-    expect(normalizeSparkRunner('Spark')).toBe('ServerlessSpark');
   });
 
   it('renders the 3 Spark target environments with exact labels', () => {
@@ -39,15 +39,15 @@ describe('RunnerSettings (R1)', () => {
     ]);
   });
 
-  it('defaults to Local when runner is empty or legacy DirectRunner, and maps legacy Spark to ServerlessSpark', () => {
+  it('defaults to Local when runner is empty or outside the Spark allowlist', () => {
     const { rerender } = render(<RunnerSettings runner="" setJobConfig={vi.fn()} />);
     expect(screen.getByLabelText(/Target Environment/i)).toHaveValue('Local');
 
-    rerender(<RunnerSettings runner="DirectRunner" setJobConfig={vi.fn()} />);
+    rerender(<RunnerSettings runner="LegacyRunner" setJobConfig={vi.fn()} />);
     expect(screen.getByLabelText(/Target Environment/i)).toHaveValue('Local');
 
     rerender(<RunnerSettings runner="Spark" setJobConfig={vi.fn()} />);
-    expect(screen.getByLabelText(/Target Environment/i)).toHaveValue('ServerlessSpark');
+    expect(screen.getByLabelText(/Target Environment/i)).toHaveValue('Local');
   });
 
   it('updates runner via functional setJobConfig updater', () => {

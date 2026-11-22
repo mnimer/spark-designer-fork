@@ -16,17 +16,17 @@ import { CloudSQLSourceProperties, CloudSqlSourceProperties } from './CloudSQL';
 import { classifyKey } from '../../../../src/credentialRedaction';
 
 describe('CloudSQLSourceProperties', () => {
-  const mockOnChange = vi.fn();
-  let postMessageSpy: ReturnType<typeof vi.fn>;
+  const mockOnChange = vi.fn<(properties: Record<string, unknown>) => void>();
+  let postMessageSpy: ReturnType<typeof vi.fn<(message: unknown) => void>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    postMessageSpy = vi.fn();
-    (window as any).vscode = { postMessage: postMessageSpy };
+    postMessageSpy = vi.fn<(message: unknown) => void>();
+    window.vscode = { postMessage: postMessageSpy };
   });
 
   afterEach(() => {
-    delete (window as any).vscode;
+    delete window.vscode;
   });
 
   it('exports CloudSqlSourceProperties alias and validates required fields when empty', () => {

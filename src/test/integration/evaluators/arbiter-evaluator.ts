@@ -29,7 +29,7 @@
 import * as path from 'path';
 import * as yaml from 'yaml';
 import { GoogleGenAI } from '@google/genai';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import { DEFAULT_SPARK_VERSION } from '../../../shared/types';
 import { CodegenSkillCatalog, getCodegenSkillCatalog } from '../../../codegen/CodegenSkillCatalog';
 import { CODEGEN_RESOURCE_PATHS } from '../../../codegen/codegenConfig';

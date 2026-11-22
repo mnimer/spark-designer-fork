@@ -10,7 +10,6 @@
  * rendering for S3 and Azure storage backends.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -21,17 +20,18 @@ import {
 } from './StorageBackendFields';
 
 describe('StorageBackendFields', () => {
-  let originalVscode: any;
+  let originalVscode: typeof window.vscode;
   const mockOnChange = vi.fn();
+  const mockPostMessage = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalVscode = (window as any).vscode;
-    (window as any).vscode = { postMessage: vi.fn() };
+    originalVscode = window.vscode;
+    window.vscode = { postMessage: mockPostMessage };
   });
 
   afterEach(() => {
-    (window as any).vscode = originalVscode;
+    window.vscode = originalVscode;
   });
 
   describe('inferStorageBackend and resolveStoragePathValue helpers', () => {
@@ -74,7 +74,7 @@ describe('StorageBackendFields', () => {
     expect(pathInput).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText('Storage URI / Path is required.')).toBeInTheDocument();
 
-    expect((window as any).vscode.postMessage).toHaveBeenCalledWith({
+    expect(mockPostMessage).toHaveBeenCalledWith({
       command: 'getStorageBuckets',
     });
 
