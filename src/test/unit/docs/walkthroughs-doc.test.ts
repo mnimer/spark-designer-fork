@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DEFAULT_GEMINI_MODEL } from '../../../constants';
+import { DEFAULT_GEMINI_MODEL } from '../../../core/constants';
 import { MANIFEST_FILENAME } from '../../../generationManifest';
 
 /**
