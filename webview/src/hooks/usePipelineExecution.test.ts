@@ -1,0 +1,433 @@
+/**
+ * @fileoverview Unit tests for usePipelineExecution hook.
+ *
+ * Tests:
+ * - Initial state (status, logs, runnerCommand)
+ * - handleRunNow posts runPipeline with exact payload, resets logs, sets status to running
+ * - handleStopPipeline posts stopPipeline with exact payload
+ * - handleClearLogs resets logs
+ * - Incoming message events (pipelineStarted, pipelineLog, pipelineJobIdDetected, pipelineFinished, pipelineStopped)
+ * - Log capping at MAX_EXECUTION_LOG_LINES (5000 lines, dropping oldest)
+ *
+ * Author: Mike Nimer <mikenimer@google.com>
+ */
+
+import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  usePipelineExecution,
+  appendLog,
+  MAX_EXECUTION_LOG_LINES,
+  SDP_OVERLAPPING_RUN_GUARD_MESSAGE,
+  type UsePipelineExecutionOptions,
+  formatRunnerLabel,
+} from './usePipelineExecution';
+import type { LogEntry } from '../components/BottomPanel/DeploymentTab';
+
+describe('usePipelineExecution', () => {
+  const sampleJobConfig = {
+    runner: 'ServerlessSpark',
+    projectId: 'test-project',
+    region: 'us-central1',
+    jobId: 'my-job-123',
+  };
+
+  const sampleRuntimeVariables = [
+    { key: 'LOG_LEVEL', value: 'INFO' },
+    { key: 'NUM_WORKERS', value: '4' },
+  ];
+
+  const samplePipelineConfig = {
+    language: 'Python' as const,
+    outputFolder: '/workspace/output',
+    needsRebuild: false,
+  };
+
+  const setup = (options?: Partial<UsePipelineExecutionOptions>) => {
+    const mockPostMessage = vi.fn();
+    const setJobConfig = vi.fn();
+
+    const hook = renderHook(
+      (props: UsePipelineExecutionOptions) => usePipelineExecution(props),
+      {
+        initialProps: {
+          jobConfig: sampleJobConfig,
+          runtimeVariables: sampleRuntimeVariables,
+          pipelineConfig: samplePipelineConfig,
+          setJobConfig,
+          projectId: 'test-project',
+          vscode: { postMessage: mockPostMessage },
+          ...options,
+        },
+      }
+    );
+
+    return { ...hook, mockPostMessage, setJobConfig };
+  };
+
+  it('initializes with default execution state', () => {
+    const { result } = setup();
+
+    expect(result.current.pipelineLogs).toEqual([]);
+    expect(result.current.pipelineStatus).toBe('idle');
+    expect(result.current.runnerCommand).toBe('');
+  });
+
+  it('handleRunNow posts runPipeline with exact payload, resets logs, and sets status to running', () => {
+    const { result, mockPostMessage } = setup();
+
+    // Populate existing log to verify it resets on run
+    act(() => {
+      result.current.setPipelineLogs([
+        { id: '1', text: 'previous log', stream: 'stdout', timestamp: '12:00:00' },
+      ]);
+    });
+    expect(result.current.pipelineLogs).toHaveLength(1);
+
+    act(() => {
+      result.current.handleRunNow();
+    });
+
+    expect(result.current.pipelineLogs).toEqual([]);
+    expect(result.current.pipelineStatus).toBe('running');
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
+    expect(mockPostMessage).toHaveBeenCalledWith({
+      command: 'runPipeline',
+      jobConfig: sampleJobConfig,
+      runtimeVariables: sampleRuntimeVariables,
+      pipelineConfig: samplePipelineConfig,
+    });
+  });
+
+  it('handleStopPipeline posts stopPipeline with jobConfig and remote cancellation options', () => {
+    const { result, mockPostMessage } = setup();
+
+    act(() => {
+      result.current.handleStopPipeline();
+    });
+
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
+    expect(mockPostMessage).toHaveBeenCalledWith({
+      command: 'stopPipeline',
+      jobConfig: sampleJobConfig,
+      runner: 'ServerlessSpark',
+      jobId: 'my-job-123',
+      projectId: 'test-project',
+      region: 'us-central1',
+      cancelRemoteJob: true,
+    });
+
+    act(() => {
+      result.current.handleStopPipeline({ cancelRemoteJob: false });
+    });
+
+    expect(mockPostMessage).toHaveBeenLastCalledWith({
+      command: 'stopPipeline',
+      jobConfig: sampleJobConfig,
+      runner: 'ServerlessSpark',
+      jobId: 'my-job-123',
+      projectId: 'test-project',
+      region: 'us-central1',
+      cancelRemoteJob: false,
+    });
+  });
+
+  it('handleClearLogs resets logs to an empty array', () => {
+    const { result } = setup();
+
+    act(() => {
+      result.current.setPipelineLogs([
+        { id: '1', text: 'log 1', stream: 'stdout', timestamp: '12:00:00' },
+      ]);
+    });
+    expect(result.current.pipelineLogs).toHaveLength(1);
+
+    act(() => {
+      result.current.handleClearLogs();
+    });
+    expect(result.current.pipelineLogs).toEqual([]);
+  });
+
+  describe('incoming extension host messages', () => {
+    it('handles pipelineStarted: updates status, command line, and appends start log entry', () => {
+      const { result } = setup();
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineStarted',
+              commandLine: './run_local.sh',
+              runner: 'LegacyRunner',
+            },
+          })
+        );
+      });
+
+      expect(result.current.pipelineStatus).toBe('running');
+      expect(result.current.runnerCommand).toBe('./run_local.sh');
+      expect(result.current.pipelineLogs).toHaveLength(1);
+      expect(result.current.pipelineLogs[0].text).toContain('Pipeline execution initiated (Local)');
+      expect(result.current.pipelineLogs[0].stream).toBe('stdout');
+    });
+
+    it('handles pipelineLog: appends log entries with correct stream', () => {
+      const { result } = setup();
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineLog',
+              text: 'INFO:root:Processing elements...',
+              stream: 'stdout',
+            },
+          })
+        );
+      });
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineLog',
+              text: 'WARN:root:High memory usage detected',
+              stream: 'stderr',
+            },
+          })
+        );
+      });
+
+      expect(result.current.pipelineLogs).toHaveLength(2);
+      expect(result.current.pipelineLogs[0].text).toBe('INFO:root:Processing elements...');
+      expect(result.current.pipelineLogs[0].stream).toBe('stdout');
+      expect(result.current.pipelineLogs[1].text).toBe('WARN:root:High memory usage detected');
+      expect(result.current.pipelineLogs[1].stream).toBe('stderr');
+    });
+
+    it('handles pipelineJobIdDetected: updates jobConfig via functional updater', () => {
+      const { setJobConfig } = setup();
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineJobIdDetected',
+              jobId: '2026-09-29_detected_job',
+              region: 'us-east1',
+              projectId: 'override-project',
+            },
+          })
+        );
+      });
+
+      expect(setJobConfig).toHaveBeenCalledTimes(1);
+      const updater = setJobConfig.mock.calls[0][0];
+      const prevConfig = { runner: 'ServerlessSpark', region: 'us-central1' };
+      const updated = updater(prevConfig);
+      expect(updated).toEqual({
+        runner: 'ServerlessSpark',
+        jobId: '2026-09-29_detected_job',
+        region: 'us-east1',
+        projectId: 'override-project',
+      });
+    });
+
+    it('handles pipelineFinished: sets status to completed or failed based on status / exitCode', () => {
+      const { result } = setup();
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineFinished',
+              exitCode: 0,
+            },
+          })
+        );
+      });
+      expect(result.current.pipelineStatus).toBe('completed');
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineFinished',
+              exitCode: 1,
+            },
+          })
+        );
+      });
+      expect(result.current.pipelineStatus).toBe('failed');
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineFinished',
+              status: 'custom-status',
+            },
+          })
+        );
+      });
+      expect(result.current.pipelineStatus).toBe('custom-status');
+    });
+
+    it('handles pipelineStopped: sets status to stopped', () => {
+      const { result } = setup();
+
+      act(() => {
+        result.current.setPipelineStatus('running');
+      });
+      expect(result.current.pipelineStatus).toBe('running');
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineStopped',
+            },
+          })
+        );
+      });
+      expect(result.current.pipelineStatus).toBe('stopped');
+    });
+  });
+
+  describe('log capping (MAX_EXECUTION_LOG_LINES)', () => {
+    it('appendLog helper caps lines at provided max and drops oldest', () => {
+      const initialLogs: LogEntry[] = [
+        { id: '1', text: 'Line 1', stream: 'stdout', timestamp: '10:00:00' },
+        { id: '2', text: 'Line 2', stream: 'stdout', timestamp: '10:00:01' },
+        { id: '3', text: 'Line 3', stream: 'stdout', timestamp: '10:00:02' },
+      ];
+
+      const newEntry: LogEntry = {
+        id: '4',
+        text: 'Line 4',
+        stream: 'stdout',
+        timestamp: '10:00:03',
+      };
+
+      const result = appendLog(initialLogs, newEntry, 3);
+      expect(result).toHaveLength(3);
+      expect(result[0].text).toBe('Line 2');
+      expect(result[1].text).toBe('Line 3');
+      expect(result[2].text).toBe('Line 4');
+    });
+
+    it('caps execution logs at MAX_EXECUTION_LOG_LINES = 5000 in hook when receiving messages', () => {
+      const { result } = setup();
+
+      // Preload with MAX_EXECUTION_LOG_LINES entries
+      const bulkLogs: LogEntry[] = Array.from({ length: MAX_EXECUTION_LOG_LINES }, (_, i) => ({
+        id: `bulk-${i}`,
+        text: `Log line ${i}`,
+        stream: 'stdout',
+        timestamp: '12:00:00',
+      }));
+
+      act(() => {
+        result.current.setPipelineLogs(bulkLogs);
+      });
+      expect(result.current.pipelineLogs).toHaveLength(MAX_EXECUTION_LOG_LINES);
+
+      // Add one more log via message event
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              command: 'pipelineLog',
+              text: 'Log line 5000 (overflow)',
+              stream: 'stdout',
+            },
+          })
+        );
+      });
+
+      expect(result.current.pipelineLogs).toHaveLength(MAX_EXECUTION_LOG_LINES);
+      // First line should now be index 1 ("Log line 1")
+      expect(result.current.pipelineLogs[0].text).toBe('Log line 1');
+      // Last line should be the newly appended one
+      expect(result.current.pipelineLogs[MAX_EXECUTION_LOG_LINES - 1].text).toBe(
+        'Log line 5000 (overflow)'
+      );
+    });
+  });
+});
+
+describe('formatRunnerLabel', () => {
+  it('returns Spark runner identifiers unchanged (normal condition)', () => {
+    expect(formatRunnerLabel('Local')).toBe('Local');
+    expect(formatRunnerLabel('DataprocCluster')).toBe('DataprocCluster');
+    expect(formatRunnerLabel('ServerlessSpark')).toBe('ServerlessSpark');
+  });
+
+  it('maps empty and missing runners to Local (boundary condition)', () => {
+    expect(formatRunnerLabel('')).toBe('Local');
+    expect(formatRunnerLabel(undefined)).toBe('Local');
+    expect(formatRunnerLabel(42)).toBe('Local');
+  });
+
+  it('normalizes unknown or legacy runner values to Local (failure condition)', () => {
+    expect(formatRunnerLabel('LegacyRunner')).toBe('Local');
+    expect(formatRunnerLabel('Spark')).toBe('Local');
+  });
+});
+
+describe('SDP overlapping-run guard in usePipelineExecution (SDP9)', () => {
+  it('refuses handleRunNow when paradigm is sdp and pipelineStatus is running, then allows run once finished', () => {
+    const mockPostMessage = vi.fn();
+    const sdpPipelineConfig = {
+      language: 'Python' as const,
+      outputFolder: '/workspace/sdp-out',
+      needsRebuild: false,
+      paradigm: 'sdp' as const,
+    };
+    const sdpJobConfig = {
+      runner: 'Local',
+      paradigm: 'sdp',
+      sdpStorage: 'gs://sdp-bucket/checkpoints',
+    };
+
+    const { result } = renderHook(() =>
+      usePipelineExecution({
+        jobConfig: sdpJobConfig,
+        runtimeVariables: [],
+        pipelineConfig: sdpPipelineConfig,
+        vscode: { postMessage: mockPostMessage },
+      })
+    );
+
+    // Start first SDP run
+    act(() => {
+      result.current.handleRunNow();
+    });
+    expect(result.current.pipelineStatus).toBe('running');
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
+
+    // Attempt overlapping second SDP run while first is still running
+    act(() => {
+      result.current.handleRunNow();
+    });
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
+    expect(result.current.pipelineLogs).toHaveLength(1);
+    expect(result.current.pipelineLogs[0].stream).toBe('stderr');
+    expect(result.current.pipelineLogs[0].text).toContain(SDP_OVERLAPPING_RUN_GUARD_MESSAGE);
+
+    // Finish first run, then verify a subsequent run is permitted
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { command: 'pipelineFinished', exitCode: 0, status: 'completed' },
+        })
+      );
+    });
+    expect(result.current.pipelineStatus).toBe('completed');
+
+    act(() => {
+      result.current.handleRunNow();
+    });
+    expect(mockPostMessage).toHaveBeenCalledTimes(2);
+  });
+});

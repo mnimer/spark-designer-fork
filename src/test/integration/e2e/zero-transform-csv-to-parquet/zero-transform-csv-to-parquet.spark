@@ -1,0 +1,68 @@
+nodes:
+  - id: csv_source
+    type: pipeline
+    position:
+      x: 100
+      y: 180
+    data:
+      label: CSV Customer Orders
+      type: SOURCE
+      iconName: FileText
+      badge: CSV
+      spark_transform: CsvSource
+      properties:
+        readMode: batch
+        storageBackend: gcs
+        path: gs://acme-landing-zone/raw/customer_orders/*.csv
+        pathGlobFilter: "*.csv"
+        recursiveFileLookup: false
+        header: true
+        inferSchema: true
+        delimiter: ","
+        quote: '"'
+        escape: \
+        nullValue: NULL
+        multiLine: false
+        mode: FAILFAST
+  - id: parquet_sink
+    type: pipeline
+    position:
+      x: 460
+      y: 180
+    data:
+      label: Parquet Curated Orders
+      type: SINK
+      iconName: FileCode
+      badge: Parquet
+      spark_transform: ParquetSink
+      properties:
+        storageBackend: gcs
+        path: gs://acme-curated-lake/orders_parquet/
+        saveMode: overwrite
+        compression: snappy
+        partitionBy: order_date
+        maxRecordsPerFile: 500000
+        datetimeRebaseMode: CORRECTED
+        int96RebaseMode: CORRECTED
+edges:
+  - id: edge-csv-to-parquet
+    source: csv_source
+    target: parquet_sink
+runtimeVariables:
+  - key: INPUT_CSV_URI
+    value: gs://acme-landing-zone/raw/customer_orders/*.csv
+  - key: OUTPUT_PARQUET_URI
+    value: gs://acme-curated-lake/orders_parquet/
+jobConfig:
+  jobName: zero-transform-csv-to-parquet
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  region: us-central1
+  gcsStagingPath: gs://acme-spark-staging/zero-transform-csv-to-parquet
+  network: default
+  subnetwork: regions/us-central1/subnetworks/spark-subnet
+pipelineConfig:
+  language: PySpark
+  outputFolder: ""
+  needsRebuild: false

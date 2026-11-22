@@ -1,0 +1,121 @@
+nodes:
+  - id: src_kafka
+    type: pipeline
+    position:
+      x: 100
+      y: 220
+    data:
+      label: Order Events Kafka Stream
+      type: SOURCE
+      iconName: Cable
+      spark_transform: KafkaSource
+      properties:
+        readMode: streaming
+        bootstrapServers: kafka-broker-1.internal:9092,kafka-broker-2.internal:9092
+        subscriptionMode: subscribe
+        topics: commerce.order.events
+        startingOffsets: latest
+        maxOffsetsPerTrigger: 5000
+        failOnDataLoss: true
+        includeHeaders: false
+        securityProtocol: PLAINTEXT
+        authMode: default
+  - id: step_parse_payload
+    type: pipeline
+    position:
+      x: 420
+      y: 220
+    data:
+      label: Parse Order JSON Payload
+      type: STEP
+      iconName: FileCode
+      spark_transform: ParsePayload
+      properties:
+        format: json
+        sourceColumn: value
+        schemaDDL: order_id STRING, customer_id STRING, order_status STRING, amount DOUBLE, currency STRING, event_timestamp TIMESTAMP
+        flattenFields: true
+        corruptRecordColumn: _corrupt_record
+        keepSourceColumn: false
+  - id: snk_delta
+    type: pipeline
+    position:
+      x: 760
+      y: 110
+    data:
+      label: Delta Lake Order Archive
+      type: SINK
+      iconName: Layers
+      spark_transform: DeltaSink
+      properties:
+        targetMode: path
+        path: gs://analytics-demo-lakehouse/delta/order_events
+        writeMode: append
+        partitionBy: currency
+        mergeSchema: true
+        optimizeWrite: true
+        txnAppId: streaming_multi_sink_foreachbatch_step_parse_payload
+        outputMode: append
+        triggerType: processingTime
+        triggerInterval: 15 seconds
+        checkpointLocation: gs://analytics-demo-checkpoints/streaming-multi-sink-foreachbatch/snk_delta
+  - id: snk_cloudsql
+    type: pipeline
+    position:
+      x: 760
+      y: 330
+    data:
+      label: Cloud SQL Order Ledger
+      type: SINK
+      iconName: Database
+      spark_transform: CloudSqlSink
+      properties:
+        instanceConnectionName: analytics-demo-project:us-central1:orders-pg
+        dbEngine: postgresql
+        database: orders_ledger
+        table: public.order_events
+        saveMode: append
+        batchsize: 5000
+        isolationLevel: READ_COMMITTED
+        numPartitions: 8
+        authMode: iam
+        username: spark-streaming-sa@analytics-demo-project.iam
+        driverJarUri: gs://analytics-demo-artifacts/jars/postgresql-42.7.4.jar
+        socketFactoryJarUri: gs://analytics-demo-artifacts/jars/postgres-socket-factory-1.21.0-jar-with-dependencies.jar
+        outputMode: append
+        triggerType: processingTime
+        triggerInterval: 15 seconds
+        checkpointLocation: gs://analytics-demo-checkpoints/streaming-multi-sink-foreachbatch/snk_cloudsql
+edges:
+  - id: e-src_kafka-step_parse_payload
+    source: src_kafka
+    target: step_parse_payload
+  - id: e-step_parse_payload-snk_delta
+    source: step_parse_payload
+    sourceHandle: valid
+    target: snk_delta
+  - id: e-step_parse_payload-snk_cloudsql
+    source: step_parse_payload
+    sourceHandle: valid
+    target: snk_cloudsql
+runtimeVariables:
+  - key: KAFKA_BOOTSTRAP_SERVERS
+    value: kafka-broker-1.internal:9092,kafka-broker-2.internal:9092
+  - key: DELTA_TABLE_PATH
+    value: gs://analytics-demo-lakehouse/delta/order_events
+  - key: CLOUDSQL_INSTANCE_CONNECTION_NAME
+    value: analytics-demo-project:us-central1:orders-pg
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  jobName: streaming-multi-sink-foreachbatch
+  projectId: analytics-demo-project
+  region: us-central1
+  checkpointRoot: gs://analytics-demo-checkpoints/streaming-multi-sink-foreachbatch
+  defaultTriggerType: processingTime
+  defaultTriggerInterval: 15 seconds
+pipelineConfig:
+  language: PySpark
+  outputFolder: ""
+  needsRebuild: false

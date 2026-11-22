@@ -1,0 +1,213 @@
+/**
+ * SidebarItem Component
+ * 
+ * Author: Mike Nimer <mikenimer@google.com>
+ * 
+ * Purpose:
+ * This component represents a draggable and clickable card item in the sidebar panels.
+ * It displays an icon, node label, category badge, transform description, and an add button
+ * to place nodes onto the React Flow canvas.
+ * 
+ * Architectural Decisions:
+ * - Uses HTML5 drag and drop dataTransfer to transmit nodeType, label, type, iconName, and sparkTransform.
+ * - Supports instant canvas placement via an interactive '+' button.
+ * - Adheres strictly to the 8pt grid system for spacing and sizing.
+ * - Dynamically adapts styling based on category type (Green for SOURCES, Blue for STEPS, Red for SINKS).
+ */
+
+import React from 'react';
+import {
+  GripVertical,
+  Plus,
+  Box
+} from 'lucide-react';
+import { getNodeIcon } from './common/nodeIcons';
+import { InfoTooltip } from './InfoTooltip';
+import { checkNodeSdpCompatibility } from '../utils/sdpPlanner';
+import type { PipelineParadigm } from '../utils/sharedTypes';
+
+/**
+ * Props for the {@link SidebarItem} component.
+ */
+export interface SidebarItemProps {
+  /** Display label for the node */
+  label: string;
+  /** Node category type: SOURCE, STEP, or SINK */
+  type: 'SOURCE' | 'STEP' | 'SINK' | string;
+  /** Name of the Lucide icon */
+  iconName: string;
+  /** Optional Apache Spark transform identifier */
+  sparkTransform?: string;
+  /** Optional badge text indicating subtype or feature (e.g., Streaming, Database) */
+  badge?: string;
+  /** Short summary or description of the node function */
+  description?: string;
+  /** Active pipeline authoring paradigm ('imperative' default or 'sdp') */
+  paradigm?: PipelineParadigm;
+  /** Explicit disabled override flag */
+  disabled?: boolean;
+  /** Explanatory tooltip message when disabled */
+  disabledReason?: string;
+  /** Drag start handler */
+  onDragStart: (event: React.DragEvent, nodeType: string, label: string, type: string, iconName: string, sparkTransform?: string) => void;
+  /** Optional click handler to add node directly to canvas */
+  onAddNode?: (label: string, type: string, iconName: string, sparkTransform?: string) => void;
+}
+
+/**
+ * Returns color classes tailored to the node category type.
+ * Sources: Green theme (#10b981)
+ * Steps: Blue theme (#3b82f6)
+ * Sinks: Red theme (#ef4444)
+ */
+const getThemeClasses = (type: string) => {
+  switch (type) {
+    case 'SOURCE':
+      return {
+        cardBorder: 'border-emerald-500/30 hover:border-emerald-500/70',
+        iconBox: 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10',
+        icon: 'text-emerald-400',
+        badge: 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30',
+      };
+    case 'SINK':
+      return {
+        cardBorder: 'border-rose-500/30 hover:border-rose-500/70',
+        iconBox: 'border-rose-500/40 text-rose-400 bg-rose-500/10',
+        icon: 'text-rose-400',
+        badge: 'bg-rose-950/60 text-rose-300 border-rose-500/30',
+      };
+    case 'STEP':
+    default:
+      return {
+        cardBorder: 'border-blue-500/30 hover:border-blue-500/70',
+        iconBox: 'border-blue-500/40 text-blue-400 bg-blue-500/10',
+        icon: 'text-blue-400',
+        badge: 'bg-blue-950/60 text-blue-300 border-blue-500/30',
+      };
+  }
+};
+
+/**
+ * SidebarItem component rendering a node palette card.
+ */
+export const SidebarItem: React.FC<SidebarItemProps> = ({
+  label,
+  type,
+  iconName,
+  sparkTransform,
+  badge,
+  description,
+  paradigm = 'imperative',
+  disabled,
+  disabledReason,
+  onDragStart,
+  onAddNode
+}) => {
+  // Retrieve the matching Lucide icon component
+  const IconComponent = getNodeIcon(iconName, Box);
+  const theme = getThemeClasses(type);
+  const sdpCompatibility =
+    paradigm === 'sdp' ? checkNodeSdpCompatibility(sparkTransform, type) : undefined;
+  const isDisabled = Boolean(disabled || (sdpCompatibility && !sdpCompatibility.supported));
+  const effectiveDisabledReason =
+    disabledReason ||
+    (sdpCompatibility && !sdpCompatibility.supported ? sdpCompatibility.reason : undefined);
+
+  /**
+   * Handle drag start event by forwarding node payload to parent handler unless disabled.
+   */
+  const handleDragStart = (e: React.DragEvent) => {
+    if (isDisabled) {
+      e.preventDefault();
+      return;
+    }
+    onDragStart(e, 'pipeline', label, type, iconName, sparkTransform);
+  };
+
+  /**
+   * Handle add button click event unless disabled.
+   */
+  const handleAddClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isDisabled) {
+      e.preventDefault();
+      return;
+    }
+    if (onAddNode) {
+      onAddNode(label, type, iconName, sparkTransform);
+    }
+  };
+
+  return (
+    <div
+      className={`group relative flex items-center justify-between p-2 rounded-lg bg-[var(--vscode-card-bg)] border transition-all shadow-sm select-none ${
+        isDisabled
+          ? 'opacity-45 cursor-not-allowed border-[var(--vscode-border-light,#334155)]'
+          : `hover:bg-[var(--vscode-hover)] ${theme.cardBorder} cursor-grab active:cursor-grabbing`
+      }`}
+      draggable={!isDisabled}
+      aria-disabled={isDisabled ? 'true' : undefined}
+      onDragStart={handleDragStart}
+      data-testid={`sidebar-item-${label.replace(/\s+/g, '-').toLowerCase()}`}
+    >
+      {/* Left Item Details */}
+      <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+        {/* 6-dot Drag Handle */}
+        <GripVertical
+          className="w-3.5 h-3.5 text-[var(--vscode-text-muted)] group-hover:text-[var(--vscode-text-secondary)] shrink-0"
+          aria-hidden="true"
+        />
+
+        {/* Themed Icon Box */}
+        <div
+          className={`w-8 h-8 rounded-lg flex items-center justify-center border shrink-0 transition-colors ${theme.iconBox}`}
+        >
+          {/* eslint-disable-next-line react-hooks/static-components */}
+          <IconComponent className={`w-4 h-4 ${theme.icon}`} />
+        </div>
+
+        {/* Text Details */}
+        <div className="flex flex-col min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-semibold text-[var(--vscode-text-primary)] truncate">{label}</span>
+            {badge && (
+              <span
+                className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border uppercase tracking-wider ${theme.badge}`}
+              >
+                {badge}
+              </span>
+            )}
+          </div>
+          {description && (
+            <span className="text-[10px] text-[var(--vscode-text-muted)] truncate max-w-[200px]" title={description}>
+              {description}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Disabled Reason Tooltip & Add Button */}
+      <div className="flex items-center gap-1 shrink-0">
+        {isDisabled && effectiveDisabledReason && (
+          <InfoTooltip text={effectiveDisabledReason} />
+        )}
+        {onAddNode && (
+          <button
+            type="button"
+            disabled={isDisabled}
+            onClick={handleAddClick}
+            title={isDisabled ? effectiveDisabledReason || `${label} is not supported in SDP mode` : `Add ${label} to canvas`}
+            aria-label={`Add ${label}`}
+            className={`w-6 h-6 rounded flex items-center justify-center bg-[var(--vscode-button-secondary)] text-[var(--vscode-text-secondary)] border border-[var(--vscode-border-light)] transition-colors shrink-0 ${
+              isDisabled
+                ? 'cursor-not-allowed opacity-50'
+                : 'hover:bg-[var(--vscode-hover)] hover:text-[var(--vscode-text-primary)]'
+            }`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};

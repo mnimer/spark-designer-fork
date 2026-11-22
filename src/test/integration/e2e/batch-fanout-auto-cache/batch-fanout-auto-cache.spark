@@ -1,0 +1,121 @@
+nodes:
+  - id: bq_orders_source
+    type: pipeline
+    position:
+      x: 80
+      y: 200
+    data:
+      label: BigQuery Orders Fact
+      type: SOURCE
+      iconName: Database
+      badge: Analytics
+      spark_transform: BigQuerySource
+      properties:
+        readModeType: table
+        projectId: acme-analytics-prod
+        dataset: commerce
+        table: acme-analytics-prod.commerce.customer_orders
+        filter: order_status = 'COMPLETED'
+        maxParallelism: 32
+  - id: enrich_orders
+    type: pipeline
+    position:
+      x: 400
+      y: 200
+    data:
+      label: Enrich Order Metrics
+      type: STEP
+      iconName: Wrench
+      badge: Derive
+      spark_transform: WithColumns
+      properties:
+        columns:
+          - name: net_amount
+            expression: gross_amount - COALESCE(discount_amount, 0.0)
+            castType: DECIMAL(18, 2)
+          - name: currency_code
+            expression: UPPER(TRIM(currency))
+            castType: STRING
+          - name: order_date
+            expression: TO_DATE(order_timestamp)
+            castType: DATE
+  - id: iceberg_orders_sink
+    type: pipeline
+    position:
+      x: 760
+      y: 100
+    data:
+      label: BigLake Iceberg Lakehouse
+      type: SINK
+      iconName: Database
+      badge: Lakehouse
+      spark_transform: IcebergSink
+      properties:
+        writeOperation: append
+        catalogName: biglake
+        catalogType: biglake
+        catalogUri: https://biglake.googleapis.com/iceberg/v1beta/restcatalog
+        namespace: curated_sales
+        table: biglake.curated_sales.enriched_orders
+        warehouseLocation: gs://acme-lakehouse-prod/iceberg/warehouse
+        warehouse: gs://acme-lakehouse-prod/iceberg/warehouse
+        partitionFields: order_date
+        fanoutEnabled: true
+        authMode: default
+  - id: spanner_orders_sink
+    type: pipeline
+    position:
+      x: 760
+      y: 300
+    data:
+      label: Cloud Spanner Serving Ledger
+      type: SINK
+      iconName: Database
+      badge: GCP SQL
+      spark_transform: SpannerSink
+      properties:
+        projectId: acme-analytics-prod
+        instanceId: orders-serving-prod
+        databaseId: commerce_ledger
+        table: EnrichedOrders
+        saveMode: append
+        mutationMode: insert_or_update
+        mutationsPerTransaction: 2000
+        jarUri: gs://spark-lib/spanner/spark-4.0-spanner-1.5.0.jar
+        authMode: default
+edges:
+  - id: edge-bq-to-enrich
+    source: bq_orders_source
+    target: enrich_orders
+  - id: edge-enrich-to-iceberg
+    source: enrich_orders
+    sourceHandle: valid
+    target: iceberg_orders_sink
+  - id: edge-enrich-to-spanner
+    source: enrich_orders
+    sourceHandle: valid
+    target: spanner_orders_sink
+runtimeVariables:
+  - key: GCP_PROJECT_ID
+    value: acme-analytics-prod
+  - key: BIGQUERY_SOURCE_TABLE
+    value: acme-analytics-prod.commerce.customer_orders
+  - key: ICEBERG_TARGET_TABLE
+    value: biglake.curated_sales.enriched_orders
+  - key: SPANNER_INSTANCE_ID
+    value: orders-serving-prod
+  - key: SPANNER_DATABASE_ID
+    value: commerce_ledger
+jobConfig:
+  jobName: batch-fanout-auto-cache
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  region: us-central1
+  gcsStagingPath: gs://acme-spark-staging/batch-fanout-auto-cache
+  network: default
+  subnetwork: regions/us-central1/subnetworks/spark-subnet
+pipelineConfig:
+  language: PySpark
+  outputFolder: ""
+  needsRebuild: false

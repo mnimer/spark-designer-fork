@@ -1,0 +1,97 @@
+paradigm: imperative
+
+pipelineConfig:
+  language: PySpark
+
+jobConfig:
+  runner: Local
+  jobId: generate-mock-data
+  useSparkConnect: false
+  checkpointRoot: file:///tmp/spark-pipeline-builder/generate-mock-data/checkpoints
+  defaultTriggerType: processingTime
+  defaultTriggerInterval: 1 second
+
+runtimeVariables:
+  - key: JOB_ID
+    value: generate-mock-data
+  - key: RATE_ROWS_PER_SECOND
+    value: "1"
+  - key: TRIGGER_INTERVAL
+    value: "1 second"
+  - key: CHECKPOINT_ROOT
+    value: file:///tmp/spark-pipeline-builder/generate-mock-data/checkpoints
+
+nodes:
+  - id: src_rate
+    type: pipeline
+    position:
+      x: 80
+      y: 160
+    data:
+      label: Synthetic Rate Stream
+      type: SOURCE
+      iconName: Zap
+      spark_transform: RateSource
+      supportedReadModes:
+        - streaming
+      defaultReadMode: streaming
+      properties:
+        readMode: streaming
+        rateFormat: rate
+        rowsPerSecond: 1
+        rampUpTime: 1s
+        numPartitions: 1
+
+  - id: step_generate_customers
+    type: pipeline
+    position:
+      x: 420
+      y: 160
+    data:
+      label: Generate Faker Customers
+      type: STEP
+      iconName: Zap
+      spark_transform: PandasUdfTransform
+      errorOutput: true
+      properties:
+        udfMode: mapInPandas
+        functionName: generate_mock_customers
+        inputColumns:
+          - timestamp
+          - value
+        returnSchemaDDL: customer_id string, full_name string, email string, phone string, city string, country string, created_at timestamp
+        maxRecordsPerBatch: 100
+        system_instructions: >-
+          Use the latest faker library (add faker to requirements.txt), initialized once per
+          partition, to generate realistic mock Customer data matching the return schema for each
+          incoming tick, copying timestamp into created_at.
+
+  - id: sink_console
+    type: pipeline
+    position:
+      x: 760
+      y: 160
+    data:
+      label: Console Log Sink
+      type: SINK
+      iconName: Terminal
+      spark_transform: ConsoleSink
+      streamingSinkMode: native
+      properties:
+        numRows: 20
+        truncate: false
+        logLevel: INFO
+        outputMode: append
+        triggerType: processingTime
+        triggerInterval: 1 second
+        checkpointLocation: file:///tmp/spark-pipeline-builder/generate-mock-data/checkpoints/sink_console
+        system_instructions: Set Spark log level to WARN so JVM INFO logs do not hide the console table output.
+
+edges:
+  - id: e_rate_to_customers
+    source: src_rate
+    target: step_generate_customers
+  - id: e_customers_to_console
+    source: step_generate_customers
+    sourceHandle: valid
+    target: sink_console

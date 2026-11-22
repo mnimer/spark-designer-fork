@@ -1,0 +1,363 @@
+/**
+ * useAssetLoader Hook
+ * 
+ * Author: Mike Nimer <mikenimer@google.com>
+ * 
+ * Purpose:
+ * Encapsulates requesting, loading, error, and caching state for extension-provided assets
+ * (BigQuery datasets/tables, Pub/Sub topics/subscriptions, Secret Manager secrets, AWS queues, etc.).
+ * 
+ * Architectural Decisions:
+ * - Standardizes request IPC and response handling across all property panes.
+ * - Built on useExtensionMessage to ensure robust lifecycle cleanup and zero stale closures.
+ * - Seamlessly surfaces inline error messages dispatched by listAssets in src/extension.ts.
+ * - Allows explicit manual re-fetching via refresh() callback.
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useExtensionMessage } from './useExtensionMessage';
+import { postToHost } from '../bridge/vscodeApi';
+import { isResponseForParams } from '../utils/requestParams';
+import type { AssetResponseCommand, WebviewToHostCommand } from '../utils/protocol';
+
+export type AssetType =
+  | 'datasets'
+  | 'tables'
+  | 'topics'
+  | 'subscriptions'
+  | 'secrets'
+  | 'healthcareDatasets'
+  | 'awsQueues'
+  | 'queues'
+  | 'storageBuckets'
+  | 'buckets'
+  | 'networks'
+  | 'subnetworks'
+  | 'computeInstances'
+  | 'instances'
+  | 'bigtableInstances'
+  | 'bigtableTables'
+  | 'sqlInstances'
+  | 'sqlDatabases'
+  | 'projects'
+  | 'dataprocClusters'
+  | 'clusters'
+  | 'sessionTemplates'
+  | 'bigLakeCatalogs'
+  | 'icebergCatalogs'
+  | 'regions'
+  | 'codegenModels';
+
+/**
+ * Configuration descriptor for an asset type IPC request/response contract.
+ */
+export interface AssetConfig {
+  requestCommand: WebviewToHostCommand;
+  responseCommand: AssetResponseCommand;
+  responseKey: string;
+  /** Request is auto-disabled until this param is a non-empty string (e.g. 'dataset', 'instance'). */
+  requiredParam?: string;
+}
+
+/**
+ * Registry mapping asset types to their corresponding IPC request commands,
+ * response commands, and response payload keys defined in src/extension.ts.
+ */
+export const ASSET_CONFIGS: Record<string, AssetConfig> = {
+  datasets: {
+    requestCommand: 'getDatasets',
+    responseCommand: 'datasetsLoaded',
+    responseKey: 'datasets'
+  },
+  tables: {
+    requestCommand: 'getTables',
+    responseCommand: 'tablesLoaded',
+    responseKey: 'tables',
+    requiredParam: 'dataset'
+  },
+  topics: {
+    requestCommand: 'getTopics',
+    responseCommand: 'topicsLoaded',
+    responseKey: 'topics'
+  },
+  subscriptions: {
+    requestCommand: 'getSubscriptions',
+    responseCommand: 'subscriptionsLoaded',
+    responseKey: 'subscriptions'
+  },
+  secrets: {
+    requestCommand: 'getSecrets',
+    responseCommand: 'secretsLoaded',
+    responseKey: 'secrets'
+  },
+  healthcareDatasets: {
+    requestCommand: 'getHealthcareDatasets',
+    responseCommand: 'healthcareDatasetsLoaded',
+    responseKey: 'datasets'
+  },
+  awsQueues: {
+    requestCommand: 'getAwsQueues',
+    responseCommand: 'awsQueuesLoaded',
+    responseKey: 'queues'
+  },
+  queues: {
+    requestCommand: 'getAwsQueues',
+    responseCommand: 'awsQueuesLoaded',
+    responseKey: 'queues'
+  },
+  storageBuckets: {
+    requestCommand: 'getStorageBuckets',
+    responseCommand: 'storageBucketsLoaded',
+    responseKey: 'buckets'
+  },
+  buckets: {
+    requestCommand: 'getStorageBuckets',
+    responseCommand: 'storageBucketsLoaded',
+    responseKey: 'buckets'
+  },
+  networks: {
+    requestCommand: 'getNetworks',
+    responseCommand: 'networksLoaded',
+    responseKey: 'networks'
+  },
+  subnetworks: {
+    requestCommand: 'getSubnetworks',
+    responseCommand: 'subnetworksLoaded',
+    responseKey: 'subnetworks'
+  },
+  computeInstances: {
+    requestCommand: 'getComputeInstances',
+    responseCommand: 'computeInstancesLoaded',
+    responseKey: 'instances'
+  },
+  instances: {
+    requestCommand: 'getComputeInstances',
+    responseCommand: 'computeInstancesLoaded',
+    responseKey: 'instances'
+  },
+  bigtableInstances: {
+    requestCommand: 'getBigtableInstances',
+    responseCommand: 'bigtableInstancesLoaded',
+    responseKey: 'bigtableInstances'
+  },
+  bigtableTables: {
+    requestCommand: 'getBigtableTables',
+    responseCommand: 'bigtableTablesLoaded',
+    responseKey: 'bigtableTables',
+    requiredParam: 'instance'
+  },
+  sqlInstances: {
+    requestCommand: 'getSqlInstances',
+    responseCommand: 'sqlInstancesLoaded',
+    responseKey: 'sqlInstances'
+  },
+  sqlDatabases: {
+    requestCommand: 'getSqlDatabases',
+    responseCommand: 'sqlDatabasesLoaded',
+    responseKey: 'sqlDatabases',
+    requiredParam: 'instance'
+  },
+  projects: {
+    requestCommand: 'getProjects',
+    responseCommand: 'projectsLoaded',
+    responseKey: 'projects'
+  },
+  dataprocClusters: {
+    requestCommand: 'getDataprocClusters',
+    responseCommand: 'dataprocClustersLoaded',
+    responseKey: 'clusters'
+  },
+  clusters: {
+    requestCommand: 'getDataprocClusters',
+    responseCommand: 'dataprocClustersLoaded',
+    responseKey: 'clusters'
+  },
+  sessionTemplates: {
+    requestCommand: 'getSessionTemplates',
+    responseCommand: 'sessionTemplatesLoaded',
+    responseKey: 'sessionTemplates'
+  },
+  bigLakeCatalogs: {
+    requestCommand: 'getBigLakeCatalogs',
+    responseCommand: 'bigLakeCatalogsLoaded',
+    responseKey: 'catalogs'
+  },
+  icebergCatalogs: {
+    requestCommand: 'getBigLakeCatalogs',
+    responseCommand: 'bigLakeCatalogsLoaded',
+    responseKey: 'catalogs'
+  },
+  regions: {
+    requestCommand: 'getRegions',
+    responseCommand: 'regionsLoaded',
+    responseKey: 'regions'
+  },
+  codegenModels: {
+    requestCommand: 'getCodegenModels',
+    responseCommand: 'codegenModelsLoaded',
+    responseKey: 'models'
+  }
+};
+
+/**
+ * Options for configuring asset discovery requests in {@link useAssetLoader}.
+ */
+export interface UseAssetLoaderOptions<T = unknown> {
+  /** Optional parameter payload to send with the request (e.g. { dataset: 'my_dataset' }) */
+  params?: Record<string, unknown>;
+  /** Optional shorthand for dataset param if loading tables */
+  dataset?: string;
+  /** Whether loading is enabled. Defaults to true (unless assetType has a requiredParam that is empty). */
+  enabled?: boolean;
+  /** Optional callback invoked when assets or error are loaded */
+  onLoaded?: (items: T[], rawMessage: Record<string, unknown>) => void;
+  /** Initial items fallback */
+  initialItems?: T[];
+}
+
+/**
+ * Result state returned by the {@link useAssetLoader} hook.
+ */
+export interface UseAssetLoaderResult<T = unknown> {
+  /** Loaded asset items */
+  items: T[];
+  /** Alias for items */
+  data: T[];
+  /** Error message if listing failed, or null */
+  error: string | null;
+  /** Whether assets are currently being loaded */
+  loading: boolean;
+  /** Alias for loading */
+  isLoading: boolean;
+  /** Function to manually trigger re-fetching assets */
+  refresh: () => void;
+  /** Set items manually */
+  setItems: React.Dispatch<React.SetStateAction<T[]>>;
+  /** Set error manually */
+  setError: React.Dispatch<React.SetStateAction<string | null>>;
+  /** Raw response message */
+  rawResponse: Record<string, unknown> | null;
+}
+
+/**
+ * Reusable hook to request and observe assets from the VS Code extension host.
+ *
+ * @template T Type of the individual asset item
+ * @param assetType Key identifier matching ASSET_CONFIGS
+ * @param options Optional configuration including params, enabled flag, and onLoaded callback
+ * @returns State object with items, error, loading, and refresh callback
+ */
+export function useAssetLoader<T = unknown>(
+  assetType: AssetType | string,
+  options?: UseAssetLoaderOptions<T>
+): UseAssetLoaderResult<T> {
+  const config = ASSET_CONFIGS[assetType];
+  if (!config) {
+    throw new Error(`Unknown assetType '${assetType}' passed to useAssetLoader.`);
+  }
+
+  // Combine params with shorthand options
+  const params: Record<string, unknown> = {
+    ...(options?.dataset ? { dataset: options.dataset } : {}),
+    ...(options?.params || {})
+  };
+
+  // Some assets (tables, bigtableTables, sqlDatabases) require a parent identifier.
+  // Auto-disable until the config requiredParam is provided.
+  const requiredParam = config.requiredParam;
+  const hasRequiredParam = !requiredParam ||
+    Boolean(params[requiredParam] && String(params[requiredParam]).trim().length > 0);
+  const autoEnabled = hasRequiredParam;
+  const isEnabled = options?.enabled !== undefined ? options.enabled : autoEnabled;
+
+  // Memoize stable serialized params key to re-trigger fetch on param changes
+  const paramsKey = JSON.stringify(params);
+  const fetchKey = isEnabled ? `${config.requestCommand}:${paramsKey}` : null;
+
+  const [items, setItems] = useState<T[]>(options?.initialItems || []);
+  const [error, setError] = useState<string | null>(null);
+  const [settledFetchKey, setSettledFetchKey] = useState<string | null>(null);
+  const [manualLoading, setManualLoading] = useState<boolean>(false);
+  const [rawResponse, setRawResponse] = useState<Record<string, unknown> | null>(null);
+
+  // Keep latest onLoaded callback and active fetch key in refs via effect
+  const onLoadedRef = useRef(options?.onLoaded);
+  const activeFetchKeyRef = useRef<string | null>(fetchKey);
+  useEffect(() => {
+    onLoadedRef.current = options?.onLoaded;
+    activeFetchKeyRef.current = fetchKey;
+  });
+
+  // F11: parameters of the most recent request. Responses echoing different
+  // parameters (another panel's request, or a slower earlier request) are ignored.
+  const lastRequestParamsRef = useRef<Record<string, unknown>>(params);
+
+  /**
+   * Dispatches the IPC request payload to the VS Code extension host without synchronous state updates.
+   */
+  const dispatchAssetRequest = useCallback(() => {
+    const parsedParams = JSON.parse(paramsKey) as Record<string, unknown>;
+    lastRequestParamsRef.current = parsedParams;
+    postToHost({
+      command: config.requestCommand,
+      ...parsedParams
+    });
+  }, [config.requestCommand, paramsKey]);
+
+  /**
+   * Manually triggers re-fetching assets from an event handler.
+   */
+  const requestAssets = useCallback(() => {
+    if (!isEnabled) {
+      setManualLoading(false);
+      return;
+    }
+
+    setManualLoading(true);
+    dispatchAssetRequest();
+  }, [isEnabled, dispatchAssetRequest]);
+
+  // NOTE: Listen for response command from extension host using useExtensionMessage
+  useExtensionMessage<Record<string, unknown>>(config.responseCommand, (message) => {
+    if (!isResponseForParams(message, lastRequestParamsRef.current)) {
+      return;
+    }
+    const rawItems = message[config.responseKey];
+    const loadedItems: T[] = Array.isArray(rawItems) ? (rawItems as T[]) : [];
+    const receivedError: string | null =
+      typeof message.error === 'string' && message.error ? message.error : null;
+
+    setItems(loadedItems);
+    setError(receivedError);
+    setSettledFetchKey(activeFetchKeyRef.current);
+    setManualLoading(false);
+    setRawResponse(message);
+
+    if (onLoadedRef.current) {
+      onLoadedRef.current(loadedItems, message);
+    }
+  });
+
+  // Automatically request assets on mount or when dependencies change
+  useEffect(() => {
+    if (isEnabled) {
+      dispatchAssetRequest();
+    }
+  }, [isEnabled, dispatchAssetRequest]);
+
+  const effectiveItems = !isEnabled && !hasRequiredParam ? [] : items;
+  const effectiveError = !isEnabled && !hasRequiredParam ? null : error;
+  const loading = isEnabled && (manualLoading || settledFetchKey !== fetchKey);
+
+  return {
+    items: effectiveItems,
+    data: effectiveItems,
+    error: effectiveError,
+    loading,
+    isLoading: loading,
+    refresh: requestAssets,
+    setItems,
+    setError,
+    rawResponse
+  };
+}

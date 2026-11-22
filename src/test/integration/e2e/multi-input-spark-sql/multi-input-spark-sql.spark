@@ -1,0 +1,213 @@
+# Multi-Input Spark SQL Query Pipeline (I9)
+# Joins GCS Parquet orders, GCS JSON clickstream attribution, and PostgreSQL JDBC customers into BigLake Iceberg.
+
+pipelineConfig:
+  language: PySpark
+
+jobConfig:
+  runner: ServerlessSpark
+  runtimeVersion: "4.0"
+  tier: standard
+  projectId: analytics-prod-project
+  region: us-central1
+  batchId: multi-input-spark-sql-batch
+  stagingBucket: gs://analytics-lakehouse-staging/spark-staging
+
+runtimeVariables:
+  - key: GCP_PROJECT_ID
+    value: analytics-prod-project
+  - key: TARGET_REGION
+    value: US
+  - key: MIN_ORDER_AMOUNT
+    value: "25.0"
+
+nodes:
+  - id: src_orders_parquet
+    type: pipeline
+    position:
+      x: 80
+      y: 80
+    data:
+      label: Orders Parquet
+      type: SOURCE
+      iconName: FileCode
+      spark_transform: ParquetSource
+      supportedReadModes:
+        - batch
+        - streaming
+      defaultReadMode: batch
+      properties:
+        readMode: batch
+        storageBackend: gcs
+        path: gs://analytics-lakehouse-raw/orders/parquet/
+        pathGlobFilter: "*.parquet"
+        recursiveFileLookup: false
+        mergeSchema: false
+        datetimeRebaseMode: CORRECTED
+        int96RebaseMode: CORRECTED
+        schemaFields:
+          - name: order_id
+            type: STRING
+            nullable: false
+          - name: customer_id
+            type: STRING
+            nullable: false
+          - name: product_id
+            type: STRING
+            nullable: false
+          - name: order_amount
+            type: DOUBLE
+            nullable: false
+          - name: order_date
+            type: DATE
+            nullable: false
+          - name: region
+            type: STRING
+            nullable: false
+
+  - id: src_clickstream_json
+    type: pipeline
+    position:
+      x: 80
+      y: 280
+    data:
+      label: Clickstream Attribution JSON
+      type: SOURCE
+      iconName: FileCode
+      spark_transform: JsonSource
+      supportedReadModes:
+        - batch
+        - streaming
+      defaultReadMode: batch
+      properties:
+        readMode: batch
+        storageBackend: gcs
+        path: gs://analytics-lakehouse-raw/clickstream/json/
+        pathGlobFilter: "*.json"
+        recursiveFileLookup: false
+        multiLine: false
+        primitivesAsString: false
+        allowComments: false
+        mode: FAILFAST
+        schemaFields:
+          - name: order_id
+            type: STRING
+            nullable: false
+          - name: campaign_channel
+            type: STRING
+            nullable: true
+          - name: session_id
+            type: STRING
+            nullable: true
+
+  - id: src_customers_jdbc
+    type: pipeline
+    position:
+      x: 80
+      y: 480
+    data:
+      label: Customers PostgreSQL JDBC
+      type: SOURCE
+      iconName: Database
+      spark_transform: JdbcSource
+      supportedReadModes:
+        - batch
+      defaultReadMode: batch
+      properties:
+        dbEngine: postgresql
+        driverClass: org.postgresql.Driver
+        jdbcUrl: jdbc:postgresql://10.24.0.15:5432/commerce
+        readTargetMode: table
+        table: public.customers
+        partitionColumn: customer_num
+        dynamicBounds: true
+        numPartitions: 8
+        fetchsize: 5000
+        username: analytics_reader
+        authMode: secretManager
+        secretName: projects/analytics-prod-project/secrets/commerce-postgres-reader-pw/versions/latest
+        driverJarUri: gs://analytics-lakehouse-artifacts/jars/postgresql-42.7.4.jar
+
+  - id: step_enrich_sql
+    type: pipeline
+    position:
+      x: 460
+      y: 280
+    data:
+      label: Enrich Revenue SQL
+      type: STEP
+      iconName: Database
+      spark_transform: SparkSqlQuery
+      inputArity: n
+      errorOutput: true
+      properties:
+        inputViewAliases:
+          - inputIndex: 0
+            viewName: orders_view
+          - inputIndex: 1
+            viewName: attribution_view
+          - inputIndex: 2
+            viewName: customers_view
+        sqlParameters:
+          - key: target_region
+            value: US
+          - key: min_amount
+            value: "25.0"
+        sqlQuery: |
+          SELECT
+            o.order_id,
+            o.customer_id,
+            c.customer_tier,
+            c.country_code,
+            COALESCE(a.campaign_channel, 'organic') AS campaign_channel,
+            o.product_id,
+            o.order_amount,
+            o.order_date,
+            o.region
+          FROM orders_view AS o
+          INNER JOIN customers_view AS c
+            ON o.customer_id = c.customer_id
+          LEFT JOIN attribution_view AS a
+            ON o.order_id = a.order_id
+          WHERE o.region = :target_region
+            AND o.order_amount >= CAST(:min_amount AS DOUBLE)
+
+  - id: snk_revenue_iceberg
+    type: pipeline
+    position:
+      x: 840
+      y: 280
+    data:
+      label: Revenue Mart Iceberg
+      type: SINK
+      iconName: Database
+      spark_transform: IcebergSink
+      streamingSinkMode: native
+      inputArity: 1
+      properties:
+        catalogName: biglake
+        catalogType: biglake
+        catalogUri: https://biglake.googleapis.com/iceberg/v1beta/restcatalog
+        warehouseLocation: gs://analytics-lakehouse-curated/iceberg/warehouse
+        warehouse: gs://analytics-lakehouse-curated/iceberg/warehouse
+        namespace: commerce_mart
+        table: attributed_orders
+        writeOperation: append
+        partitionFields: days(order_date), region
+        fanoutEnabled: true
+        authMode: default
+
+edges:
+  - id: edge_parquet_to_sql
+    source: src_orders_parquet
+    target: step_enrich_sql
+  - id: edge_json_to_sql
+    source: src_clickstream_json
+    target: step_enrich_sql
+  - id: edge_jdbc_to_sql
+    source: src_customers_jdbc
+    target: step_enrich_sql
+  - id: edge_sql_to_iceberg
+    source: step_enrich_sql
+    sourceHandle: valid
+    target: snk_revenue_iceberg
