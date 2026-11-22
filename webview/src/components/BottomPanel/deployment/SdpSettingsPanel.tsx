@@ -75,6 +75,13 @@ export function SdpSettingsPanel<
       : '';
   const sdpCreateNamespace =
     typeof jobConfig.sdpCreateNamespace === 'boolean' ? jobConfig.sdpCreateNamespace : true;
+  const sdpHybridForeachBatch = Boolean(jobConfig.sdpHybridForeachBatch);
+  const sdpOutputFormat: 'python' | 'sql' | 'mixed' =
+    jobConfig.sdpOutputFormat === 'sql' || jobConfig.sdpOutputFormat === 'mixed'
+      ? jobConfig.sdpOutputFormat
+      : 'python';
+  const sdpQualityMode: 'quarantine' | 'expectations' =
+    jobConfig.sdpQualityMode === 'expectations' ? 'expectations' : 'quarantine';
   const rawStaticSparkConf: string | Record<string, string> | null | undefined =
     typeof jobConfig.sdpStaticSparkConf === 'string' ||
     (typeof jobConfig.sdpStaticSparkConf === 'object' &&
@@ -520,6 +527,76 @@ export function SdpSettingsPanel<
         />
         <span className="font-semibold">Create Target Namespace Before Run</span>
         <InfoTooltip text="Executes CREATE NAMESPACE IF NOT EXISTS before standalone runs because SDP does not create missing databases." />
+      </label>
+
+      {/* V2.7 Transformation Output Mode & V2.8 Data Quality Mode */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="sdpOutputFormat"
+            className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+          >
+            <span>Output Mode</span>
+            <InfoTooltip text="Choose Python transformations, declarative Spark 4.2 SQL transformations, or mixed SQL plus Python for UDFs and sinks." />
+          </label>
+          <select
+            id="sdpOutputFormat"
+            name="sdpOutputFormat"
+            value={sdpOutputFormat}
+            onChange={(e) => {
+              const nextFormat = e.target.value as 'python' | 'sql' | 'mixed';
+              setJobConfig((prev) => ({ ...prev, sdpOutputFormat: nextFormat }));
+            }}
+            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
+          >
+            <option value="python">Python (transformations/*.py)</option>
+            <option value="sql">SQL (transformations/*.sql)</option>
+            <option value="mixed">Mixed (SQL + Python)</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="sdpQualityMode"
+            className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[var(--vscode-text-muted)]"
+          >
+            <span>Data Quality Mode</span>
+            <InfoTooltip text="Use OSS filter quarantine datasets or sdp_extensions.expectations decorators placed below dataset decorators." />
+          </label>
+          <select
+            id="sdpQualityMode"
+            name="sdpQualityMode"
+            value={sdpQualityMode}
+            onChange={(e) => {
+              const nextQuality = e.target.value as 'quarantine' | 'expectations';
+              setJobConfig((prev) => ({ ...prev, sdpQualityMode: nextQuality }));
+            }}
+            className="bg-[var(--vscode-input-bg)] text-[var(--vscode-text-primary)] p-2 rounded border border-[var(--vscode-border)] text-xs focus:outline-none focus:border-[var(--vscode-highlight)] cursor-pointer"
+          >
+            <option value="quarantine">Quarantine Datasets (OSS Filter)</option>
+            <option value="expectations">sdp_extensions.expectations (@dq)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* V2.6 Hybrid foreachBatch Companion Sinks Toggle */}
+      <label
+        htmlFor="sdpHybridForeachBatch"
+        className="flex items-center gap-2 text-xs text-[var(--vscode-text-primary)] cursor-pointer select-none"
+      >
+        <input
+          id="sdpHybridForeachBatch"
+          name="sdpHybridForeachBatch"
+          type="checkbox"
+          checked={sdpHybridForeachBatch}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setJobConfig((prev) => ({ ...prev, sdpHybridForeachBatch: checked }));
+          }}
+          className="rounded border-[var(--vscode-border)] bg-[var(--vscode-input-bg)] text-purple-500 focus:ring-0 cursor-pointer"
+        />
+        <span className="font-semibold">Allow Hybrid foreachBatch Sinks</span>
+        <InfoTooltip text="Unlocks foreachBatch-only sinks in SDP mode and generates a companion imperative sink job reading persisted catalog datasets." />
       </label>
 
       {/* Spark & Runner Properties with Automatic Static Config Routing */}

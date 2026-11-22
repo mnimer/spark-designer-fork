@@ -351,9 +351,9 @@ Independent feature task that can ship in its own PR before Phase 13 branch cons
 | `V2.3` | ⏸️ V2 | Live schema introspection from BigQuery / Dataplex / Iceberg catalogs to auto-populate column dropdowns in downstream Step forms. | ⏸️ Deferred |
 | `V2.4` | ⏸️ V2 | Dataproc Workflow Templates & Serverless Spark scheduled Cloud Composer / Cloud Scheduler export. | ⏸️ Deferred |
 | `V2.5` | ⏸️ V2 | Spark Event Log / Driver Log analyzer integration (`gcp-spark-troubleshooting`) inside the Deployment Execution Terminal on job failure. | ⏸️ Deferred |
-| `V2.6` | ⏸️ V2 | Hybrid SDP output: generate an SDP project for catalog datasets plus a companion imperative job for `foreachBatch`-only sinks that SDP cannot express. | ⏸️ Deferred |
-| `V2.7` | ⏸️ V2 | SDP SQL output mode: emit `transformations/*.sql` (`CREATE STREAMING TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE FLOW ... INSERT INTO ... BY NAME`) for nodes that need no Python UDFs or sinks. | ⏸️ Deferred |
-| `V2.8` | ⏸️ V2 | Optional SDP expectations support through the `sdp_extensions.expectations` library when available on the target runtime, as an alternative to quarantine datasets. | ⏸️ Deferred |
+| `V2.6` | ⏸️ V2 | Hybrid SDP output: generate an SDP project for catalog datasets plus a companion imperative job for `foreachBatch`-only sinks that SDP cannot express. | ✅ Done |
+| `V2.7` | ⏸️ V2 | SDP SQL output mode: emit `transformations/*.sql` (`CREATE STREAMING TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE FLOW ... INSERT INTO ... BY NAME`) for nodes that need no Python UDFs or sinks. | ✅ Done |
+| `V2.8` | ⏸️ V2 | Optional SDP expectations support through the `sdp_extensions.expectations` library when available on the target runtime, as an alternative to quarantine datasets. | ✅ Done |
 
 ---
 

@@ -135,7 +135,7 @@ Lists inside `metadata` support flow syntax (`[a, b]`) or indented block items (
 | `runners` | Required list | Non-empty list containing `all` or values from `local`, `dataproc-cluster`, `serverless-spark`, `sdp`, `notebook` (`SKILL_RUNNERS`). |
 | `paradigms` | Required list | Non-empty list containing `all`, `imperative`, `sdp`, or `notebook` (`SKILL_PARADIGMS`). Bundled skills must declare `paradigms` explicitly. |
 | `transforms` | Optional list | Exact catalog `sparkTransform` IDs (defaults to `[]`). Checked against the palette catalog and `SPARK_NODE_CAPABILITIES`. |
-| `preloadWhen` | Optional list | Subset of `PIPELINE_FEATURES`: `side_inputs`, `multi_output`, `streaming`, `custom_instructions`, `python_datasource`, `xlang`, `sdp_auto_cdc`, `sdp_quarantine`. |
+| `preloadWhen` | Optional list | Subset of `PIPELINE_FEATURES`: `side_inputs`, `multi_output`, `streaming`, `custom_instructions`, `python_datasource`, `xlang`, `sdp_auto_cdc`, `sdp_quarantine`, `sdp_hybrid`, `sdp_sql`, `sdp_expectations`. |
 | `sources` | Optional list | Provenance markers (`prompt` and `https://` official documentation URLs). Every non-legacy skill requires at least one `https://` URL. |
 | `validated` | Optional boolean | `true` or `false` (defaults to `false`). Set to `true` after generated code compiles and passes tests. |
 
@@ -181,6 +181,9 @@ The active runner selected in the Deployment tab does not filter generated runne
 | `xlang` | Any node matches `XLANG_TRANSFORMS[language]`. |
 | `sdp_auto_cdc` | `paradigm` is `sdp` and the graph contains `MergeCdcScd` (preloads `sdp-auto-cdc`). |
 | `sdp_quarantine` | `paradigm` is `sdp` and the graph contains `DataQualityAssert` or a DLQ-routed `EnforceSchemaAndCast` / `ParsePayload` step (preloads `sdp-quality-quarantine`). |
+| `sdp_hybrid` | `paradigm` is `sdp`, `sdpHybridForeachBatch` is enabled, and the graph contains a `foreachBatch`-only sink (preloads `sdp-hybrid-companion`). |
+| `sdp_sql` | `paradigm` is `sdp` and `sdpOutputFormat` is `'sql'` or `'mixed'` (preloads `sdp-sql`). |
+| `sdp_expectations` | `paradigm` is `sdp`, `sdpQualityMode` is `'expectations'`, and the graph contains `DataQualityAssert` (preloads `sdp-expectations`). |
 
 ### 1-to-1 Catalog Ownership
 

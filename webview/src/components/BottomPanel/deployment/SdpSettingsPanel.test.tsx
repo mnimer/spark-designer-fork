@@ -140,4 +140,42 @@ describe('SdpSettingsPanel (SDP3)', () => {
     expect(notice).toHaveTextContent('spark.driver.memory');
     expect(notice).toHaveTextContent('CANNOT_MODIFY_STATIC_CONFIG');
   });
+
+  it('updates sdpOutputFormat, sdpQualityMode, and sdpHybridForeachBatch via functional updaters (V2.6-V2.8)', () => {
+    const initial: Record<string, unknown> = {
+      sdpStorage: 'gs://sdp-state/orders',
+      sdpCatalog: 'lake',
+      sdpDatabase: 'retail',
+      sdpOutputFormat: 'python',
+      sdpQualityMode: 'quarantine',
+      sdpHybridForeachBatch: false,
+    };
+    const setJobConfig = vi.fn();
+
+    render(<SdpSettingsPanel jobConfig={initial} setJobConfig={setJobConfig} />);
+
+    const outputSelect = screen.getByLabelText(/Output Mode/i, { selector: 'select' });
+    fireEvent.change(outputSelect, { target: { value: 'sql' } });
+    const qualitySelect = screen.getByLabelText(/Data Quality Mode/i, { selector: 'select' });
+    fireEvent.change(qualitySelect, { target: { value: 'expectations' } });
+    const hybridCheckbox = screen.getByLabelText(/Allow Hybrid foreachBatch Sinks/i, {
+      selector: 'input',
+    });
+    fireEvent.click(hybridCheckbox);
+
+    expect(setJobConfig).toHaveBeenCalledTimes(3);
+    const firstUpdater = setJobConfig.mock.calls[0][0] as (
+      prev: Record<string, unknown>
+    ) => Record<string, unknown>;
+    const secondUpdater = setJobConfig.mock.calls[1][0] as (
+      prev: Record<string, unknown>
+    ) => Record<string, unknown>;
+    const thirdUpdater = setJobConfig.mock.calls[2][0] as (
+      prev: Record<string, unknown>
+    ) => Record<string, unknown>;
+
+    expect(firstUpdater(initial).sdpOutputFormat).toBe('sql');
+    expect(secondUpdater(initial).sdpQualityMode).toBe('expectations');
+    expect(thirdUpdater(initial).sdpHybridForeachBatch).toBe(true);
+  });
 });

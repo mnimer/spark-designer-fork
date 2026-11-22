@@ -128,5 +128,31 @@ describe('SidebarItem', () => {
     expect(tooltip).toBeInTheDocument();
     expect(tooltip.getAttribute('aria-label')).toMatch(/foreachBatch|SDP/i);
   });
+
+  it('unlocks foreachBatch-only sinks in SDP mode when allowHybridForeachBatch is enabled (V2.6)', () => {
+    const onAddNode = vi.fn();
+
+    render(
+      <SidebarItem
+        label="Cloud Spanner"
+        type="SINK"
+        iconName="Database"
+        sparkTransform="SpannerSink"
+        paradigm="sdp"
+        allowHybridForeachBatch={true}
+        onDragStart={vi.fn()}
+        onAddNode={onAddNode}
+      />
+    );
+
+    const card = screen.getByTestId('sidebar-item-cloud-spanner');
+    expect(card).not.toHaveAttribute('aria-disabled', 'true');
+    expect(card).toHaveAttribute('draggable', 'true');
+
+    const addBtn = screen.getByRole('button', { name: /Add Cloud Spanner/i });
+    expect(addBtn).not.toBeDisabled();
+    fireEvent.click(addBtn);
+    expect(onAddNode).toHaveBeenCalledTimes(1);
+  });
 });
 

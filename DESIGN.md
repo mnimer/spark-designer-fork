@@ -185,6 +185,7 @@ All micro-badges use compact `10px` (`text-[10px]`) bold pill styling (`px-1 py-
 | **`TABLE`** | `node-sdp-badge` | When `paradigm === 'sdp'` on `@dp.table` or `dp.create_streaming_table` + `@dp.append_flow` | `bg-emerald-500/15 border-emerald-500/40 text-emerald-300` |
 | **`CDC`** | `node-sdp-badge` | When `paradigm === 'sdp'` on `dp.create_auto_cdc_flow` SCD Type 1 flows | `bg-amber-500/15 border-amber-500/40 text-amber-300` |
 | **`SINK`** | `node-sdp-badge` | When `paradigm === 'sdp'` on `dp.create_sink` external streaming sinks | `bg-rose-500/15 border-rose-500/40 text-rose-300` |
+| **`HYBRID`** | `node-sdp-badge` | When `paradigm === 'sdp'` and `sdpHybridForeachBatch` is enabled on `foreachBatch`-only sinks routed to a companion imperative job | `bg-orange-500/15 border-orange-500/40 text-orange-300` |
 
 - When `paradigm === 'sdp'`, `PipelineNode` suppresses `CACHE` and `foreachBatch` pills and renders deterministic `node-sdp-badge` tokens from `sdpPlanner.ts`.
 

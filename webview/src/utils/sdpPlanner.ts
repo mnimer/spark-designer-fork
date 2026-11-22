@@ -11,6 +11,7 @@ export * from '../../../src/shared/sdpPlanner';
 export type {
     SdpBlockingIssue,
     SdpNodeCompatibility,
+    SdpNodeCompatibilityOptions,
     SdpPlannedDataset,
     SdpExecutionPlan,
     SdpPlannerOptions,

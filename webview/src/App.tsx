@@ -524,6 +524,9 @@ function App() {
           prev.sdpBigLakeCatalogId !== config.sdpBigLakeCatalogId ||
           prev.sdpBigLakeWarehouseBucket !== config.sdpBigLakeWarehouseBucket ||
           prev.sdpCreateNamespace !== config.sdpCreateNamespace ||
+          Boolean(prev.sdpHybridForeachBatch) !== Boolean(config.sdpHybridForeachBatch) ||
+          (prev.sdpOutputFormat ?? 'python') !== (config.sdpOutputFormat ?? 'python') ||
+          (prev.sdpQualityMode ?? 'quarantine') !== (config.sdpQualityMode ?? 'quarantine') ||
           JSON.stringify(prev.sdpStaticSparkConf ?? '') !==
             JSON.stringify(config.sdpStaticSparkConf ?? '');
 
@@ -851,6 +854,7 @@ function App() {
               samples={samples}
               onOpenSample={handleOpenSample}
               paradigm={activeParadigm}
+              allowHybridForeachBatch={Boolean(jobConfig.sdpHybridForeachBatch)}
             />
 
             <LabelChangeContext.Provider value={handleNodeLabelChange}>

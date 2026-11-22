@@ -137,6 +137,9 @@ export const PIPELINE_FEATURES = {
     xlang: 'xlang',
     sdpAutoCdc: 'sdp_auto_cdc',
     sdpQuarantine: 'sdp_quarantine',
+    sdpHybrid: 'sdp_hybrid',
+    sdpSql: 'sdp_sql',
+    sdpExpectations: 'sdp_expectations',
 } as const;
 
 /** A pipeline feature. */

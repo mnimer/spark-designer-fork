@@ -250,6 +250,31 @@ function describeSdpDatasetDecorator(ds: SdpPlannedDataset): string {
     const clusterArg = ds.clusterBy?.length ? `, cluster_by=${JSON.stringify(ds.clusterBy)}` : '';
     const resetArg = !ds.resetAllowed ? ', table_properties={"pipelines.reset.allowed": "false"}' : '';
 
+    if (ds.kind === 'hybrid_companion') {
+        const upstreams =
+            ds.upstreamDatasets.length > 0 ? ds.upstreamDatasets.join(', ') : '<upstream_catalog_table>';
+        return `companion/sink_job.py: read catalog dataset(s) [${upstreams}] -> imperative foreachBatch sink "${ds.datasetName}"`;
+    }
+    if (ds.outputLanguage === 'sql') {
+        const usingClause = ds.format ? ` USING ${ds.format}` : '';
+        const partClause = ds.partitionCols?.length
+            ? ` PARTITIONED BY (${ds.partitionCols.join(', ')})`
+            : '';
+        const resetClause = !ds.resetAllowed
+            ? ` TBLPROPERTIES ('pipelines.reset.allowed' = 'false')`
+            : '';
+        if (ds.kind === 'temporary_view') {
+            return `SQL: CREATE TEMPORARY VIEW ${ds.datasetName} AS SELECT ...`;
+        }
+        if (ds.kind === 'materialized_view') {
+            return `SQL: CREATE MATERIALIZED VIEW ${ds.datasetName}${usingClause}${partClause} AS SELECT ...`;
+        }
+        if (ds.kind === 'append_flow') {
+            const target = ds.targetDataset ?? ds.datasetName;
+            return `SQL: CREATE STREAMING TABLE ${target}${usingClause}${partClause}${resetClause}; CREATE FLOW ${ds.datasetName} AS INSERT INTO ${target} BY NAME SELECT ... FROM STREAM(...)`;
+        }
+        return `SQL: CREATE STREAMING TABLE ${ds.datasetName}${usingClause}${partClause}${resetClause} AS SELECT ... FROM STREAM(...)`;
+    }
     if (ds.kind === 'temporary_view') {
         return `@dp.temporary_view(name="${ds.datasetName}")`;
     }
@@ -475,6 +500,7 @@ export function renderSdpExecutionPlan(sdpPlan: SdpExecutionPlan, parsedPipeline
             'pyyaml>=6.0',
             'zstandard>=0.25.0',
             'pytest>=8.0.0',
+            ...(sdpPlan.usesSdpExpectations ? ['sdp-extensions'] : []),
             ...pipPackages,
         ])
     );
@@ -491,9 +517,18 @@ export function renderSdpExecutionPlan(sdpPlan: SdpExecutionPlan, parsedPipeline
                               ? ds.upstreamDatasets.map((u) => `\`${u}\``).join(', ')
                               : 'source root';
                       const quarantineNote = ds.quarantineDatasetName
-                          ? `, quarantineDataset: \`${ds.quarantineDatasetName}\` (emit filter-based clean \`${ds.datasetName}\` + \`${ds.quarantineDatasetName}\` via pure predicates in \`src/transforms.py\`)`
+                          ? `, quarantineDataset: \`${ds.quarantineDatasetName}\` (emit clean \`${ds.datasetName}\` + \`${ds.quarantineDatasetName}\`)`
                           : '';
-                      return `  - \`${ds.nodeId}\` ("${ds.nodeLabel}", \`${ds.sparkTransform}\`) -> dataset \`${ds.datasetName}\` [\`${ds.badge}\` / \`${ds.kind}\`]: \`${describeSdpDatasetDecorator(ds)}\` (query: \`${readApi}\`, upstreams: [${upstreams}]${quarantineNote})`;
+                      const expectationsNote = ds.usesSdpExpectations
+                          ? `, expectations: \`sdp_extensions.expectations\` (\`action="${ds.expectationAction ?? 'drop'}"\`, place \`@dq.expect*\` BELOW \`@dp.*\`)`
+                          : '';
+                      const langNote =
+                          ds.outputLanguage === 'sql'
+                              ? ', file: `transformations/*.sql`'
+                              : ds.isHybridCompanion
+                                ? ', file: `companion/sink_job.py`'
+                                : '';
+                      return `  - \`${ds.nodeId}\` ("${ds.nodeLabel}", \`${ds.sparkTransform}\`) -> dataset \`${ds.datasetName}\` [\`${ds.badge}\` / \`${ds.kind}\`]: \`${describeSdpDatasetDecorator(ds)}\` (query: \`${readApi}\`, upstreams: [${upstreams}]${langNote}${expectationsNote}${quarantineNote})`;
                   })
                   .join('\n')
             : '  - (no datasets)';
@@ -502,13 +537,25 @@ export function renderSdpExecutionPlan(sdpPlan: SdpExecutionPlan, parsedPipeline
         .map(([k, v]) => `\`${k}=${v}\``)
         .join(', ');
 
+    const transformationDeliverables =
+        sdpPlan.sqlDatasetNames.length > 0 && sdpPlan.pythonDatasetNames.length === 0
+            ? '`transformations/*.sql` (declarative SDP SQL), optional `src/transforms.py` and `tests/test_transforms.py`'
+            : sdpPlan.sqlDatasetNames.length > 0
+              ? '`transformations/*.sql` (for SQL-eligible datasets) + `transformations/*.py` (for Python-only datasets) delegating logic to pure helpers in `src/transforms.py`, offline `tests/test_transforms.py`'
+              : 'Python-only `transformations/*.py` delegating DataFrame logic to pure helpers in `src/transforms.py`, offline `tests/test_transforms.py`';
+
+    const hybridDeliverables = sdpPlan.hasHybridCompanionSinks
+        ? ', plus hybrid companion imperative job `companion/sink_job.py`, `tests/test_companion_sinks.py`, and `run_companion_sinks.sh`'
+        : '';
+
     const summaryBullets = [
         `- **Paradigm & Target Runtime**: \`sdp\` (Apache Spark 4.2+ \`pyspark.pipelines\`, Profile: \`${profile.id}\`, Runner: \`${profile.runner}\`, Spark \`${profile.sparkVersion}\`, Tier: \`${tier}\`)`,
+        `- **SDP Output & Quality Modes**: \`outputFormat: "${sdpPlan.outputFormat}"\` (SQL datasets: ${sdpPlan.sqlDatasetNames.length}, Python datasets: ${sdpPlan.pythonDatasetNames.length}), \`qualityMode: "${sdpPlan.qualityMode}"\`, \`hybridCompanionSinks: ${sdpPlan.hasHybridCompanionSinks}\``,
         `- **Topological Node Order (\`sortedNodeIds\`)**: ${orderSummary}`,
         `- **Root \`spark-pipeline.yml\` Settings**: \`storage: ${sdpStorage}\`, \`catalog: ${sdpCatalog}\`, \`database: ${sdpDatabase}\`, \`libraries: [{ glob: { include: "transformations/**" } }]\``,
         `- **BigLake Iceberg REST Catalog**: ${bigLakeSummary}`,
         `- **Static Spark Settings (MUST go to \`sdp_stage.pipeline.yaml\` \`execution_config.properties\` & CLI \`--conf\`, NEVER \`spark-pipeline.yml\`)**: ${staticPropsText || 'none'}`,
-        `- **Required SDP Deliverables**: \`spark-pipeline.yml\`, Python-only \`transformations/*.py\` delegating DataFrame logic to pure helpers in \`src/transforms.py\`, offline \`tests/test_transforms.py\`, \`requirements.txt\` (with \`${effectivePipPackages.join(', ')}\`), \`sdp_stage.pipeline.yaml\`, \`run_sdp_local.sh\`, \`run_sdp_dataproc.sh\`, and \`README.md\``,
+        `- **Required SDP Deliverables**: \`spark-pipeline.yml\`, ${transformationDeliverables}, \`requirements.txt\` (with \`${effectivePipPackages.join(', ')}\`), \`sdp_stage.pipeline.yaml\`, \`run_sdp_local.sh\`, \`run_sdp_dataproc.sh\`, and \`README.md\`${hybridDeliverables}`,
         `- **Runtime JARs (\`jar_uris\` / \`--jars\`)**: ${gcsJars.length > 0 ? gcsJars.map((j) => `\`${j}\``).join(', ') : 'none'}`,
         `- **Pre-installed Managed Spark Connectors (NEVER pass via \`--packages\` or \`jar_uris\`)**: ${preinstalledConnectors.length > 0 ? preinstalledConnectors.map((c) => `\`${c}\``).join(', ') : 'none'}`,
         `- **Planned SDP Datasets & Flows**:\n${datasetLines}`,

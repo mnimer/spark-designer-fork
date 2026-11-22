@@ -90,6 +90,11 @@ function getSdpBadgeMeta(
         classes: 'bg-rose-500/15 border-rose-500/40 text-rose-300',
         title: `SDP External Streaming Sink dp.create_sink${suffix}`,
       };
+    case 'HYBRID':
+      return {
+        classes: 'bg-orange-500/15 border-orange-500/40 text-orange-300',
+        title: `Hybrid Companion Imperative foreachBatch Sink${suffix}`,
+      };
     case 'TABLE':
     default:
       return {

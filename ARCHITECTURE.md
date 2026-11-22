@@ -316,6 +316,10 @@ In SDP mode, `checkNodeSdpCompatibility` and `buildSdpPlan` enforce nine OSS Apa
 | `dp.create_streaming_table` + `@dp.append_flow` | `append_flow` | `TABLE` | `UnionByName` or multi-branch streaming fan-in targeting one streaming table. |
 | `dp.create_streaming_table` + `dp.create_auto_cdc_flow` | `auto_cdc` | `CDC` | `MergeCdcScd` (`scd1`, `left` handle only) paired with a `MERGE`-capable `IcebergSink` or `DeltaSink`. |
 | `dp.create_sink` + `@dp.append_flow` | `external_sink` | `SINK` | External streaming sinks (`KafkaSink`, `BigQuerySink`, `PulsarSink`, `EventHubsSink`, file sinks, `ConsoleSink`). |
+| Companion imperative `foreachBatch` job | `hybrid_companion` | `HYBRID` | Optional `V2.6` mode (`sdpHybridForeachBatch: true`): unlocks `foreachBatch`-only sinks and generates `companion/sink_job.py` + `run_companion_sinks.sh` reading persisted SDP catalog datasets. |
+
+- **SDP SQL Output Mode (`V2.7`)**: Set `jobConfig.sdpOutputFormat` to `'sql'` or `'mixed'` to emit declarative SQL in `transformations/*.sql`. Python-only constructs (`dp.create_sink`, `dp.create_auto_cdc_flow`, `cluster_by`, Python UDFs, and `sdp_extensions.expectations`) remain in `transformations/*.py`.
+- **Optional Expectations (`V2.8`)**: Set `jobConfig.sdpQualityMode` to `'expectations'` to emit `sdp_extensions.expectations` (`@dq.expect*`) decorators below `@dp.*` dataset decorators.
 
 ### 5.4 Managed Data Pipelines `sdp` Stage vs. Standalone Dataproc `4.0` vs. Local `4.2`
 

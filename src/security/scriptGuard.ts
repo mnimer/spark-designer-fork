@@ -14,6 +14,7 @@ import * as path from 'path';
  * - `run_sdp_local.sh`
  * - `run_sdp_dataproc.sh`
  * - `run_sdp_serverless.sh`
+ * - `run_companion_sinks.sh`
  * - `run_notebook.sh`
  */
 export const ALLOWED_EXECUTABLE_SCRIPTS: ReadonlySet<string> = new Set([
@@ -23,6 +24,7 @@ export const ALLOWED_EXECUTABLE_SCRIPTS: ReadonlySet<string> = new Set([
     'run_sdp_local.sh',
     'run_sdp_dataproc.sh',
     'run_sdp_serverless.sh',
+    'run_companion_sinks.sh',
     'run_notebook.sh',
 ]);
 

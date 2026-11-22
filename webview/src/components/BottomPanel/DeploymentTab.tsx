@@ -148,6 +148,9 @@ export function extractSdpDatasetsFromGraph(
     ).toUpperCase();
 
     const planned = plan.datasetsByNodeId[nodeId];
+    if (planned?.kind === 'hybrid_companion' || planned?.badge === 'HYBRID') {
+      continue;
+    }
 
     const explicitName =
       typeof data?.sdpDatasetName === 'string' && data.sdpDatasetName.trim()

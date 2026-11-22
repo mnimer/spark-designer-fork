@@ -29,6 +29,8 @@ import {
     type PipelineParadigm,
     type SdpDatasetBadge,
     type SdpDatasetKind,
+    type SdpOutputFormat,
+    type SdpQualityMode,
 } from './types';
 import {
     isRuntimeSdpCapable,
@@ -42,6 +44,8 @@ export type {
     PipelineRuntimeArtifacts,
     SdpDatasetBadge,
     SdpDatasetKind,
+    SdpOutputFormat,
+    SdpQualityMode,
 };
 
 /**
@@ -66,10 +70,20 @@ export interface SdpBlockingIssue {
 export interface SdpNodeCompatibility {
     /** True when Spark Declarative Pipelines can express the node. */
     supported: boolean;
+    /** True when the node runs in a companion imperative job alongside SDP (V2.6). */
+    hybridCompanion?: boolean;
     /** Explanatory tooltip or error reason when supported is false. */
     reason?: string;
     /** Stable error code when supported is false. */
     code?: string;
+}
+
+/**
+ * Options controlling single-node SDP compatibility checks.
+ */
+export interface SdpNodeCompatibilityOptions {
+    /** Allow foreachBatch-only sinks to run via a companion imperative job (V2.6). */
+    allowHybridForeachBatch?: boolean;
 }
 
 /**
@@ -104,6 +118,16 @@ export interface SdpPlannedDataset {
     partitionCols?: string[];
     /** Optional clustering columns configured on the dataset. */
     clusterBy?: string[];
+    /** True when this sink executes in a companion imperative job alongside SDP (V2.6). */
+    isHybridCompanion?: boolean;
+    /** Output transformation language assigned to this dataset (V2.7). */
+    outputLanguage?: 'python' | 'sql';
+    /** Reason this dataset stays in Python when SQL output mode is requested (V2.7). */
+    sqlFallbackReason?: string;
+    /** True when DataQualityAssert emits sdp_extensions.expectations decorators (V2.8). */
+    usesSdpExpectations?: boolean;
+    /** Expectation violation action mapped from failurePolicy when usesSdpExpectations is true (V2.8). */
+    expectationAction?: 'warn' | 'drop' | 'fail';
 }
 
 /**
@@ -132,6 +156,20 @@ export interface SdpExecutionPlan {
     materializedViewNames: string[];
     /** Dataset names of all persisted streaming tables. */
     streamingTableNames: string[];
+    /** True when at least one foreachBatch-only sink runs in a companion imperative job (V2.6). */
+    hasHybridCompanionSinks: boolean;
+    /** Dataset names of all companion imperative foreachBatch sinks (V2.6). */
+    hybridCompanionSinkNames: string[];
+    /** Configured SDP transformation output format (V2.7). */
+    outputFormat: SdpOutputFormat;
+    /** Dataset names emitted to transformations/*.sql (V2.7). */
+    sqlDatasetNames: string[];
+    /** Dataset names emitted to transformations/*.py (V2.7). */
+    pythonDatasetNames: string[];
+    /** Configured SDP data quality enforcement mode (V2.8). */
+    qualityMode: SdpQualityMode;
+    /** True when any dataset uses sdp_extensions.expectations decorators (V2.8). */
+    usesSdpExpectations: boolean;
 }
 
 /**
@@ -140,6 +178,12 @@ export interface SdpExecutionPlan {
 export interface SdpPlannerOptions {
     /** Enforce Spark 4.2+ runtime profile validation. */
     enforceRuntimeVersion?: boolean;
+    /** Allow foreachBatch-only sinks to run via a companion imperative job (V2.6). */
+    allowHybridForeachBatch?: boolean;
+    /** Override transformation output format (python | sql | mixed) (V2.7). */
+    outputFormat?: SdpOutputFormat;
+    /** Override data quality enforcement mode (quarantine | expectations) (V2.8). */
+    qualityMode?: SdpQualityMode;
 }
 
 const IMPERATIVE_ML_TRANSFORMS = new Set<string>([
@@ -221,6 +265,99 @@ const STREAMING_STATEFUL_DOWNSTREAM_STEPS = new Set<string>([
     'GroupByAgg',
     'RollupCube',
 ]);
+
+/**
+ * Transforms that require Python UDFs, Python DataSource API, or unsupported SQL PIVOT
+ * and therefore cannot be emitted into SDP SQL transformation files (`V2.7`).
+ */
+const SQL_INELIGIBLE_TRANSFORMS = new Set<string>([
+    'PandasUdfTransform',
+    'CustomTransform',
+    'StatefulTransform',
+    'TextChunkAndEmbed',
+    'EnforceSchemaAndCast',
+    'PivotUnpivot',
+    'RestApiSource',
+    'SftpSource',
+    'PubSubSource',
+    'KinesisSource',
+    'MqttSource',
+    'FirestoreSource',
+    'CassandraSource',
+    'RedisSource',
+]);
+
+/**
+ * Checks whether a planned SDP dataset can be emitted as declarative SQL (`transformations/*.sql`)
+ * under Apache Spark 4.2 `SqlGraphRegistrationContext` rules (`V2.7`).
+ *
+ * @param kind Planned SDP dataset kind.
+ * @param bareTransform Bare Spark transform identifier.
+ * @param clusterBy Optional liquid clustering columns.
+ * @param usesSdpExpectations True when the dataset uses `sdp_extensions.expectations` decorators.
+ * @returns Eligibility flag and optional fallback reason when Python is required.
+ */
+export function checkDatasetSqlEligibility(
+    kind: SdpDatasetKind,
+    bareTransform: string,
+    clusterBy?: readonly string[],
+    usesSdpExpectations = false
+): { eligible: boolean; reason?: string } {
+    if (kind === 'external_sink') {
+        return {
+            eligible: false,
+            reason: 'External sinks (dp.create_sink) are Python-only in Apache Spark 4.2 SDP.',
+        };
+    }
+    if (kind === 'auto_cdc') {
+        return {
+            eligible: false,
+            reason: 'Auto CDC flows (dp.create_auto_cdc_flow) are Python-only in Apache Spark 4.2 SDP.',
+        };
+    }
+    if (kind === 'hybrid_companion') {
+        return {
+            eligible: false,
+            reason: 'Hybrid foreachBatch sinks run in a companion imperative Python job.',
+        };
+    }
+    if (clusterBy && clusterBy.length > 0) {
+        return {
+            eligible: false,
+            reason: 'SDP SQL rejects CLUSTER BY; use Python cluster_by= on the dataset decorator.',
+        };
+    }
+    if (usesSdpExpectations) {
+        return {
+            eligible: false,
+            reason: 'sdp_extensions.expectations decorators are Python-only (OSS Spark SQL has no CONSTRAINT ... EXPECT).',
+        };
+    }
+    if (SQL_INELIGIBLE_TRANSFORMS.has(bareTransform)) {
+        return {
+            eligible: false,
+            reason: `${bareTransform} requires Python UDFs, Python DataSource API, or PIVOT unsupported in SDP SQL.`,
+        };
+    }
+    return { eligible: true };
+}
+
+/**
+ * Maps a `DataQualityAssert` failurePolicy string to an `sdp_extensions.expectations` violation action (`V2.8`).
+ *
+ * @param failurePolicy Raw failurePolicy property on DataQualityAssert.
+ * @returns Normalized expectation action (`'warn'` | `'drop'` | `'fail'`).
+ */
+export function resolveExpectationAction(failurePolicy?: unknown): 'warn' | 'drop' | 'fail' {
+    const normalized = readNonEmptyString(failurePolicy)?.toLowerCase() ?? '';
+    if (normalized === 'fail' || normalized === 'fail_job') {
+        return 'fail';
+    }
+    if (normalized === 'warn' || normalized === 'log' || normalized === 'route_to_dlq') {
+        return 'warn';
+    }
+    return 'drop';
+}
 
 interface NormalizedEdge {
     id?: string;
@@ -384,12 +521,14 @@ export function sanitizeSdpIdentifier(raw: string, fallback = 'dataset'): string
  * @param sparkTransform Spark transform identifier on the node or palette item.
  * @param nodeType Optional node category ('SOURCE', 'STEP', or 'SINK').
  * @param properties Optional persisted node properties when inspecting a canvas node.
+ * @param options Optional compatibility flags such as hybrid foreachBatch sink support (V2.6).
  * @returns Compatibility result with reason and error code when unsupported.
  */
 export function checkNodeSdpCompatibility(
     sparkTransform?: string,
     nodeType?: string,
-    properties?: Record<string, unknown>
+    properties?: Record<string, unknown>,
+    options?: SdpNodeCompatibilityOptions
 ): SdpNodeCompatibility {
     const { bareTransform, prefixType } = splitTransformPrefix(sparkTransform);
     if (!bareTransform) {
@@ -435,10 +574,16 @@ export function checkNodeSdpCompatibility(
             SPARK_NODE_CAPABILITIES[sparkTransform ?? ''] ??
             SPARK_NODE_CAPABILITIES[bareTransform];
         if (knownEntry && getNodeCapabilities(sparkTransform, 'SINK').streamingSinkMode === 'foreachBatch') {
+            if (options?.allowHybridForeachBatch) {
+                return {
+                    supported: true,
+                    hybridCompanion: true,
+                };
+            }
             return {
                 supported: false,
                 code: 'SDP_FOREACH_BATCH_SINK_UNSUPPORTED',
-                reason: `${bareTransform} relies on imperative foreachBatch micro-batch writes, which Spark Declarative Pipelines does not support.`,
+                reason: `${bareTransform} relies on imperative foreachBatch micro-batch writes, which Spark Declarative Pipelines does not support. Enable Hybrid foreachBatch Sinks in SDP settings to emit a companion imperative job.`,
             };
         }
     }
@@ -647,6 +792,8 @@ function badgeForDatasetKind(kind: SdpDatasetKind): SdpDatasetBadge {
             return 'CDC';
         case 'external_sink':
             return 'SINK';
+        case 'hybrid_companion':
+            return 'HYBRID';
     }
 }
 
@@ -767,6 +914,9 @@ export function evaluateSdpCompatibility(
 } {
     const plan = buildSdpPlan(nodes, edges, jobConfig, {
         enforceRuntimeVersion: options?.enforceRuntimeVersion ?? false,
+        allowHybridForeachBatch: options?.allowHybridForeachBatch,
+        outputFormat: options?.outputFormat,
+        qualityMode: options?.qualityMode,
     });
     return {
         isCompatible: plan.isCompatible,
@@ -997,8 +1147,22 @@ export function buildSdpPlan(
     };
 
     // 6. Validate per-node compatibility, triggers, partitioning/clustering, watermarks, and Auto CDC.
+    const allowHybridForeachBatch =
+        options?.allowHybridForeachBatch ?? Boolean(jobConfig?.sdpHybridForeachBatch);
+    const rawOutputFormat = (
+        options?.outputFormat ?? readNonEmptyString(jobConfig?.sdpOutputFormat)
+    )?.toLowerCase();
+    const outputFormat: SdpOutputFormat =
+        rawOutputFormat === 'sql' || rawOutputFormat === 'mixed' ? rawOutputFormat : 'python';
+    const rawQualityMode = (
+        options?.qualityMode ?? readNonEmptyString(jobConfig?.sdpQualityMode)
+    )?.toLowerCase();
+    const qualityMode: SdpQualityMode =
+        rawQualityMode === 'expectations' ? 'expectations' : 'quarantine';
+
     const autoCdcSinkIds = new Set<string>();
     const autoCdcBySinkId = new Map<string, string[]>();
+    const hybridCompanionSinkIds = new Set<string>();
 
     for (const nodeId of evaluationOrderIds) {
         const node = nodeMap.get(nodeId);
@@ -1012,7 +1176,9 @@ export function buildSdpPlan(
         const nodeLabel = getNodeLabel(node);
 
         // 6a. Node-level compatibility gate.
-        const compat = checkNodeSdpCompatibility(rawTransform, role, props);
+        const compat = checkNodeSdpCompatibility(rawTransform, role, props, {
+            allowHybridForeachBatch,
+        });
         if (!compat.supported) {
             pushBlockingIssue({
                 code: compat.code ?? 'SDP_NODE_UNSUPPORTED',
@@ -1023,6 +1189,8 @@ export function buildSdpPlan(
                 nodeLabel,
                 sparkTransform: bareTransform || rawTransform,
             });
+        } else if (compat.hybridCompanion) {
+            hybridCompanionSinkIds.add(nodeId);
         }
 
         // 6b. Per-node continuous trigger check.
@@ -1301,12 +1469,23 @@ export function buildSdpPlan(
         preallocatedNameByNodeId.set(nodeId, datasetName);
 
         if (bareTransform === 'DataQualityAssert') {
-            const quarantineName = allocateUniqueDatasetName(
-                `${datasetName}_quarantine`,
-                `${nodeId}_quarantine`,
-                usedDatasetNames
+            const props = getNodeProperties(node);
+            const failurePolicy = readNonEmptyString(props.failurePolicy)?.toLowerCase() ?? '';
+            const hasErrorEdge = (outgoingEdges.get(nodeId) ?? []).some(
+                (edge) => edge.sourceHandle === 'error'
             );
-            preallocatedQuarantineByNodeId.set(nodeId, quarantineName);
+            const needsQuarantineDataset =
+                qualityMode !== 'expectations' ||
+                failurePolicy === 'route_to_dlq' ||
+                hasErrorEdge;
+            if (needsQuarantineDataset) {
+                const quarantineName = allocateUniqueDatasetName(
+                    `${datasetName}_quarantine`,
+                    `${nodeId}_quarantine`,
+                    usedDatasetNames
+                );
+                preallocatedQuarantineByNodeId.set(nodeId, quarantineName);
+            }
         }
     }
 
@@ -1401,7 +1580,11 @@ export function buildSdpPlan(
                 nodeIsStreaming = false;
             }
         } else if (role === 'SINK') {
-            if (autoCdcSinkIds.has(nodeId)) {
+            if (hybridCompanionSinkIds.has(nodeId)) {
+                kind = 'hybrid_companion';
+                nodeIsStreaming = inputIsStreaming;
+                targetDataset = preallocatedNameByNodeId.get(nodeId);
+            } else if (autoCdcSinkIds.has(nodeId)) {
                 kind = 'auto_cdc';
                 nodeIsStreaming = true;
             } else if (
@@ -1497,6 +1680,14 @@ export function buildSdpPlan(
             }
         }
 
+        // If a non-sink node directly feeds a hybrid companion sink and was assigned temporary_view,
+        // promote it to a persisted catalog dataset so the companion imperative job can read it.
+        const feedsHybridCompanion =
+            role !== 'SINK' && outbound.some((edge) => hybridCompanionSinkIds.has(edge.target));
+        if (feedsHybridCompanion && kind === 'temporary_view') {
+            kind = nodeIsStreaming ? 'streaming_table' : 'materialized_view';
+        }
+
         effectiveNodeStreaming.set(nodeId, nodeIsStreaming);
 
         const datasetName = preallocatedNameByNodeId.get(nodeId) ?? sanitizeSdpIdentifier(nodeId);
@@ -1534,8 +1725,39 @@ export function buildSdpPlan(
 
         const partitionCols = parseStringList(props.sdpPartitionCols ?? props.partitionCols);
         const clusterBy = parseStringList(props.sdpClusterBy ?? props.clusterBy);
-        const resetAllowed = kind === 'external_sink' ? true : resolveResetAllowed(props);
+        const resetAllowed =
+            kind === 'external_sink' || kind === 'hybrid_companion'
+                ? true
+                : resolveResetAllowed(props);
         const quarantineDatasetName = preallocatedQuarantineByNodeId.get(nodeId);
+        const isHybridCompanion = kind === 'hybrid_companion';
+        const usesSdpExpectations =
+            qualityMode === 'expectations' && bareTransform === 'DataQualityAssert';
+        const expectationAction = usesSdpExpectations
+            ? resolveExpectationAction(props.failurePolicy)
+            : undefined;
+
+        let outputLanguage: 'python' | 'sql' = 'python';
+        let sqlFallbackReason: string | undefined;
+        if (outputFormat === 'sql' || outputFormat === 'mixed') {
+            const sqlCheck = checkDatasetSqlEligibility(
+                kind,
+                bareTransform,
+                clusterBy,
+                usesSdpExpectations
+            );
+            if (sqlCheck.eligible) {
+                outputLanguage = 'sql';
+            } else {
+                outputLanguage = 'python';
+                sqlFallbackReason = sqlCheck.reason;
+                if (outputFormat === 'sql' && !isHybridCompanion) {
+                    pushWarning(
+                        `SDP SQL fallback for "${nodeLabel}" (${datasetName}): ${sqlCheck.reason} Emitting this dataset in transformations/*.py.`
+                    );
+                }
+            }
+        }
 
         const planned: SdpPlannedDataset = {
             nodeId,
@@ -1552,6 +1774,10 @@ export function buildSdpPlan(
             resetAllowed,
             ...(partitionCols.length > 0 ? { partitionCols } : {}),
             ...(clusterBy.length > 0 ? { clusterBy } : {}),
+            ...(isHybridCompanion ? { isHybridCompanion: true } : {}),
+            outputLanguage,
+            ...(sqlFallbackReason ? { sqlFallbackReason } : {}),
+            ...(usesSdpExpectations ? { usesSdpExpectations: true, expectationAction } : {}),
         };
 
         datasets.push(planned);
@@ -1622,10 +1848,14 @@ export function buildSdpPlan(
         }
     }
 
-    // 9. Aggregate external sink, materialized view, and streaming table name lists.
+    // 9. Aggregate external sink, materialized view, streaming table, hybrid, SQL, and expectations summaries.
     const externalSinkNames: string[] = [];
     const materializedViewNames: string[] = [];
     const streamingTableNames: string[] = [];
+    const hybridCompanionSinkNames: string[] = [];
+    const sqlDatasetNames: string[] = [];
+    const pythonDatasetNames: string[] = [];
+    let anySdpExpectations = false;
 
     const appendUnique = (target: string[], name: string): void => {
         if (!target.includes(name)) {
@@ -1636,6 +1866,8 @@ export function buildSdpPlan(
     for (const dataset of datasets) {
         if (dataset.kind === 'external_sink') {
             appendUnique(externalSinkNames, dataset.datasetName);
+        } else if (dataset.kind === 'hybrid_companion') {
+            appendUnique(hybridCompanionSinkNames, dataset.datasetName);
         } else if (dataset.kind === 'materialized_view') {
             appendUnique(materializedViewNames, dataset.datasetName);
         } else if (dataset.kind === 'streaming_table' || dataset.kind === 'append_flow') {
@@ -1643,6 +1875,23 @@ export function buildSdpPlan(
         } else if (dataset.kind === 'auto_cdc') {
             appendUnique(streamingTableNames, dataset.targetDataset ?? dataset.datasetName);
         }
+
+        if (dataset.kind !== 'hybrid_companion') {
+            if (dataset.outputLanguage === 'sql') {
+                appendUnique(sqlDatasetNames, dataset.datasetName);
+            } else {
+                appendUnique(pythonDatasetNames, dataset.datasetName);
+            }
+        }
+        if (dataset.usesSdpExpectations) {
+            anySdpExpectations = true;
+        }
+    }
+
+    if (hybridCompanionSinkNames.length > 0) {
+        pushWarning(
+            `Hybrid SDP mode active: ${hybridCompanionSinkNames.join(', ')} will be generated as a companion imperative foreachBatch job (companion/sink_job.py + run_companion_sinks.sh) reading persisted SDP catalog datasets.`
+        );
     }
 
     return {
@@ -1657,5 +1906,12 @@ export function buildSdpPlan(
         externalSinkNames,
         materializedViewNames,
         streamingTableNames,
+        hasHybridCompanionSinks: hybridCompanionSinkNames.length > 0,
+        hybridCompanionSinkNames,
+        outputFormat,
+        sqlDatasetNames,
+        pythonDatasetNames,
+        qualityMode,
+        usesSdpExpectations: anySdpExpectations,
     };
 }

@@ -773,6 +773,157 @@ export function scanSdpPythonViolations(files: readonly GeneratedFile[]): SdpSta
                 break;
             }
         }
+
+        // V2.8: Validate sdp_extensions.expectations (@dq.expect*) decorator placement in transformations/*.py.
+        if (isTransformationFile) {
+            for (let idx = 0; idx < cleanedLines.length; idx++) {
+                const trimmed = cleanedLines[idx].trim();
+                if (!trimmed.startsWith('@')) {
+                    continue;
+                }
+                const isDqExpect = /^@\s*dq\s*\.\s*expect(?:_[A-Za-z0-9_]+)?\b/.test(trimmed);
+                const isDpAppendFlow = /^@\s*dp\s*\.\s*append_flow\b/.test(trimmed);
+                if (!isDqExpect && !isDpAppendFlow) {
+                    continue;
+                }
+                // Inspect consecutive decorators in the same stack before the next `def`.
+                for (let nextIdx = idx + 1; nextIdx < cleanedLines.length; nextIdx++) {
+                    const nextTrimmed = cleanedLines[nextIdx].trim();
+                    if (nextTrimmed === '') {
+                        continue;
+                    }
+                    if (/^def\s+/.test(nextTrimmed)) {
+                        break;
+                    }
+                    if (!nextTrimmed.startsWith('@')) {
+                        // Continuation line of a multi-line decorator argument list.
+                        continue;
+                    }
+                    if (isDqExpect && /^@\s*dp\s*\.\s*(?:table|materialized_view|temporary_view)\b/.test(nextTrimmed)) {
+                        violations.push({
+                            code: 'SDP_EXPECTATIONS_DECORATOR_ORDER',
+                            file: file.filename,
+                            line: idx + 1,
+                            evidence: rawLines[idx].trim().slice(0, 160),
+                            message: `${file.filename}:${idx + 1}: SDP_EXPECTATIONS_DECORATOR_ORDER: Place @dq.expect* decorators BELOW @dp.table, @dp.materialized_view, or @dp.temporary_view.`,
+                        });
+                        break;
+                    }
+                    if (
+                        (isDqExpect && /^@\s*dp\s*\.\s*append_flow\b/.test(nextTrimmed)) ||
+                        (isDpAppendFlow && /^@\s*dq\s*\.\s*expect(?:_[A-Za-z0-9_]+)?\b/.test(nextTrimmed))
+                    ) {
+                        violations.push({
+                            code: 'SDP_EXPECTATIONS_ON_APPEND_FLOW',
+                            file: file.filename,
+                            line: idx + 1,
+                            evidence: rawLines[idx].trim().slice(0, 160),
+                            message: `${file.filename}:${idx + 1}: SDP_EXPECTATIONS_ON_APPEND_FLOW: @dq.expect* decorators cannot be applied to @dp.append_flow.`,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return violations;
+}
+
+/**
+ * Strips SQL line (`--`) and block comments while preserving line numbers.
+ *
+ * @param source Raw SQL file text.
+ * @returns Sanitized SQL string with comments blanked.
+ */
+function stripSqlComments(source: string): string {
+    const withoutBlocks = source.replace(/\/\*[\s\S]*?\*\//g, (block) =>
+        block.replace(/[^\n]/g, ' ')
+    );
+    return withoutBlocks.replace(/--[^\n]*/g, '');
+}
+
+/**
+ * Scans generated SDP SQL transformation files (`transformations/*.sql`) against Apache Spark 4.2
+ * `SqlGraphRegistrationContext` rules (`V2.7`).
+ *
+ * @param files Generated files.
+ * @returns List of SDP SQL violations (empty when valid).
+ */
+export function scanSdpSqlViolations(files: readonly GeneratedFile[]): SdpStaticViolation[] {
+    const violations: SdpStaticViolation[] = [];
+
+    for (const file of files) {
+        const norm = normalizeRelPath(file.filename);
+        if (!/^transformations\/.+\.sql$/i.test(norm)) {
+            continue;
+        }
+        const rawLines = file.content.split('\n');
+        const cleaned = stripSqlComments(file.content);
+        const cleanedLines = cleaned.split('\n');
+
+        const lineRules: ReadonlyArray<{ code: string; regex: RegExp; message: string }> = [
+            {
+                code: 'PIPELINE_SQL_GRAPH_ELEMENT_REGISTRATION_ERROR',
+                regex: /\bCREATE\s+(?:SCHEMA|NAMESPACE|DATABASE)\b/i,
+                message: 'PIPELINE_SQL_GRAPH_ELEMENT_REGISTRATION_ERROR: CREATE SCHEMA/NAMESPACE is forbidden in SDP .sql files. Create namespaces in runner setup scripts instead.',
+            },
+            {
+                code: 'SDP_SQL_EXPECT_UNSUPPORTED',
+                regex: /\bCONSTRAINT\s+[A-Za-z_][A-Za-z0-9_]*\s+EXPECT\b/i,
+                message: 'SDP_SQL_EXPECT_UNSUPPORTED: Databricks SQL CONSTRAINT ... EXPECT does not exist in OSS Apache Spark 4.2. Use WHERE filters or Python sdp_extensions.expectations.',
+            },
+            {
+                code: 'SDP_SQL_CLUSTER_BY_UNSUPPORTED',
+                regex: /\bCLUSTER\s+BY\b/i,
+                message: 'SDP_SQL_CLUSTER_BY_UNSUPPORTED: CLUSTER BY fails SQL registration in Apache Spark 4.2 SDP. Use Python cluster_by= instead.',
+            },
+            {
+                code: 'SDP_SQL_PIVOT_UNSUPPORTED',
+                regex: /\bPIVOT\s*\(/i,
+                message: 'SDP_SQL_PIVOT_UNSUPPORTED: PIVOT is not supported in SDP SQL files. Use Python .pivot(col, [...]) instead.',
+            },
+        ];
+
+        for (const rule of lineRules) {
+            for (let idx = 0; idx < cleanedLines.length; idx++) {
+                if (rule.regex.test(cleanedLines[idx])) {
+                    violations.push({
+                        code: rule.code,
+                        file: file.filename,
+                        line: idx + 1,
+                        evidence: rawLines[idx]?.trim().slice(0, 160),
+                        message: `${file.filename}:${idx + 1}: ${rule.message}`,
+                    });
+                    break;
+                }
+            }
+        }
+
+        // Check CREATE FLOW statements for mandatory `INSERT INTO <table> BY NAME` and banned OVERWRITE.
+        const flowRegex = /\bCREATE\s+FLOW\b[\s\S]*?(?:;|$)/gi;
+        let flowMatch: RegExpExecArray | null;
+        while ((flowMatch = flowRegex.exec(cleaned)) !== null) {
+            const stmt = flowMatch[0];
+            const lineNum = cleaned.slice(0, flowMatch.index).split('\n').length;
+            if (/\bINSERT\s+OVERWRITE\b/i.test(stmt)) {
+                violations.push({
+                    code: 'SDP_SQL_FLOW_OVERWRITE_UNSUPPORTED',
+                    file: file.filename,
+                    line: lineNum,
+                    evidence: rawLines[lineNum - 1]?.trim().slice(0, 160),
+                    message: `${file.filename}:${lineNum}: SDP_SQL_FLOW_OVERWRITE_UNSUPPORTED: CREATE FLOW does not support INSERT OVERWRITE in Apache Spark 4.2 SDP.`,
+                });
+            } else if (/\bINSERT\s+INTO\b/i.test(stmt) && !/\bBY\s+NAME\b/i.test(stmt)) {
+                violations.push({
+                    code: 'SDP_SQL_FLOW_REQUIRES_BY_NAME',
+                    file: file.filename,
+                    line: lineNum,
+                    evidence: rawLines[lineNum - 1]?.trim().slice(0, 160),
+                    message: `${file.filename}:${lineNum}: SDP_SQL_FLOW_REQUIRES_BY_NAME: CREATE FLOW ... INSERT INTO must specify BY NAME in Apache Spark 4.2 SDP.`,
+                });
+            }
+        }
     }
 
     return violations;
@@ -1281,18 +1432,21 @@ export class ReadOnlyCheckRunner {
             missing.push('spark-pipeline.yml');
         }
 
-        const hasTransformationModule = normalizedPaths.some(
+        const hasPythonTransformation = normalizedPaths.some(
             (p) => /^transformations\/.+\.py$/.test(p) && !p.endsWith('/__init__.py')
         );
-        if (!hasTransformationModule) {
-            missing.push('transformations/*.py');
+        const hasSqlTransformation = normalizedPaths.some((p) => /^transformations\/.+\.sql$/i.test(p));
+        if (!hasPythonTransformation && !hasSqlTransformation) {
+            missing.push('transformations/*.py or transformations/*.sql');
         }
 
-        if (!present.has('src/transforms.py')) {
-            missing.push('src/transforms.py');
-        }
-        if (!present.has('tests/test_transforms.py')) {
-            missing.push('tests/test_transforms.py');
+        if (hasPythonTransformation) {
+            if (!present.has('src/transforms.py')) {
+                missing.push('src/transforms.py');
+            }
+            if (!present.has('tests/test_transforms.py')) {
+                missing.push('tests/test_transforms.py');
+            }
         }
 
         for (const runnerFile of request.runnerFiles) {
@@ -1397,30 +1551,40 @@ export class ReadOnlyCheckRunner {
      * @returns Check result.
      */
     private checkSdpPipelineContract(files: GeneratedFile[]): CheckResult {
-        const transformationFiles = files.filter((f) => {
+        const pyTransformationFiles = files.filter((f) => {
             const norm = normalizeRelPath(f.filename);
             return /^transformations\/.+\.py$/.test(norm) && !norm.endsWith('/__init__.py');
         });
-        if (transformationFiles.length === 0) {
+        const sqlTransformationFiles = files.filter((f) => {
+            const norm = normalizeRelPath(f.filename);
+            return /^transformations\/.+\.sql$/i.test(norm);
+        });
+        if (pyTransformationFiles.length === 0 && sqlTransformationFiles.length === 0) {
             return {
                 check: CHECK_IDS.pipelineContract,
                 status: 'skipped',
-                output: 'No transformations/*.py modules generated.',
+                output: 'No transformations/*.py or transformations/*.sql modules generated.',
             };
         }
 
         const errors: string[] = [];
 
-        const hasDpRegistration = transformationFiles.some((f) => {
+        const hasDpRegistration = pyTransformationFiles.some((f) => {
             const cleaned = stripPythonCommentsAndDocstrings(f.content).join('\n');
             return (
                 /@\s*dp\s*\.\s*(?:table|materialized_view|temporary_view|append_flow)\b/.test(cleaned) ||
                 /\bdp\s*\.\s*create_(?:streaming_table|auto_cdc_flow|sink)\s*\(/.test(cleaned)
             );
         });
-        if (!hasDpRegistration) {
+        const hasSqlRegistration = sqlTransformationFiles.some((f) => {
+            const cleaned = stripSqlComments(f.content);
+            return /\bCREATE\s+(?:STREAMING\s+TABLE|MATERIALIZED\s+VIEW|TEMPORARY\s+VIEW|VIEW|FLOW)\b/i.test(
+                cleaned
+            );
+        });
+        if (!hasDpRegistration && !hasSqlRegistration) {
             errors.push(
-                'transformations/*.py does not declare any @dp.table, @dp.materialized_view, @dp.temporary_view, @dp.append_flow, dp.create_streaming_table, dp.create_auto_cdc_flow, or dp.create_sink dataset.'
+                'transformations/* does not declare any Python @dp.* / dp.create_* or SQL CREATE STREAMING TABLE / MATERIALIZED VIEW / TEMPORARY VIEW / FLOW dataset.'
             );
         }
 
@@ -1433,6 +1597,9 @@ export class ReadOnlyCheckRunner {
         }
 
         for (const v of scanSdpPythonViolations(files)) {
+            errors.push(v.message);
+        }
+        for (const v of scanSdpSqlViolations(files)) {
             errors.push(v.message);
         }
 

@@ -187,7 +187,7 @@ export function normalizePipelineParadigm(paradigm?: unknown): PipelineParadigm 
 /**
  * Dataset micro-badge rendered on canvas nodes in Spark Declarative Pipelines mode.
  */
-export type SdpDatasetBadge = 'VIEW' | 'MV' | 'TABLE' | 'CDC' | 'SINK';
+export type SdpDatasetBadge = 'VIEW' | 'MV' | 'TABLE' | 'CDC' | 'SINK' | 'HYBRID';
 
 /**
  * Canonical Spark Declarative Pipelines dataset or flow registration kind.
@@ -198,7 +198,18 @@ export type SdpDatasetKind =
     | 'streaming_table'
     | 'append_flow'
     | 'auto_cdc'
-    | 'external_sink';
+    | 'external_sink'
+    | 'hybrid_companion';
+
+/**
+ * Transformation output format emitted for Spark Declarative Pipelines (`V2.7`).
+ */
+export type SdpOutputFormat = 'python' | 'sql' | 'mixed';
+
+/**
+ * Data quality enforcement strategy in Spark Declarative Pipelines (`V2.8`).
+ */
+export type SdpQualityMode = 'quarantine' | 'expectations';
 
 /**
  * BigLake Iceberg REST catalog integration mode for SDP pipelines.
@@ -245,6 +256,12 @@ export interface SdpJobConfigFields {
     sdpFullRefreshDatasets?: string[];
     /** True when standalone runners execute CREATE NAMESPACE IF NOT EXISTS before running. */
     sdpCreateNamespace?: boolean;
+    /** True when foreachBatch-only sinks generate a companion imperative job alongside SDP (V2.6). */
+    sdpHybridForeachBatch?: boolean;
+    /** Output format for SDP transformation files: Python, SQL, or mixed (V2.7). */
+    sdpOutputFormat?: SdpOutputFormat;
+    /** Data quality strategy in SDP mode: quarantine datasets or sdp_extensions.expectations (V2.8). */
+    sdpQualityMode?: SdpQualityMode;
 }
 
 /**
