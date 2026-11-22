@@ -6,7 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  paradigms: [imperative, sdp]
+  paradigms: [imperative, sdp, notebook]
   transforms: [Neo4jSource, Neo4jSink]
   preloadWhen: []
   sources:

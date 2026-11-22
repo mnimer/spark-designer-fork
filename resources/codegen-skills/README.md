@@ -2,7 +2,7 @@
 
 > **Author**: Mike Nimer <mikenimer@google.com>
 
-The `resources/codegen-skills/` directory stores the modular prompt library for Apache Spark 4.x code generation. Both Imperative PySpark (`paradigm: imperative`) and Spark Declarative Pipelines (`paradigm: sdp`) assemble prompts from these skills. Code modules never hardcode prompt prose. Instead, TypeScript modules validate, select, and order these skills into one deterministic model call.
+The `resources/codegen-skills/` directory stores the modular prompt library for Apache Spark 4.x code generation. Imperative PySpark (`paradigm: imperative`), Spark Declarative Pipelines (`paradigm: sdp`), and Jupyter Notebook (`paradigm: notebook`) all assemble prompts from these skills. Code modules never hardcode prompt prose. Instead, TypeScript modules validate, select, and order these skills into one deterministic model call.
 
 ---
 
@@ -132,8 +132,8 @@ Lists inside `metadata` support flow syntax (`[a, b]`) or indented block items (
 | `kind` | Required string | One of `common`, `language`, `runner`, `io`, `transform`, `crosscutting`, `review`, `gate` (`SKILL_KIND_ORDER`). |
 | `usedBy` | Required list | Non-empty subset of `generator`, `reviewer` (`SKILL_CALLERS`). |
 | `languages` | Required list | Non-empty list containing `all` or `python` (`ALL_SKILL_LANGUAGES`). |
-| `runners` | Required list | Non-empty list containing `all` or values from `local`, `dataproc-cluster`, `serverless-spark`, `sdp` (`SKILL_RUNNERS`). |
-| `paradigms` | Required list | Non-empty list containing `all`, `imperative`, or `sdp` (`SKILL_PARADIGMS`). Bundled skills must declare `paradigms` explicitly. |
+| `runners` | Required list | Non-empty list containing `all` or values from `local`, `dataproc-cluster`, `serverless-spark`, `sdp`, `notebook` (`SKILL_RUNNERS`). |
+| `paradigms` | Required list | Non-empty list containing `all`, `imperative`, `sdp`, or `notebook` (`SKILL_PARADIGMS`). Bundled skills must declare `paradigms` explicitly. |
 | `transforms` | Optional list | Exact catalog `sparkTransform` IDs (defaults to `[]`). Checked against the palette catalog and `SPARK_NODE_CAPABILITIES`. |
 | `preloadWhen` | Optional list | Subset of `PIPELINE_FEATURES`: `side_inputs`, `multi_output`, `streaming`, `custom_instructions`, `python_datasource`, `xlang`, `sdp_auto_cdc`, `sdp_quarantine`. |
 | `sources` | Optional list | Provenance markers (`prompt` and `https://` official documentation URLs). Every non-legacy skill requires at least one `https://` URL. |
@@ -150,7 +150,7 @@ Lists inside `metadata` support flow syntax (`[a, b]`) or indented block items (
 `CodegenSkillCatalog.select()` includes a skill when all five conditions hold:
 
 1. `usedBy` contains the active `caller` (`generator` or `reviewer`).
-2. `paradigms` contains `all` or matches the detected paradigm (`imperative` by default, or `sdp`).
+2. `paradigms` contains `all` or matches the detected paradigm (`imperative` by default, `sdp`, or `notebook`).
 3. `languages` contains `all` or matches the target skill language (`python`).
 4. `runners` contains `all` or intersects the active paradigm runner set.
 5. The skill satisfies at least one activation rule:
@@ -167,6 +167,7 @@ The active runner selected in the Deployment tab does not filter generated runne
 
 - **Imperative mode (`LANGUAGE_RUNNERS.python`)**: Requests `local`, `dataproc-cluster`, and `serverless-spark` together so every generated repository includes `run_local.sh`, `run_dataproc_cluster.sh`, `run_serverless_spark.sh`, and `Dockerfile`.
 - **SDP mode (`SDP_LANGUAGE_RUNNERS.python`)**: Requests `sdp` only (`runner-sdp`), inlining `sdp_stage.pipeline.yaml`, `run_sdp_local.sh`, and `run_sdp_dataproc.sh`.
+- **Notebook mode (`NOTEBOOK_LANGUAGE_RUNNERS.python`)**: Requests `notebook` only (`runner-notebook`), inlining `run_notebook.sh`.
 
 ### Feature Detection Triggers (`PipelineFeatureDetector.ts`)
 

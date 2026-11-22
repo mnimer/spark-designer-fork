@@ -784,8 +784,9 @@ edges: []
       })
     );
 
-    // Attempt switch Imperative -> SDP: blocked, modal opens naming Spanner Ledger & SpannerSink
+    // Attempt switch Imperative -> SDP via dropdown: blocked, modal opens naming Spanner Ledger & SpannerSink
     fireEvent.click(paradigmBtn);
+    fireEvent.click(screen.getByTestId('paradigm-option-sdp'));
     expect(paradigmBtn).toHaveTextContent('IMPERATIVE');
     const modal = screen.getByTestId('sdp-compatibility-modal');
     expect(modal).toBeInTheDocument();
@@ -796,6 +797,11 @@ edges: []
     // Close modal
     fireEvent.click(screen.getByTestId('sdp-compatibility-modal-close'));
     expect(screen.queryByTestId('sdp-compatibility-modal')).not.toBeInTheDocument();
+
+    // Switching Imperative -> Notebook (.ipynb) succeeds even with SpannerSink
+    fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    fireEvent.click(screen.getByTestId('paradigm-option-notebook'));
+    expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('NOTEBOOK (.IPYNB)');
 
     // 2. Load a compatible graph (CsvSource -> IcebergSink) and switch Imperative -> SDP -> Imperative
     fireEvent(
@@ -825,11 +831,13 @@ edges: []
     );
 
     fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    fireEvent.click(screen.getByTestId('paradigm-option-sdp'));
     expect(screen.queryByTestId('sdp-compatibility-modal')).not.toBeInTheDocument();
     expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('SDP (4.2+)');
 
     // Switching SDP -> Imperative always succeeds immediately
     fireEvent.click(screen.getByTestId('toolbar-paradigm-indicator'));
+    fireEvent.click(screen.getByTestId('paradigm-option-imperative'));
     expect(screen.getByTestId('toolbar-paradigm-indicator')).toHaveTextContent('IMPERATIVE');
   });
 

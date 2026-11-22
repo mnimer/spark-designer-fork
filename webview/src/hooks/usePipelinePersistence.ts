@@ -11,7 +11,7 @@ import { useEffect, useRef } from 'react';
 import YAML from 'yaml';
 import { getVsCodeApi } from '../bridge/vscodeApi';
 import type { PipelineConfig } from '../state/pipelineConfigReducer';
-import { normalizeSparkRunner, type PipelineParadigm } from '../utils/sharedTypes';
+import { normalizePipelineParadigm, normalizeSparkRunner, type PipelineParadigm } from '../utils/sharedTypes';
 
 /**
  * Serializable state snapshot representing an Apache Spark pipeline design.
@@ -80,10 +80,9 @@ export const serializePipeline = (state: PipelineState): string => {
     state.pipelineConfig && typeof state.pipelineConfig === 'object'
       ? (state.pipelineConfig as Record<string, unknown>)
       : undefined;
-  const resolvedParadigm: PipelineParadigm =
-    state.paradigm === 'sdp' || rawPipelineConfigRecord?.paradigm === 'sdp'
-      ? 'sdp'
-      : 'imperative';
+  const resolvedParadigm: PipelineParadigm = normalizePipelineParadigm(
+    state.paradigm ?? rawPipelineConfigRecord?.paradigm
+  );
   let cleanPipelineConfig = state.pipelineConfig;
   if (rawPipelineConfigRecord && 'paradigm' in rawPipelineConfigRecord) {
     const { paradigm: omittedParadigm, ...restPipelineConfig } = rawPipelineConfigRecord;

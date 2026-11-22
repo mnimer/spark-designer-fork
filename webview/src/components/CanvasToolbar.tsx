@@ -4,9 +4,12 @@
  * Author: Mike Nimer <mikenimer@google.com>
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MiniMap, useReactFlow, type Node } from 'reactflow';
 import {
+  BookOpen,
+  Check,
+  ChevronDown,
   Code2,
   Layers,
   LayoutGrid,
@@ -20,6 +23,58 @@ import {
 } from 'lucide-react';
 import type { PipelineNodeData } from '../hooks/usePipelineGraph';
 import type { PipelineParadigm } from '../utils/sharedTypes';
+
+/**
+ * Display metadata for each selectable pipeline output paradigm in the canvas toolbar dropdown.
+ */
+interface ParadigmOptionMeta {
+  readonly value: PipelineParadigm;
+  readonly shortLabel: string;
+  readonly label: string;
+  readonly description: string;
+  readonly triggerClass: string;
+  readonly iconClass: string;
+}
+
+const PARADIGM_OPTIONS: readonly ParadigmOptionMeta[] = [
+  {
+    value: 'imperative',
+    shortLabel: 'IMPERATIVE',
+    label: 'Imperative PySpark',
+    description: 'Standard PySpark 4.x repo (src/pipeline.py)',
+    triggerClass: 'bg-blue-500/15 border-blue-500/40 text-blue-300 hover:bg-blue-500/25',
+    iconClass: 'text-blue-400',
+  },
+  {
+    value: 'sdp',
+    shortLabel: 'SDP (4.2+)',
+    label: 'Spark Declarative (SDP 4.2+)',
+    description: 'Declarative datasets (spark-pipeline.yml)',
+    triggerClass: 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25',
+    iconClass: 'text-amber-400',
+  },
+  {
+    value: 'notebook',
+    shortLabel: 'NOTEBOOK (.IPYNB)',
+    label: 'Jupyter Notebook (.ipynb)',
+    description: 'Vertex AI Workbench & Colab Enterprise',
+    triggerClass: 'bg-purple-500/15 border-purple-500/40 text-purple-300 hover:bg-purple-500/25',
+    iconClass: 'text-purple-400',
+  },
+];
+
+/**
+ * Renders the icon corresponding to a pipeline output paradigm.
+ */
+function renderParadigmIcon(paradigm: PipelineParadigm, className: string): React.ReactNode {
+  if (paradigm === 'sdp') {
+    return <Sparkles className={className} />;
+  }
+  if (paradigm === 'notebook') {
+    return <BookOpen className={className} />;
+  }
+  return <Code2 className={className} />;
+}
 
 /**
  * Props for the CanvasToolbar component.
@@ -37,7 +92,7 @@ export interface CanvasToolbarProps {
   readonly onAutoLayout: () => void;
   /** Effective execution mode across the pipeline graph (defaults to 'batch'). */
   readonly pipelineMode?: 'batch' | 'streaming';
-  /** Active pipeline authoring paradigm ('imperative' default or 'sdp'). */
+  /** Active pipeline authoring paradigm ('imperative' default, 'sdp', or 'notebook'). */
   readonly paradigm?: PipelineParadigm;
   /** Callback invoked when the user switches the pipeline paradigm. */
   readonly onParadigmChange?: (paradigm: PipelineParadigm) => void;
@@ -70,11 +125,47 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
 }) => {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const isStreaming = pipelineMode === 'streaming';
-  const isSdp = paradigm === 'sdp';
+  const [paradigmMenuOpen, setParadigmMenuOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const handleParadigmToggle = useCallback(() => {
-    onParadigmChange?.(isSdp ? 'imperative' : 'sdp');
-  }, [isSdp, onParadigmChange]);
+  const activeParadigmMeta =
+    PARADIGM_OPTIONS.find((opt) => opt.value === paradigm) ?? PARADIGM_OPTIONS[0];
+
+  useEffect(() => {
+    if (!paradigmMenuOpen) {
+      return;
+    }
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as globalThis.Node)) {
+        setParadigmMenuOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setParadigmMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [paradigmMenuOpen]);
+
+  const handleToggleParadigmMenu = useCallback(() => {
+    setParadigmMenuOpen((open) => !open);
+  }, []);
+
+  const handleSelectParadigm = useCallback(
+    (next: PipelineParadigm) => {
+      setParadigmMenuOpen(false);
+      if (next !== paradigm) {
+        onParadigmChange?.(next);
+      }
+    },
+    [paradigm, onParadigmChange]
+  );
 
   const handleZoomIn = useCallback(() => {
     zoomIn?.();
@@ -95,34 +186,64 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
     >
       {/* Control Button Toolbar Strip */}
       <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--vscode-workbench-bg,#161b22)]/95 backdrop-blur-md border border-[var(--vscode-border,#30363d)] rounded-xl shadow-xl text-xs text-[var(--vscode-text-secondary,#c9d1d9)]">
-        {/* Pipeline Paradigm Switcher Pill */}
-        <button
-          type="button"
-          onClick={handleParadigmToggle}
-          data-testid="toolbar-paradigm-indicator"
-          aria-label={
-            isSdp
-              ? 'Pipeline paradigm: SDP (4.2+). Click to switch to Imperative PySpark'
-              : 'Pipeline paradigm: Imperative PySpark. Click to switch to Spark Declarative Pipelines (SDP 4.2+)'
-          }
-          title={
-            isSdp
-              ? 'Spark Declarative Pipelines mode (Apache Spark 4.2+). Click to switch to Imperative PySpark.'
-              : 'Imperative PySpark mode (Spark 4.x). Click to check compatibility and switch to SDP (4.2+).'
-          }
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-bold tracking-wider uppercase transition-colors cursor-pointer ${
-            isSdp
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
-              : 'bg-blue-500/15 border-blue-500/40 text-blue-300 hover:bg-blue-500/25'
-          }`}
-        >
-          {isSdp ? (
-            <Sparkles className="w-3 h-3 text-amber-400" />
-          ) : (
-            <Code2 className="w-3 h-3 text-blue-400" />
+        {/* Pipeline Output Paradigm Dropdown */}
+        <div ref={dropdownRef} className="relative" data-testid="toolbar-paradigm-dropdown">
+          <button
+            type="button"
+            onClick={handleToggleParadigmMenu}
+            data-testid="toolbar-paradigm-indicator"
+            aria-haspopup="listbox"
+            aria-expanded={paradigmMenuOpen}
+            aria-label={`Generated output mode: ${activeParadigmMeta.label}. Open output mode menu`}
+            title={`${activeParadigmMeta.label} — ${activeParadigmMeta.description}. Click to choose generated output mode.`}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-bold tracking-wider uppercase transition-colors cursor-pointer ${activeParadigmMeta.triggerClass}`}
+          >
+            {renderParadigmIcon(activeParadigmMeta.value, `w-3 h-3 ${activeParadigmMeta.iconClass}`)}
+            <span>{activeParadigmMeta.shortLabel}</span>
+            <ChevronDown
+              className={`w-3 h-3 opacity-80 transition-transform ${paradigmMenuOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {paradigmMenuOpen && (
+            <div
+              role="listbox"
+              aria-label="Generated output mode"
+              data-testid="toolbar-paradigm-menu"
+              className="absolute left-0 top-full mt-2 w-64 p-1.5 rounded-xl bg-[var(--vscode-workbench-bg,#161b22)] border border-[var(--vscode-border,#30363d)] shadow-2xl z-30 flex flex-col gap-1"
+            >
+              {PARADIGM_OPTIONS.map((opt) => {
+                const isSelected = opt.value === activeParadigmMeta.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    data-testid={`paradigm-option-${opt.value}`}
+                    onClick={() => handleSelectParadigm(opt.value)}
+                    className={`w-full flex items-start gap-2 px-2.5 py-2 rounded-lg text-left transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-[var(--vscode-hover,#21262d)] text-[var(--vscode-text-primary,#f0f6fc)]'
+                        : 'text-[var(--vscode-text-secondary,#c9d1d9)] hover:bg-[var(--vscode-hover,#21262d)]/70 hover:text-[var(--vscode-text-primary,#f0f6fc)]'
+                    }`}
+                  >
+                    <span className="mt-0.5 shrink-0">
+                      {renderParadigmIcon(opt.value, `w-3.5 h-3.5 ${opt.iconClass}`)}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-xs font-semibold leading-tight">{opt.label}</span>
+                      <span className="block text-[10px] text-[var(--vscode-text-muted,#8b949e)] leading-snug mt-0.5">
+                        {opt.description}
+                      </span>
+                    </span>
+                    {isSelected && <Check className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-400" />}
+                  </button>
+                );
+              })}
+            </div>
           )}
-          <span>{isSdp ? 'SDP (4.2+)' : 'IMPERATIVE'}</span>
-        </button>
+        </div>
 
         {/* Pipeline Execution Mode Indicator Pill */}
         <div

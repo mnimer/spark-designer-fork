@@ -12,7 +12,7 @@ import { EditorSession } from '../../editor/EditorSession';
 import { resolveOutputFolder } from '../../editor/outputFolder';
 import { savePipelineFiles } from '../../editor/pipelineFileWriter';
 import { isSafeFolderPath, isAllowedExecutableScript } from '../../security/scriptGuard';
-import { normalizeSparkRunner } from '../../shared/types';
+import { normalizePipelineParadigm, normalizeSparkRunner, type PipelineParadigm } from '../../shared/types';
 import {
     PLACEHOLDER_PROJECT_ID,
     buildRunnerEnvironment,
@@ -84,10 +84,9 @@ export async function handleRunPipeline(ctx: MessageContext, message: any): Prom
         return;
     }
     const session = sessionOf(ctx);
-    const requestedParadigm: 'imperative' | 'sdp' =
-        message?.pipelineConfig?.paradigm === 'sdp' || message?.jobConfig?.paradigm === 'sdp'
-            ? 'sdp'
-            : 'imperative';
+    const requestedParadigm: PipelineParadigm = normalizePipelineParadigm(
+        message?.pipelineConfig?.paradigm ?? message?.jobConfig?.paradigm
+    );
 
     if (requestedParadigm === 'sdp' && session.activeProcess !== null) {
         vscode.window.showErrorMessage(SDP_OVERLAPPING_RUN_MESSAGE);

@@ -142,13 +142,14 @@ describe('isAllowedExecutableScript - Chmod 755 Allowlist Gating', () => {
         expect(isAllowedExecutableScript(undefined as any)).toBe(false);
     });
 
-    it('verifies the set of allowlisted scripts contains the 6 canonical Spark scripts', () => {
+    it('verifies the set of allowlisted scripts contains the 7 canonical Spark scripts', () => {
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_local.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_dataproc_cluster.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_serverless_spark.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_local.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_dataproc.sh')).toBe(true);
         expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_sdp_serverless.sh')).toBe(true);
-        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(6);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.has('run_notebook.sh')).toBe(true);
+        expect(ALLOWED_EXECUTABLE_SCRIPTS.size).toBe(7);
     });
 });

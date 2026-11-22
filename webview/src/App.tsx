@@ -201,7 +201,11 @@ function App() {
     issues: SdpBlockingIssue[];
   } | null>(null);
   const activeParadigm: PipelineParadigm =
-    pipelineConfig.paradigm === 'sdp' ? 'sdp' : 'imperative';
+    pipelineConfig.paradigm === 'sdp'
+      ? 'sdp'
+      : pipelineConfig.paradigm === 'notebook'
+        ? 'notebook'
+        : 'imperative';
 
   // Snapshot ref for useUndoRedoHistory (finding F10)
   const snapshotRef = useRef<PipelineSnapshot>({
@@ -414,7 +418,7 @@ function App() {
       if (nextParadigm === activeParadigm) {
         return;
       }
-      if (nextParadigm === 'imperative') {
+      if (nextParadigm === 'imperative' || nextParadigm === 'notebook') {
         setSdpIssueState(null);
         takeSnapshot();
         setJobConfig((prev: AppJobConfig) => {
@@ -426,7 +430,7 @@ function App() {
           return prev;
         });
         setPipelineConfig((prev) =>
-          pipelineConfigReducer(prev, { type: 'setParadigm', paradigm: 'imperative' })
+          pipelineConfigReducer(prev, { type: 'setParadigm', paradigm: nextParadigm })
         );
         return;
       }

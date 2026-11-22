@@ -157,7 +157,7 @@ The Apache Spark Pipeline Designer provides a high-contrast visual IDE for Apach
 ### 1. Canvas Toolbar (`CanvasToolbar`) & Paradigm Compatibility Modal
 - **Floating Control Bar (`data-testid="canvas-toolbar"`)**: Anchors Undo, Redo, Auto Layout, Zoom, and MiniMap controls at `top-3 right-3`.
 - **Pipeline Mode Pill (`data-testid="toolbar-pipeline-mode"`)**: Displays `BATCH` or `STREAMING` from deterministic streaming propagation (`computeStreamingNodeSet`).
-- **Paradigm Indicator & Switcher (`data-testid="toolbar-paradigm-indicator"`)**: Displays `IMPERATIVE` (blue pill) or `SDP (4.2+)` (amber pill).
+- **Output Paradigm Dropdown (`data-testid="toolbar-paradigm-indicator"`)**: Opens a 3-option menu (`IMPERATIVE` blue pill, `SDP (4.2+)` amber pill, and `NOTEBOOK (.IPYNB)` purple pill).
   - When the user switches from `SDP (4.2+)` to `IMPERATIVE`, the editor updates immediately and records an undo snapshot.
   - When the user switches from `IMPERATIVE` to `SDP (4.2+)`, the editor runs `evaluateSdpCompatibility`.
   - If blocking constructs exist, the editor opens an accessible modal (`role="dialog"`, `data-testid="sdp-compatibility-modal"`). The modal lists each incompatible node label, transform, and SDP ceiling reason.

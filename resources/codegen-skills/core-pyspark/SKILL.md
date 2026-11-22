@@ -6,7 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  paradigms: [imperative, sdp]
+  paradigms: [imperative, sdp, notebook]
   transforms: []
   preloadWhen: []
   sources:
@@ -17,7 +17,7 @@ metadata:
 
 # Core PySpark 4.x Architecture & Runtime Standards
 
-Follow these rules in every generated PySpark 4.x repository. When `paradigm` is `sdp` (`## SDP Execution Plan`), Sections 1, 2, and 5 (`src/pipeline.py`, `SparkSession.builder`, and imperative `write_sinks`) are superseded by `sdp-core` (`transformations/*.py` + `src/transforms.py`), while Section 4 (`access_secret_version` and `## Credential Handling Rules`) applies to both paradigms.
+Follow these rules in every generated PySpark 4.x repository. When `paradigm` is `sdp` (`## SDP Execution Plan`), Sections 1, 2, and 5 (`src/pipeline.py`, `SparkSession.builder`, and imperative `write_sinks`) are superseded by `sdp-core` (`transformations/*.py` + `src/transforms.py`). When `paradigm` is `notebook`, Section 1 (`src/pipeline.py`) is superseded by `notebook-core` (`pipeline.ipynb` + `src/transforms.py`). Section 4 (`access_secret_version` and `## Credential Handling Rules`) applies to all paradigms.
 
 ## 1. Testable Three-Phase Pipeline Structure (Imperative Mode Only)
 

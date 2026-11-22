@@ -6,7 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [all]
   runners: [all]
-  paradigms: [imperative, sdp]
+  paradigms: [imperative, sdp, notebook]
   transforms: []
   preloadWhen: []
   sources:

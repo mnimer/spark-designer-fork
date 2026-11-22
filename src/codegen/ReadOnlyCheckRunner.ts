@@ -49,6 +49,7 @@ import {
     MODEL_FACING_PLACEHOLDERS,
     READ_ONLY_CHECK_LIMITS,
     SkillLanguage,
+    SkillParadigm,
 } from './codegenConfig';
 
 /** One generated file matching the structured output schema. */
@@ -150,8 +151,8 @@ export interface CheckRequest {
     baseName: string;
     /** Runner files that must exist (template file names of the selected runner skills). */
     runnerFiles: readonly string[];
-    /** Optional pipeline paradigm (`imperative` or `sdp`). Auto-detects SDP when omitted. */
-    paradigm?: 'imperative' | 'sdp';
+    /** Optional pipeline paradigm (`imperative`, `sdp`, or `notebook`). Auto-detects when omitted. */
+    paradigm?: SkillParadigm;
     /** Optional shared cache root directory override for pip and Ivy caches. */
     cacheRoot?: string;
 }
@@ -256,12 +257,12 @@ export function isStaticSdpSparkConfigKey(key: string): boolean {
  */
 export function isSdpGeneratedProject(
     files: readonly Pick<GeneratedFile, 'filename'>[],
-    paradigm?: 'imperative' | 'sdp'
+    paradigm?: SkillParadigm
 ): boolean {
     if (paradigm === 'sdp') {
         return true;
     }
-    if (paradigm === 'imperative') {
+    if (paradigm === 'imperative' || paradigm === 'notebook') {
         return false;
     }
     for (const file of files) {
@@ -278,6 +279,88 @@ export function isSdpGeneratedProject(
         }
     }
     return false;
+}
+
+/**
+ * Determines whether a set of generated files represents a Jupyter Notebook (`.ipynb`) project.
+ *
+ * @param files Generated files.
+ * @param paradigm Optional explicit paradigm override.
+ * @returns True when Notebook validation rules apply.
+ */
+export function isNotebookGeneratedProject(
+    files: readonly Pick<GeneratedFile, 'filename'>[],
+    paradigm?: SkillParadigm
+): boolean {
+    if (paradigm === 'notebook') {
+        return true;
+    }
+    if (paradigm === 'imperative' || paradigm === 'sdp') {
+        return false;
+    }
+    return files.some((file) => normalizeRelPath(file.filename).toLowerCase().endsWith('.ipynb'));
+}
+
+/**
+ * Validates a generated Jupyter Notebook (`.ipynb`) JSON payload against nbformat v4 rules.
+ *
+ * @param notebookFilename Notebook filename for diagnostics.
+ * @param content Raw notebook JSON text.
+ * @returns List of validation error strings (empty when valid).
+ */
+export function validateNotebookIpynb(notebookFilename: string, content: string): string[] {
+    const errors: string[] = [];
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(content);
+    } catch (err) {
+        return [`${notebookFilename}: invalid JSON (${(err as Error).message}).`];
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return [`${notebookFilename}: root must be a JSON object.`];
+    }
+
+    const doc = parsed as Record<string, unknown>;
+    if (doc.nbformat !== 4) {
+        errors.push(`${notebookFilename}: nbformat must be 4 (found ${String(doc.nbformat)}).`);
+    }
+    if (!Array.isArray(doc.cells) || doc.cells.length === 0) {
+        errors.push(`${notebookFilename}: cells must be a non-empty array.`);
+        return errors;
+    }
+
+    let codeCellCount = 0;
+    const allowedCellTypes = new Set(['markdown', 'code', 'raw']);
+    for (let idx = 0; idx < doc.cells.length; idx++) {
+        const cell = doc.cells[idx];
+        if (!cell || typeof cell !== 'object' || Array.isArray(cell)) {
+            errors.push(`${notebookFilename}: cell[${idx}] must be an object.`);
+            continue;
+        }
+        const cellObj = cell as Record<string, unknown>;
+        if (typeof cellObj.cell_type !== 'string' || !allowedCellTypes.has(cellObj.cell_type)) {
+            errors.push(`${notebookFilename}: cell[${idx}] has invalid cell_type '${String(cellObj.cell_type)}'.`);
+        }
+        const validSource =
+            typeof cellObj.source === 'string' ||
+            (Array.isArray(cellObj.source) && cellObj.source.every((line) => typeof line === 'string'));
+        if (!validSource) {
+            errors.push(`${notebookFilename}: cell[${idx}] source must be a string or list of strings.`);
+        }
+        if (cellObj.cell_type === 'code') {
+            codeCellCount += 1;
+            if (!Array.isArray(cellObj.outputs)) {
+                errors.push(`${notebookFilename}: code cell[${idx}] must define an outputs array.`);
+            }
+        }
+    }
+
+    if (codeCellCount === 0) {
+        errors.push(`${notebookFilename}: notebook must contain at least one code cell.`);
+    }
+
+    return errors;
 }
 
 /**
@@ -1001,6 +1084,9 @@ export class ReadOnlyCheckRunner {
         if (isSdpGeneratedProject(request.files, request.paradigm)) {
             return this.runSdpChecks(request);
         }
+        if (isNotebookGeneratedProject(request.files, request.paradigm)) {
+            return this.runNotebookChecks(request);
+        }
 
         const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false, request.cacheRoot);
         return [
@@ -1009,6 +1095,24 @@ export class ReadOnlyCheckRunner {
             syntaxAndPytest.syntaxResult,
             this.checkPipelineContract(request),
             this.checkTestImports(request),
+            syntaxAndPytest.pytestResult,
+        ];
+    }
+
+    /**
+     * Runs all read-only checks for a Jupyter Notebook (`.ipynb`) project.
+     *
+     * @param request Check request.
+     * @returns Ordered notebook check results.
+     */
+    private async runNotebookChecks(request: CheckRequest): Promise<CheckResult[]> {
+        const syntaxAndPytest = await this.checkPythonSyntaxAndPytest(request.files, false, request.cacheRoot);
+        return [
+            this.checkNotebookRequiredFiles(request),
+            this.checkLeftoverTokens(request.files, false),
+            syntaxAndPytest.syntaxResult,
+            this.checkNotebookContract(request.files),
+            this.checkSdpTestImports(request.files),
             syntaxAndPytest.pytestResult,
         ];
     }
@@ -1036,6 +1140,83 @@ export class ReadOnlyCheckRunner {
             execResults.pytestResult,
             dryRunResult,
         ];
+    }
+
+    /**
+     * Checks notebook required files (`requirements.txt`, `pipeline.ipynb`,
+     * `src/transforms.py`, `tests/test_transforms.py`, and runner files).
+     *
+     * @param request Check request.
+     * @returns Check result.
+     */
+    private checkNotebookRequiredFiles(request: CheckRequest): CheckResult {
+        const normalizedPaths = request.files.map((file) => normalizeRelPath(file.filename));
+        const present = new Set(normalizedPaths);
+        const missing: string[] = [];
+
+        const buildFile = LANGUAGE_BUILD_FILES[request.language];
+        if (buildFile && !present.has(buildFile)) {
+            missing.push(buildFile);
+        }
+
+        const hasNotebook = normalizedPaths.some((p) => p.toLowerCase().endsWith('.ipynb'));
+        if (!hasNotebook) {
+            missing.push('pipeline.ipynb');
+        }
+        if (!present.has('src/transforms.py')) {
+            missing.push('src/transforms.py');
+        }
+        if (!present.has('tests/test_transforms.py')) {
+            missing.push('tests/test_transforms.py');
+        }
+
+        for (const runnerFile of request.runnerFiles) {
+            if (!present.has(normalizeRelPath(runnerFile))) {
+                missing.push(runnerFile);
+            }
+        }
+
+        return missing.length === 0
+            ? { check: CHECK_IDS.requiredFiles, status: 'passed', output: '' }
+            : { check: CHECK_IDS.requiredFiles, status: 'failed', output: `Missing file(s): ${missing.join(', ')}` };
+    }
+
+    /**
+     * Validates generated `.ipynb` JSON structure and pure `src/transforms.py` helpers.
+     *
+     * @param files Generated files.
+     * @returns Check result.
+     */
+    private checkNotebookContract(files: GeneratedFile[]): CheckResult {
+        const notebookFiles = files.filter((f) => normalizeRelPath(f.filename).toLowerCase().endsWith('.ipynb'));
+        if (notebookFiles.length === 0) {
+            return {
+                check: CHECK_IDS.pipelineContract,
+                status: 'skipped',
+                output: 'No .ipynb notebook generated.',
+            };
+        }
+
+        const errors: string[] = [];
+        for (const nb of notebookFiles) {
+            errors.push(...validateNotebookIpynb(nb.filename, nb.content));
+        }
+
+        const transformsHelper = files.find((f) => normalizeRelPath(f.filename) === 'src/transforms.py');
+        if (transformsHelper) {
+            const helperCleaned = stripPythonCommentsAndDocstrings(transformsHelper.content).join('\n');
+            if (!/^\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/m.test(helperCleaned)) {
+                errors.push('src/transforms.py must define at least one pure transformation helper function.');
+            }
+        }
+
+        return errors.length === 0
+            ? { check: CHECK_IDS.pipelineContract, status: 'passed', output: '' }
+            : {
+                  check: CHECK_IDS.pipelineContract,
+                  status: 'failed',
+                  output: truncateCheckOutput(errors.join('\n')),
+              };
     }
 
     /**

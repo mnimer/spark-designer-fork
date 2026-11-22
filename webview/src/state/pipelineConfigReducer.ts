@@ -45,13 +45,22 @@ export function normalizePipelineLanguage(language: PipelineLanguageInput): 'Pyt
 }
 
 /**
- * Normalizes a pipeline paradigm identifier to `'imperative'` or `'sdp'`.
+ * Normalizes a pipeline paradigm identifier to `'imperative'`, `'sdp'`, or `'notebook'`.
  *
  * @param paradigm Candidate paradigm identifier.
- * @returns Normalized `'imperative' | 'sdp'` value.
+ * @returns Normalized `'imperative' | 'sdp' | 'notebook'` value.
  */
 export function normalizePipelineParadigm(paradigm: unknown): PipelineParadigm {
-  return paradigm === 'sdp' ? 'sdp' : 'imperative';
+  if (typeof paradigm === 'string') {
+    const normalized = paradigm.trim().toLowerCase();
+    if (normalized === 'sdp') {
+      return 'sdp';
+    }
+    if (normalized === 'notebook') {
+      return 'notebook';
+    }
+  }
+  return 'imperative';
 }
 
 /**

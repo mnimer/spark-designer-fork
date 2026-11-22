@@ -121,7 +121,8 @@ export const PYTHON_STRATEGY: LanguageStrategy = {
             normalizedFilename === 'spark-pipeline.yaml' ||
             normalizedFilename === 'sdp_stage.pipeline.yaml' ||
             normalizedFilename.startsWith('transformations/') ||
-            normalizedFilename.startsWith('pipelines/')
+            normalizedFilename.startsWith('pipelines/') ||
+            lowerName.endsWith('.ipynb')
         ) {
             return normalizedFilename;
         }
@@ -144,6 +145,13 @@ export const PYTHON_STRATEGY: LanguageStrategy = {
     isMainPipelineFile(normalizedFilename: string, baseName: string, currentMain: string): boolean {
         const lowerNorm = normalizedFilename.toLowerCase();
         const lowerBase = path.basename(normalizedFilename).toLowerCase();
+        if (lowerNorm.endsWith('.ipynb')) {
+            return (
+                lowerBase === 'pipeline.ipynb' ||
+                lowerBase === `${baseName.toLowerCase()}.ipynb` ||
+                !currentMain
+            );
+        }
         if (lowerNorm.startsWith('transformations/') && lowerNorm.endsWith('.py') && !lowerBase.endsWith('__init__.py')) {
             return true;
         }
@@ -550,6 +558,7 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
         // same prompt for the same pipeline.
         const skillsRoot = resolveResourcePath(context, CODEGEN_RESOURCE_PATHS.skillsDir);
         const built = buildExtensionPrompt(context, yamlData, languageVal, sparkVersion);
+        const detectedParadigm = built.detection.paradigm;
         promptText = built.prompt;
         selectedSkills = built.selectedSkills;
         if (built.sdpPlan && !built.sdpPlan.isCompatible) {
@@ -741,7 +750,8 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
                     const cleanup = executeScopedCleanup(
                         targetFolderPath,
                         folderGate.manifest,
-                        languageVal
+                        languageVal,
+                        detectedParadigm
                     );
                     if (cleanup.modifiedFiles.length > 0) {
                         // Overwriting hand-edited generated files is documented
@@ -802,19 +812,46 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
 
         // Language-specific post-generation setup (e.g. creating __init__.py for Python)
         await strategy.postGeneration(targetFolderPath);
+        const manifestPaths = new Set(writtenForManifest.map((entry) => entry.path));
+        const initPyPath = path.join(targetFolderPath, 'src', '__init__.py');
+        if (!manifestPaths.has('src/__init__.py')) {
+            try {
+                const initContent = await fs.promises.readFile(initPyPath, 'utf-8');
+                writtenForManifest.push({ path: 'src/__init__.py', content: initContent });
+                manifestPaths.add('src/__init__.py');
+            } catch {
+                // No src/__init__.py created
+            }
+        }
 
-        // Write default ignore files if not present in generated files
-        const dockerIgnorePath = path.join(targetFolderPath, '.dockerignore');
-        // NOTE: inherently TOCTOU existence check
-        const dockerIgnoreExists = await fs.promises.stat(dockerIgnorePath).then(() => true).catch(() => false);
-        if (!dockerIgnoreExists) {
-            await fs.promises.writeFile(dockerIgnorePath, getDefaultIgnoreFileContent(), 'utf-8');
+        // Write default ignore files if not present in generated files.
+        // Only write .dockerignore when the generated project includes a Dockerfile.
+        const hasDockerfile = writtenForManifest.some(
+            (entry) => path.posix.basename(entry.path).toLowerCase() === 'dockerfile'
+        );
+        if (hasDockerfile) {
+            const dockerIgnorePath = path.join(targetFolderPath, '.dockerignore');
+            // NOTE: inherently TOCTOU existence check
+            const dockerIgnoreExists = await fs.promises.stat(dockerIgnorePath).then(() => true).catch(() => false);
+            if (!dockerIgnoreExists) {
+                const ignoreContent = getDefaultIgnoreFileContent();
+                await fs.promises.writeFile(dockerIgnorePath, ignoreContent, 'utf-8');
+                if (!manifestPaths.has('.dockerignore')) {
+                    writtenForManifest.push({ path: '.dockerignore', content: ignoreContent });
+                    manifestPaths.add('.dockerignore');
+                }
+            }
         }
         const gcloudIgnorePath = path.join(targetFolderPath, '.gcloudignore');
         // NOTE: inherently TOCTOU existence check
         const gcloudIgnoreExists = await fs.promises.stat(gcloudIgnorePath).then(() => true).catch(() => false);
         if (!gcloudIgnoreExists) {
-            await fs.promises.writeFile(gcloudIgnorePath, getDefaultIgnoreFileContent(), 'utf-8');
+            const ignoreContent = getDefaultIgnoreFileContent();
+            await fs.promises.writeFile(gcloudIgnorePath, ignoreContent, 'utf-8');
+            if (!manifestPaths.has('.gcloudignore')) {
+                writtenForManifest.push({ path: '.gcloudignore', content: ignoreContent });
+                manifestPaths.add('.gcloudignore');
+            }
         }
         // S6: keep the prompt/response log out of version control by default.
         await ensureGitignoreExcludesLog(targetFolderPath);
@@ -827,7 +864,8 @@ export async function executeCodeGeneration(options: ExecuteCodeGenerationOption
             targetFolderPath,
             generationPipelineId,
             languageVal,
-            writtenForManifest
+            writtenForManifest,
+            detectedParadigm
         );
 
         vscode.window.showInformationMessage('Code files generated successfully by Gemini!');

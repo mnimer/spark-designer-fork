@@ -37,6 +37,7 @@ import {
     CUSTOM_INSTRUCTION_KEYS,
     EDGE_HANDLES,
     LANGUAGE_RUNNERS,
+    NOTEBOOK_LANGUAGE_RUNNERS,
     PIPELINE_FEATURES,
     PipelineFeature,
     PYTHON_DATASOURCE_TRANSFORMS,
@@ -172,7 +173,7 @@ function usesPythonDataSource(
  * `jobConfig.paradigm`, defaulting to `'imperative'`.
  *
  * @param root Parsed pipeline document record.
- * @returns Canonical `SkillParadigm` (`'imperative'` | `'sdp'`).
+ * @returns Canonical `SkillParadigm` (`'imperative'` | `'sdp'` | `'notebook'`).
  */
 function extractParadigm(root: Record<string, unknown>): SkillParadigm {
     const candidates = [
@@ -185,6 +186,9 @@ function extractParadigm(root: Record<string, unknown>): SkillParadigm {
             const normalized = candidate.trim().toLowerCase();
             if (normalized === SKILL_PARADIGMS.sdp) {
                 return SKILL_PARADIGMS.sdp;
+            }
+            if (normalized === SKILL_PARADIGMS.notebook) {
+                return SKILL_PARADIGMS.notebook;
             }
             if (normalized === SKILL_PARADIGMS.imperative) {
                 return SKILL_PARADIGMS.imperative;
@@ -325,11 +329,14 @@ export function detectPipelineFeatures(
         }
     }
 
-    // 4. Runners: SDP uses `SDP_LANGUAGE_RUNNERS` (`sdp`), while imperative gets all language runners.
+    // 4. Runners: SDP uses `SDP_LANGUAGE_RUNNERS`, notebook uses `NOTEBOOK_LANGUAGE_RUNNERS`,
+    //    and imperative receives all standard language runners.
     const runners =
         paradigm === SKILL_PARADIGMS.sdp
             ? new Set<SkillRunner>(SDP_LANGUAGE_RUNNERS[skillLanguage])
-            : new Set<SkillRunner>(LANGUAGE_RUNNERS[skillLanguage]);
+            : paradigm === SKILL_PARADIGMS.notebook
+                ? new Set<SkillRunner>(NOTEBOOK_LANGUAGE_RUNNERS[skillLanguage])
+                : new Set<SkillRunner>(LANGUAGE_RUNNERS[skillLanguage]);
 
     return {
         language: skillLanguage,

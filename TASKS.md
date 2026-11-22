@@ -346,7 +346,7 @@ Independent feature task that can ship in its own PR before Phase 13 branch cons
 
 | # | Type | Task | Status |
 | :--- | :--- | :--- | :--- |
-| `V2.1` | ⏸️ V2 | Interactive Jupyter Notebook (`.ipynb`) output mode for Vertex AI Workbench / Colab Enterprise kernels. | ⏸️ Deferred |
+| `V2.1` | ⏸️ V2 | Interactive Jupyter Notebook (`.ipynb`) output mode for Vertex AI Workbench / Colab Enterprise kernels. | ✅ Done |
 | `V2.2` | ⏸️ V2 | Scala (`sbt` / Maven) code generation using per-skill `scala.md` reference files. | ⏸️ Deferred |
 | `V2.3` | ⏸️ V2 | Live schema introspection from BigQuery / Dataplex / Iceberg catalogs to auto-populate column dropdowns in downstream Step forms. | ⏸️ Deferred |
 | `V2.4` | ⏸️ V2 | Dataproc Workflow Templates & Serverless Spark scheduled Cloud Composer / Cloud Scheduler export. | ⏸️ Deferred |

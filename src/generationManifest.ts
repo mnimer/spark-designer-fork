@@ -58,6 +58,7 @@ export const MANIFEST_FILENAME = '.sparkgen.json';
 export const BUILD_ARTIFACT_ALLOWLIST: readonly string[] = [
     '.venv', 'venv', 'env',
     '__pycache__', '.pytest_cache', '.mypy_cache',
+    '.spark-ivy', '.ipynb_checkpoints',
     'target', '.gradle', 'build', 'out',
     'node_modules',
 ];
@@ -86,6 +87,8 @@ export interface GenerationManifest {
     pipelineId: string;
     /** Language this folder was last generated for, e.g. 'python' | 'java'. */
     language: string;
+    /** Optional output paradigm this folder was last generated for ('imperative' | 'sdp' | 'notebook'). */
+    paradigm?: string;
     /** ISO-8601 timestamp of the last successful generation. */
     generatedAt: string;
     files: ManifestFileEntry[];
@@ -111,6 +114,8 @@ export interface CleanupPlan {
     paths: string[];
     /** True when the requested language differs from the manifest's. */
     isLanguageSwitch: boolean;
+    /** True when the requested output paradigm differs from the manifest's. */
+    isParadigmSwitch: boolean;
     /** Manifest files whose on-disk hash no longer matches -- user hand-edits. */
     modifiedFiles: string[];
 }
@@ -189,6 +194,7 @@ export function parseManifest(raw: unknown): GenerationManifest | null {
         schemaVersion,
         pipelineId: m.pipelineId,
         language: m.language,
+        ...(typeof m.paradigm === 'string' && m.paradigm.trim() ? { paradigm: m.paradigm.trim().toLowerCase() } : {}),
         generatedAt: typeof m.generatedAt === 'string' ? m.generatedAt : '',
         files: validFiles,
     };
@@ -241,8 +247,8 @@ export function isBuildArtifact(name: string): boolean {
     if (BUILD_ARTIFACT_ALLOWLIST.includes(name)) {
         return true;
     }
-    // NOTE: *.egg-info is the one pattern entry; everything else is an exact name.
-    return name.endsWith('.egg-info');
+    // NOTE: *.egg-info and executed_*.ipynb are pattern entries; everything else is an exact name.
+    return name.endsWith('.egg-info') || /^executed_.+\.ipynb$/i.test(name);
 }
 
 /**
@@ -285,10 +291,15 @@ export function planCleanup(
     manifest: GenerationManifest,
     requestedLanguage: string,
     folderEntries: string[],
-    currentHashes: Record<string, string> = {}
+    currentHashes: Record<string, string> = {},
+    requestedParadigm?: string
 ): CleanupPlan {
     const isLanguageSwitch =
         (manifest.language || '').toLowerCase() !== (requestedLanguage || '').toLowerCase();
+    const isParadigmSwitch = Boolean(
+        requestedParadigm &&
+            (manifest.paradigm || 'imperative').toLowerCase() !== requestedParadigm.trim().toLowerCase()
+    );
 
     // Layer 4a: always remove what we recorded creating.
     const paths = new Set<string>();
@@ -296,9 +307,10 @@ export function planCleanup(
         paths.add(entry.path);
     }
 
-    // Layer 4b: on a language switch only, remove build artifacts and foreign descriptors.
-    if (isLanguageSwitch) {
-        const foreign = new Set(foreignLanguageDescriptors(requestedLanguage));
+    // Layer 4b: on a language or paradigm switch, remove stale build/runtime artifacts
+    // (and foreign language descriptors on a language switch).
+    if (isLanguageSwitch || isParadigmSwitch) {
+        const foreign = isLanguageSwitch ? new Set(foreignLanguageDescriptors(requestedLanguage)) : new Set<string>();
         for (const name of folderEntries) {
             if (isBuildArtifact(name) || foreign.has(name)) {
                 paths.add(name);
@@ -320,6 +332,7 @@ export function planCleanup(
     return {
         paths: Array.from(paths),
         isLanguageSwitch,
+        isParadigmSwitch,
         modifiedFiles,
     };
 }
@@ -372,12 +385,14 @@ export function resolveDeletablePath(folderPath: string, relativePath: string): 
 export function buildManifest(
     pipelineId: string,
     language: string,
-    files: Array<{ path: string; content: string }>
+    files: Array<{ path: string; content: string }>,
+    paradigm?: string
 ): GenerationManifest {
     return {
         schemaVersion: MANIFEST_SCHEMA_VERSION,
         pipelineId,
         language,
+        ...(paradigm ? { paradigm: paradigm.trim().toLowerCase() } : {}),
         generatedAt: new Date().toISOString(),
         files: files.map(f => ({ path: f.path, sha256: sha256(f.content) })),
     };

@@ -6,7 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  paradigms: [imperative, sdp]
+  paradigms: [imperative, sdp, notebook]
   transforms: [PubSubSource, PubSubSink, KinesisSource, KinesisSink, MqttSource, MqttSink, FirestoreSource, FirestoreSink, CassandraSource, RedisSource, RedisSink]
   preloadWhen: [python_datasource]
   sources:

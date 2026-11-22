@@ -25,6 +25,10 @@ import { buildGcpConsoleUrl } from './deployment/consoleUrl';
 import { useBottomPanel } from './BottomPanelContext';
 import type { DagNode } from '../../utils/dagValidator';
 import { buildSdpPlan, sanitizeSdpIdentifier } from '../../utils/sdpPlanner';
+import {
+  normalizePipelineParadigm,
+  type PipelineParadigm,
+} from '../../utils/sharedTypes';
 
 export type { LogEntry };
 
@@ -279,7 +283,7 @@ export function extractSdpDatasetsFromGraph(
  * @param jobConfig - Current job configuration object.
  * @param effectiveProjectId - Resolved GCP Project ID.
  * @param effectiveRegion - Resolved GCP region.
- * @param paradigm - Optional pipeline paradigm ('imperative' | 'sdp').
+ * @param paradigm - Optional pipeline paradigm ('imperative' | 'sdp' | 'notebook').
  * @returns Multi-line shell command preview string.
  */
 export function buildDefaultCommandPreview(
@@ -287,10 +291,15 @@ export function buildDefaultCommandPreview(
   jobConfig: Record<string, unknown>,
   effectiveProjectId: string,
   effectiveRegion: string,
-  paradigm?: 'imperative' | 'sdp'
+  paradigm?: PipelineParadigm
 ): string {
   const normalized = normalizeSparkRunner(runner);
-  const isSdp = paradigm === 'sdp' || jobConfig.paradigm === 'sdp';
+  const resolvedParadigm = normalizePipelineParadigm(paradigm ?? jobConfig.paradigm);
+  const isSdp = resolvedParadigm === 'sdp';
+
+  if (resolvedParadigm === 'notebook') {
+    return '# Executing Jupyter Notebook Pipeline (Vertex AI Workbench / Colab Enterprise / Local Jupyter)\nbash ./run_notebook.sh';
+  }
 
   if (isSdp) {
     const sdpCommand = jobConfig.sdpCommand === 'dry-run' ? 'dry-run' : 'run';
@@ -393,10 +402,9 @@ export const DeploymentTab: React.FC<DeploymentTabProps> = () => {
   const clusters = jobConfigSlice.clusters;
   const sessionTemplates = jobConfigSlice.sessionTemplates;
   const needsRebuild = pipelineConfig.config.needsRebuild;
-  const paradigm: 'imperative' | 'sdp' =
-    pipelineConfig.config.paradigm === 'sdp' || jobConfig.paradigm === 'sdp'
-      ? 'sdp'
-      : 'imperative';
+  const paradigm: PipelineParadigm = normalizePipelineParadigm(
+    pipelineConfig.config.paradigm ?? jobConfig.paradigm
+  );
   const isSdpMode = paradigm === 'sdp';
   const graphNodes = React.useMemo(() => codegen.nodes ?? [], [codegen.nodes]);
   const pipelineLogs = execution.logs;

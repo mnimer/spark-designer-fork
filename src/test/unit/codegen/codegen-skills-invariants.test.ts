@@ -342,19 +342,31 @@ describe('codegen skill library invariants', () => {
             expect(sdpCoreBody).toContain(bannedMention);
         }
 
+        for (const notebookSkillName of ['notebook-core', 'runner-notebook']) {
+            const nbSkill = SKILLS.find((s) => s.name === notebookSkillName);
+            expect(nbSkill, `Missing ${notebookSkillName}`).toBeDefined();
+            expect(nbSkill?.paradigms).toEqual(['notebook']);
+        }
+
         for (const imperativeOnlyName of [
-            'core-streaming',
             'runner-local',
             'runner-dataproc-cluster',
             'runner-serverless-spark',
+        ]) {
+            const skill = SKILLS.find((s) => s.name === imperativeOnlyName);
+            expect(skill?.paradigms, imperativeOnlyName).toEqual(['imperative']);
+        }
+
+        for (const imperativeAndNotebookName of [
+            'core-streaming',
             'io-foreach-batch',
             'io-vector-store',
             'transform-cache-persist',
             'transform-feature-prep',
             'transform-spark-ml-vertex-ai',
         ]) {
-            const skill = SKILLS.find((s) => s.name === imperativeOnlyName);
-            expect(skill?.paradigms, imperativeOnlyName).toEqual(['imperative']);
+            const skill = SKILLS.find((s) => s.name === imperativeAndNotebookName);
+            expect(skill?.paradigms, imperativeAndNotebookName).toEqual(['imperative', 'notebook']);
         }
     });
 

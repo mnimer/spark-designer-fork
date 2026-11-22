@@ -146,14 +146,43 @@ export interface SparkPipelineStreamingDefaults {
 }
 
 /**
+ * Canonical allowlist of supported pipeline authoring and code generation paradigms.
+ */
+export const SUPPORTED_PIPELINE_PARADIGMS = [
+    'imperative',
+    'sdp',
+    'notebook',
+] as const;
+
+/**
  * Pipeline authoring and code generation paradigm.
  */
-export type PipelineParadigm = 'imperative' | 'sdp';
+export type PipelineParadigm = (typeof SUPPORTED_PIPELINE_PARADIGMS)[number];
 
 /**
  * Default pipeline paradigm for new and existing Spark pipelines.
  */
 export const DEFAULT_PIPELINE_PARADIGM: PipelineParadigm = 'imperative';
+
+/**
+ * Normalizes a candidate paradigm identifier to `'imperative'`, `'sdp'`, or `'notebook'`.
+ * If the value is not a recognized paradigm, return `'imperative'`.
+ *
+ * @param paradigm Candidate paradigm identifier from serialized pipeline config or IPC payload.
+ * @returns Canonical `PipelineParadigm` value.
+ */
+export function normalizePipelineParadigm(paradigm?: unknown): PipelineParadigm {
+    if (typeof paradigm === 'string') {
+        const normalized = paradigm.trim().toLowerCase();
+        if (normalized === 'sdp') {
+            return 'sdp';
+        }
+        if (normalized === 'notebook') {
+            return 'notebook';
+        }
+    }
+    return DEFAULT_PIPELINE_PARADIGM;
+}
 
 /**
  * Dataset micro-badge rendered on canvas nodes in Spark Declarative Pipelines mode.

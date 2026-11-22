@@ -6,7 +6,7 @@ metadata:
   usedBy: [generator, reviewer]
   languages: [python]
   runners: [all]
-  paradigms: [imperative]
+  paradigms: [imperative, notebook]
   transforms: [Watermark, StatefulTransform]
   preloadWhen: [streaming]
   sources:
